@@ -1,0 +1,3 @@
+[submodule "src/native/third_party/box2d"]
+	path = src/native/third_party/box2d
+	url = https://github.com/erincatto/box2d.git

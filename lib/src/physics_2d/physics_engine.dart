@@ -8,7 +8,6 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:just_dart/just_dart.dart';
 
-part 'vector_extensions.dart';
 part 'collision_manifold.dart';
 part 'collision_shapes.dart';
 part 'physics_body.dart';
@@ -28,6 +27,12 @@ class PhysicsEngine {
   /// Initialize the physics engine
   void initialize() {
     debugPrint('Physics Engine initialized');
+  }
+
+  /// Set world gravity, updating both the Dart gravity vector and any native
+  /// simulation state. Override in backend-specific subclasses.
+  void setGravity(double gx, double gy) {
+    gravity.setValues(gx, gy);
   }
 
   // ── Scratch vectors for the update loop (avoids per-frame allocation) ──

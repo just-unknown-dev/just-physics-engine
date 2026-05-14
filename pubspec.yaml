@@ -1,6 +1,6 @@
 name: just_physics_engine
-description: "Standalone 2D/3D physics engine for Flutter — collision detection, rigid bodies, ray casting, and spatial grids."
-version: 0.1.0
+description: "Standalone 2D/3D physics engine for Flutter — pure-Dart fallback + native Box2D v3.0 FFI backend."
+version: 0.2.0
 homepage: https://github.com/just-unknown-dev/just-physics-engine
 repository: https://github.com/just-unknown-dev/just-physics-engine
 issue_tracker: https://github.com/just-unknown-dev/just-physics-engine/issues
@@ -13,11 +13,19 @@ dependencies:
   flutter:
     sdk: flutter
   just_dart: ^0.1.0
+  ffi: ^2.1.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  ffigen: ^12.0.0
+  # Hook build script dependencies — Flutter's native-assets build system
+  # resolves hook/build.dart imports from THIS pubspec, not hook/pubspec.yaml.
+  code_assets: ^1.0.0
+  hooks: ^1.0.0
+  native_toolchain_c: ^0.17.0
+  logging: ^1.3.0
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

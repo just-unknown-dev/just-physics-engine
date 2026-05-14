@@ -1,0 +1,41 @@
+llvm-path:
+  - 'C:\Program Files\LLVM'
+  - 'C:\Program Files (x86)\LLVM'
+
+name: Box2DBindings
+description: >
+  Dart FFI bindings generated from box2d_wrapper.h.
+  Only the public C wrapper surface is parsed — Box2D internal headers
+  are excluded via include-directives.
+output: 'lib/src/box2d/ffi/box2d_bindings.dart'
+
+headers:
+  entry-points:
+    - 'src/native/box2d_wrapper.h'
+  include-directives:
+    - 'src/native/box2d_wrapper.h'
+
+functions:
+  include:
+    - 'b2w_.*'
+
+globals:
+  exclude:
+    - '.*'
+
+structs:
+  exclude:
+    - '.*'
+
+enums:
+  exclude:
+    - '.*'
+
+comments:
+  style: any
+  length: full
+
+preamble: |
+  // AUTO-GENERATED — do not edit.
+  // Regenerate with: dart run ffigen --config ffigen.yaml
+  // ignore_for_file: type=lint, camel_case_types, non_constant_identifier_names

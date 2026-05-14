@@ -104,7 +104,7 @@ class PolygonShape extends CollisionShape {
     for (int i = 0; i < polyA.vertices.length; i++) {
       int j = (i + 1) % polyA.vertices.length;
       final edge = (polyA.vertices[j] + posA) - (polyA.vertices[i] + posA);
-      final axis = edge.perpendicular;
+      final axis = _perpendicular(edge);
       final distance = axis.distance;
       if (distance == 0) continue;
       final normal = axis / distance;
@@ -123,7 +123,7 @@ class PolygonShape extends CollisionShape {
     for (int i = 0; i < polyB.vertices.length; i++) {
       int j = (i + 1) % polyB.vertices.length;
       final edge = (polyB.vertices[j] + posB) - (polyB.vertices[i] + posB);
-      final axis = edge.perpendicular;
+      final axis = _perpendicular(edge);
       final distance = axis.distance;
       if (distance == 0) continue;
       final normal = axis / distance;
@@ -139,7 +139,7 @@ class PolygonShape extends CollisionShape {
     }
 
     // Ensure normal points from A to B
-    if (bestNormal.dot(posB - posA) < 0) {
+    if (_dot(bestNormal, posB - posA) < 0) {
       bestNormal = -bestNormal;
     }
 
@@ -192,7 +192,7 @@ class PolygonShape extends CollisionShape {
     for (int i = 0; i < poly.vertices.length; i++) {
       int j = (i + 1) % poly.vertices.length;
       final edge = (poly.vertices[j] + polyPos) - (poly.vertices[i] + polyPos);
-      final axis = edge.perpendicular;
+      final axis = _perpendicular(edge);
       final distance = axis.distance;
       if (distance == 0) continue;
       final normal = axis / distance;
@@ -212,7 +212,7 @@ class PolygonShape extends CollisionShape {
       }
     }
 
-    if (bestNormal.dot(polyPos - center) < 0) {
+    if (_dot(bestNormal, polyPos - center) < 0) {
       bestNormal = -bestNormal;
     }
 
@@ -248,7 +248,7 @@ class PolygonShape extends CollisionShape {
     Offset axis,
   ) {
     final projPoly = _projectPolygon(poly, polyPos, axis);
-    final centerProj = circleCenter.dot(axis);
+    final centerProj = _dot(circleCenter, axis);
     final projCircle = [centerProj - radius, centerProj + radius];
 
     if (projPoly[0] > projCircle[1] || projCircle[0] > projPoly[1]) return null;
@@ -262,11 +262,19 @@ class PolygonShape extends CollisionShape {
     double min = double.infinity;
     double max = double.negativeInfinity;
     for (final v in poly.vertices) {
-      final proj = (v + pos).dot(axis);
+      final proj = _dot(v + pos, axis);
       if (proj < min) min = proj;
       if (proj > max) max = proj;
     }
     return [min, max];
+  }
+
+  double _dot(Offset a, Offset b) {
+    return Vector2.fromOffset(a).dot(Vector2.fromOffset(b));
+  }
+
+  Offset _perpendicular(Offset v) {
+    return Vector2.fromOffset(v).perpendicular().toOffset();
   }
 }
 
