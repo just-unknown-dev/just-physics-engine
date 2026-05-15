@@ -14,17 +14,16 @@ dependencies:
     sdk: flutter
   just_dart: ^0.1.0
   ffi: ^2.1.0
+  # Packages imported by hook/build.dart must be regular dependencies.
+  code_assets: ^1.0.0
+  hooks: ^1.0.0
+  native_toolchain_c: ^0.17.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
   ffigen: ^12.0.0
-  # Hook build script dependencies — Flutter's native-assets build system
-  # resolves hook/build.dart imports from THIS pubspec, not hook/pubspec.yaml.
-  code_assets: ^1.0.0
-  hooks: ^1.0.0
-  native_toolchain_c: ^0.17.0
   logging: ^1.3.0
 
 # For information on the generic Dart part of this file, see the
