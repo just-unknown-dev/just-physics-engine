@@ -98,54 +98,58 @@ class PolygonShape extends CollisionShape {
     PolygonShape polyB,
   ) {
     double minPenetration = double.infinity;
-    Offset bestNormal = Offset.zero;
+    double bestNx = 0, bestNy = 0;
 
     // Test axes from polyA
     for (int i = 0; i < polyA.vertices.length; i++) {
-      int j = (i + 1) % polyA.vertices.length;
-      final edge = (polyA.vertices[j] + posA) - (polyA.vertices[i] + posA);
-      final axis = _perpendicular(edge);
-      final distance = axis.distance;
-      if (distance == 0) continue;
-      final normal = axis / distance;
+      final j = (i + 1) % polyA.vertices.length;
+      final ex = polyA.vertices[j].dx - polyA.vertices[i].dx;
+      final ey = polyA.vertices[j].dy - polyA.vertices[i].dy;
+      // Perpendicular (left-hand normal): (-ey, ex)
+      final len = math.sqrt(ex * ex + ey * ey);
+      if (len == 0) continue;
+      final nx = -ey / len;
+      final ny = ex / len;
 
-      final overlap = _getOverlapOnAxis(polyA, posA, polyB, posB, normal);
-      if (overlap == null) {
-        return CollisionManifold.empty();
-      }
+      final overlap = _overlapOnAxis(polyA, posA, polyB, posB, nx, ny);
+      if (overlap == null) return CollisionManifold.empty();
       if (overlap < minPenetration) {
         minPenetration = overlap;
-        bestNormal = normal;
+        bestNx = nx;
+        bestNy = ny;
       }
     }
 
     // Test axes from polyB
     for (int i = 0; i < polyB.vertices.length; i++) {
-      int j = (i + 1) % polyB.vertices.length;
-      final edge = (polyB.vertices[j] + posB) - (polyB.vertices[i] + posB);
-      final axis = _perpendicular(edge);
-      final distance = axis.distance;
-      if (distance == 0) continue;
-      final normal = axis / distance;
+      final j = (i + 1) % polyB.vertices.length;
+      final ex = polyB.vertices[j].dx - polyB.vertices[i].dx;
+      final ey = polyB.vertices[j].dy - polyB.vertices[i].dy;
+      final len = math.sqrt(ex * ex + ey * ey);
+      if (len == 0) continue;
+      final nx = -ey / len;
+      final ny = ex / len;
 
-      final overlap = _getOverlapOnAxis(polyA, posA, polyB, posB, normal);
-      if (overlap == null) {
-        return CollisionManifold.empty();
-      }
+      final overlap = _overlapOnAxis(polyA, posA, polyB, posB, nx, ny);
+      if (overlap == null) return CollisionManifold.empty();
       if (overlap < minPenetration) {
         minPenetration = overlap;
-        bestNormal = normal;
+        bestNx = nx;
+        bestNy = ny;
       }
     }
 
     // Ensure normal points from A to B
-    if (_dot(bestNormal, posB - posA) < 0) {
-      bestNormal = -bestNormal;
+    final centerDx = posB.dx - posA.dx;
+    final centerDy = posB.dy - posA.dy;
+    if (bestNx * centerDx + bestNy * centerDy < 0) {
+      bestNx = -bestNx;
+      bestNy = -bestNy;
     }
 
     return CollisionManifold(
       isColliding: true,
-      normal: bestNormal,
+      normal: Offset(bestNx, bestNy),
       penetration: minPenetration,
     );
   }
@@ -157,124 +161,123 @@ class PolygonShape extends CollisionShape {
     PolygonShape poly,
   ) {
     double minPenetration = double.infinity;
-    Offset bestNormal = Offset.zero;
+    double bestNx = 0, bestNy = 0;
 
-    // Find the polygon vertex closest to the circle center
-    Offset closestVertex = poly.vertices[0] + polyPos;
-    double minDistanceSq = (closestVertex - center).distanceSquared;
+    // Find the polygon vertex closest to the circle center (world space).
+    double closestX = poly.vertices[0].dx + polyPos.dx;
+    double closestY = poly.vertices[0].dy + polyPos.dy;
+    double minDistSq = (closestX - center.dx) * (closestX - center.dx) +
+        (closestY - center.dy) * (closestY - center.dy);
     for (int i = 1; i < poly.vertices.length; i++) {
-      final v = poly.vertices[i] + polyPos;
-      final distSq = (v - center).distanceSquared;
-      if (distSq < minDistanceSq) {
-        minDistanceSq = distSq;
-        closestVertex = v;
+      final vx = poly.vertices[i].dx + polyPos.dx;
+      final vy = poly.vertices[i].dy + polyPos.dy;
+      final dSq = (vx - center.dx) * (vx - center.dx) +
+          (vy - center.dy) * (vy - center.dy);
+      if (dSq < minDistSq) {
+        minDistSq = dSq;
+        closestX = vx;
+        closestY = vy;
       }
     }
 
-    // Axis from closest vertex to circle center
-    Offset circleAxis = center - closestVertex;
-    if (circleAxis.distanceSquared > 0) {
-      final normal = circleAxis / circleAxis.distance;
-      final overlap = _getOverlapOnAxisCircle(
-        poly,
-        polyPos,
-        center,
-        circle.radius,
-        normal,
-      );
+    // Axis from closest vertex to circle center.
+    if (minDistSq > 0) {
+      final axLen = math.sqrt(minDistSq);
+      final nx = (center.dx - closestX) / axLen;
+      final ny = (center.dy - closestY) / axLen;
+      final overlap = _overlapOnAxisCircle(poly, polyPos, center, circle.radius, nx, ny);
       if (overlap == null) return CollisionManifold.empty();
-
       minPenetration = overlap;
-      bestNormal = normal;
+      bestNx = nx;
+      bestNy = ny;
     }
 
-    // Test axes from polygon
+    // Test polygon edge axes.
     for (int i = 0; i < poly.vertices.length; i++) {
-      int j = (i + 1) % poly.vertices.length;
-      final edge = (poly.vertices[j] + polyPos) - (poly.vertices[i] + polyPos);
-      final axis = _perpendicular(edge);
-      final distance = axis.distance;
-      if (distance == 0) continue;
-      final normal = axis / distance;
+      final j = (i + 1) % poly.vertices.length;
+      final ex = poly.vertices[j].dx - poly.vertices[i].dx;
+      final ey = poly.vertices[j].dy - poly.vertices[i].dy;
+      final len = math.sqrt(ex * ex + ey * ey);
+      if (len == 0) continue;
+      final nx = -ey / len;
+      final ny = ex / len;
 
-      final overlap = _getOverlapOnAxisCircle(
-        poly,
-        polyPos,
-        center,
-        circle.radius,
-        normal,
-      );
+      final overlap = _overlapOnAxisCircle(poly, polyPos, center, circle.radius, nx, ny);
       if (overlap == null) return CollisionManifold.empty();
 
       if (overlap < minPenetration) {
         minPenetration = overlap;
-        bestNormal = normal;
+        bestNx = nx;
+        bestNy = ny;
       }
     }
 
-    if (_dot(bestNormal, polyPos - center) < 0) {
-      bestNormal = -bestNormal;
+    final centerDx = polyPos.dx - center.dx;
+    final centerDy = polyPos.dy - center.dy;
+    if (bestNx * centerDx + bestNy * centerDy < 0) {
+      bestNx = -bestNx;
+      bestNy = -bestNy;
     }
 
     return CollisionManifold(
       isColliding: true,
-      normal: bestNormal,
+      normal: Offset(bestNx, bestNy),
       penetration: minPenetration,
     );
   }
 
-  double? _getOverlapOnAxis(
+  /// Projects both polygons onto the axis (nx, ny) and returns the overlap,
+  /// or null if the projections are separated (no collision on this axis).
+  /// All arithmetic is inline — zero heap allocation.
+  double? _overlapOnAxis(
     PolygonShape polyA,
     Offset posA,
     PolygonShape polyB,
     Offset posB,
-    Offset axis,
+    double nx,
+    double ny,
   ) {
-    final projA = _projectPolygon(polyA, posA, axis);
-    final projB = _projectPolygon(polyB, posB, axis);
+    double minA = double.infinity, maxA = double.negativeInfinity;
+    for (final v in polyA.vertices) {
+      final p = (v.dx + posA.dx) * nx + (v.dy + posA.dy) * ny;
+      if (p < minA) minA = p;
+      if (p > maxA) maxA = p;
+    }
 
-    if (projA[0] > projB[1] || projB[0] > projA[1]) return null;
+    double minB = double.infinity, maxB = double.negativeInfinity;
+    for (final v in polyB.vertices) {
+      final p = (v.dx + posB.dx) * nx + (v.dy + posB.dy) * ny;
+      if (p < minB) minB = p;
+      if (p > maxB) maxB = p;
+    }
 
-    final overlap1 = projA[1] - projB[0];
-    final overlap2 = projB[1] - projA[0];
-    return math.min(overlap1, overlap2);
+    if (minA > maxB || minB > maxA) return null;
+    return math.min(maxA - minB, maxB - minA);
   }
 
-  double? _getOverlapOnAxisCircle(
+  /// Projects the polygon and a circle onto the axis (nx, ny) and returns
+  /// the overlap, or null if separated. Zero heap allocation.
+  double? _overlapOnAxisCircle(
     PolygonShape poly,
     Offset polyPos,
     Offset circleCenter,
     double radius,
-    Offset axis,
+    double nx,
+    double ny,
   ) {
-    final projPoly = _projectPolygon(poly, polyPos, axis);
-    final centerProj = _dot(circleCenter, axis);
-    final projCircle = [centerProj - radius, centerProj + radius];
-
-    if (projPoly[0] > projCircle[1] || projCircle[0] > projPoly[1]) return null;
-
-    final overlap1 = projPoly[1] - projCircle[0];
-    final overlap2 = projCircle[1] - projPoly[0];
-    return math.min(overlap1, overlap2);
-  }
-
-  List<double> _projectPolygon(PolygonShape poly, Offset pos, Offset axis) {
-    double min = double.infinity;
-    double max = double.negativeInfinity;
+    double minP = double.infinity, maxP = double.negativeInfinity;
     for (final v in poly.vertices) {
-      final proj = _dot(v + pos, axis);
-      if (proj < min) min = proj;
-      if (proj > max) max = proj;
+      final p = (v.dx + polyPos.dx) * nx + (v.dy + polyPos.dy) * ny;
+      if (p < minP) minP = p;
+      if (p > maxP) maxP = p;
     }
-    return [min, max];
-  }
 
-  double _dot(Offset a, Offset b) {
-    return Vector2.fromOffset(a).dot(Vector2.fromOffset(b));
-  }
+    final centerProj = circleCenter.dx * nx + circleCenter.dy * ny;
+    final minC = centerProj - radius;
+    final maxC = centerProj + radius;
 
-  Offset _perpendicular(Offset v) {
-    return Vector2.fromOffset(v).perpendicular().toOffset();
+    if (minP > maxC || minC > maxP) return null;
+    return math.min(maxP - minC, maxC - minP);
   }
 }
 

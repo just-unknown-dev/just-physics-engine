@@ -4,8 +4,6 @@ Standalone physics package for Flutter projects, focused on fast 2D simulation w
 
 This package is part of the Just Game Engine workspace, but can be used independently.
 
-Current release: `0.1.0`
-
 ## Features
 
 - 2D rigid-body simulation (`PhysicsEngine`, `PhysicsBody`)
@@ -31,7 +29,7 @@ Use the package from pub.dev:
 
 ```yaml
 dependencies:
-	just_physics_engine: ^0.1.0
+	just_physics_engine: ^1.1.0
 ```
 
 Or add it with Flutter tooling:
@@ -189,6 +187,8 @@ flutter test
 
 ## Project Docs
 
+- Architecture: [ARCHITECTURE.md](ARCHITECTURE.md)
+- API Reference: [API.md](API.md)
 - Changelog: [CHANGELOG.md](CHANGELOG.md)
 - Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
 - Code of Conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)

@@ -136,8 +136,8 @@ class RigidBody {
   /// Current position.
   final Vector2 position = Vector2.zero();
 
-  /// Apply a 2D force. The z component is ignored (2D engine).
-  void applyForce(double x, double y, [double z = 0]) {
+  /// Apply a 2D force.
+  void applyForce(double x, double y) {
     _force.x += x;
     _force.y += y;
   }
@@ -189,11 +189,12 @@ class CollisionDetector {
 
 /// Applies global forces (gravity, wind, etc.) to a set of [PhysicsBody]s.
 class ForceManager {
-  /// Current gravity vector.
-  final Vector2 gravity = Vector2(0, 980);
+  /// Current gravity vector. Default matches [PhysicsEngine] and [Box2DPhysicsEngine]:
+  /// 981 units/s² (9.81 m/s² at 1 unit = 1 cm).
+  final Vector2 gravity = Vector2(0, 981.0);
 
-  /// Set gravity. The z component is ignored (2D engine).
-  void setGravity(double x, double y, [double z = 0]) {
+  /// Set gravity.
+  void setGravity(double x, double y) {
     gravity.x = x;
     gravity.y = y;
   }

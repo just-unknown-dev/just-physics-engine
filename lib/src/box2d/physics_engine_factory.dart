@@ -1,3 +1,4 @@
+import '../physics_2d/physics_engine.dart';
 import '_box2d_engine_native.dart'
     if (dart.library.html) '_box2d_engine_stub.dart';
 
@@ -9,10 +10,6 @@ import '_box2d_engine_native.dart'
 /// On Flutter Web:
 ///   returns [PhysicsEngine] — pure-Dart fallback (no FFI on web).
 ///
-/// Both return types expose the same duck-typed API:
-///   initialize(), update(dt), addBody(body), removeBody(body),
-///   renderDebug(canvas, size), stats, dispose()
-///
 /// Usage (the only required change in just_game_engine):
 /// ```dart
 /// // Before:  physics = PhysicsEngine();
@@ -21,5 +18,5 @@ import '_box2d_engine_native.dart'
 /// ```
 abstract final class PhysicsEngineFactory {
   /// Create the best available physics engine for the current platform.
-  static dynamic create() => createPhysicsEngine();
+  static PhysicsEngine create() => createPhysicsEngine();
 }

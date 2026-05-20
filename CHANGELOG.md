@@ -1,3 +1,23 @@
+## 1.1.0 - 2026-05-20
+
+Performance-focused update that streamlines 2D collision detection and simplifies the physics body force API.
+
+### Added
+
+- Architecture documentation explaining ECS integration, system lifecycle, and collision resolution pipeline.
+- Comprehensive API documentation for all public types and methods.
+- Example files demonstrating basic physics setup, rigid-body manipulation, and collision handling.
+
+### Changed
+
+- Optimized SAT collision detection to avoid temporary heap allocations during overlap checks.
+- Reworked internal polygon and circle overlap helpers to use inlined double math instead of allocating intermediate vectors and lists.
+- Simplified `PhysicsBody.applyForce()` by removing the unused `z` parameter for a cleaner 2D-only API.
+
+### Notes
+
+- This release is a behavior-preserving performance refactor for the 2D physics path.
+
 ## 1.0.0 - 2026-05-15
 
 Stable release introducing native Box2D backend support with platform-aware engine selection.

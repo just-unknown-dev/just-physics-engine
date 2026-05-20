@@ -14,7 +14,7 @@ import '../physics_2d/physics_engine.dart';
 import 'box2d_body.dart';
 import 'box2d_world.dart';
 import 'ffi/box2d_bindings.dart' show ImpactCallbackFnFunction;
-import 'ffi/box2d_library.dart';
+import 'ffi/box2d_library.dart' show box2d, loadBox2DLibrary;
 import 'physics_game_loop.dart';
 
 /// Box2D v3.0 physics engine adapter exposing the same duck-typed API as
@@ -69,6 +69,9 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   double _lastStepMs = 0.0;
   int _lastContactCount = 0;
 
+  // Persistent stopwatch — reused every frame to avoid per-update allocation.
+  final Stopwatch _stepStopwatch = Stopwatch();
+
   /// Number of Box2D sub-steps per fixed tick (4 recommended).
   final int subSteps;
 
@@ -80,7 +83,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     double gravityY = 981.0, // 9.81 m/s² at 1 unit = 1 cm
     this.subSteps = 4,
     this.numThreads = 0,
-  }) {
+  }) : super.pureDart() {
     // Set the inherited gravity vector from PhysicsEngine.
     gravity.x = gravityX;
     gravity.y = gravityY;
@@ -91,6 +94,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   @override
   void initialize() {
     try {
+      loadBox2DLibrary(); // throws if the shared library is missing
       _world = Box2DWorld(
         gravityX: gravity.x,
         gravityY: gravity.y,
@@ -122,7 +126,9 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       super.update(deltaTime);
       return;
     }
-    final sw = Stopwatch()..start();
+    _stepStopwatch
+      ..reset()
+      ..start();
 
     for (final b2Body in _bodyMap.values) {
       b2Body.capturePrevious();
@@ -132,8 +138,8 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     _syncTransformsFromNative();
     _lastContactCount = box2d.b2w_getContactBeginCount(_world!.handle);
 
-    sw.stop();
-    _lastStepMs = sw.elapsedMicroseconds / 1000.0;
+    _stepStopwatch.stop();
+    _lastStepMs = _stepStopwatch.elapsedMicroseconds / 1000.0;
   }
 
   /// Add a [PhysicsBody] to the simulation.
@@ -369,6 +375,8 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     // at their spawn positions and act as invisible ghost colliders.
 
     _world?.dispose();
+    _world = null;
+    _loop = null;
     _nativeReady = false;
     // Always clear the base-class _bodies list too. If the native init ever
     // fails and addBody fell through to super.addBody(), those bodies live in

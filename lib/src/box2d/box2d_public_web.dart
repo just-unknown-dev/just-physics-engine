@@ -85,7 +85,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     double gravityY = 981.0,
     this.subSteps = 4,
     this.numThreads = 0,
-  }) {
+  }) : super.pureDart() {
     gravity.x = gravityX;
     gravity.y = gravityY;
   }

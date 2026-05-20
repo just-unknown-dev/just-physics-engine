@@ -7,6 +7,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:just_dart/just_dart.dart';
+import '../box2d/_box2d_engine_native.dart'
+    if (dart.library.html) '../box2d/_box2d_engine_stub.dart';
 
 part 'collision_manifold.dart';
 part 'collision_shapes.dart';
@@ -15,11 +17,27 @@ part 'spatial_grid.dart';
 
 /// Main physics engine class
 class PhysicsEngine {
-  /// All physics bodies
+  /// Create the best backend for the current platform.
+  ///
+  /// Native platforms resolve to the Box2D backend.
+  /// Web resolves to the pure-Dart backend.
+  factory PhysicsEngine() => createPhysicsEngine();
+
+  /// Explicit pure-Dart backend constructor.
+  ///
+  /// Use this when you intentionally want the Dart implementation regardless
+  /// of platform selection.
+  PhysicsEngine.pureDart();
+
+  /// All physics bodies — list preserves insertion order for deterministic iteration.
   final List<PhysicsBody> _bodies = [];
 
-  /// Global gravity vector.
-  final Vector2 gravity = Vector2(0, 98.0);
+  /// Set mirror of [_bodies] for O(1) duplicate-check in [addBody].
+  final Set<PhysicsBody> _bodySet = {};
+
+  /// Global gravity vector. Default: 981 units/s² (9.81 m/s² at 1 unit = 1 cm),
+  /// matching the Box2D backend so both simulate identically.
+  final Vector2 gravity = Vector2(0, 981.0);
 
   /// Whether debug rendering is enabled
   bool debugRender = false;
@@ -82,6 +100,8 @@ class PhysicsEngine {
           }
 
           if (body.isAwake) {
+            if (body.mass <= 0) continue; // static — never integrate
+
             // Semi-Implicit Euler Integration — all in-place Vec2 ops
             // 1. Update velocity: v += accel * dt
             body.velocity.addScaled(_accel, deltaTime);
@@ -115,15 +135,17 @@ class PhysicsEngine {
 
   /// Add a physics body
   void addBody(PhysicsBody body) {
-    if (!_bodies.contains(body)) {
+    if (_bodySet.add(body)) {
       _bodies.add(body);
     }
   }
 
   /// Remove a physics body
   void removeBody(PhysicsBody body) {
-    _bodies.remove(body);
-    _grid.removeBody(body);
+    if (_bodySet.remove(body)) {
+      _bodies.remove(body);
+      _grid.removeBody(body);
+    }
   }
 
   /// Broad-phase grid
@@ -295,6 +317,7 @@ class PhysicsEngine {
   /// Clean up physics resources
   void dispose() {
     _bodies.clear();
+    _bodySet.clear();
     _grid.clear();
     debugPrint('Physics Engine disposed');
   }
@@ -317,11 +340,11 @@ class PhysicsEngine {
 
   final Map<String, List<Offset>> _shapeCache = {};
 
-  Future<void> cachePolygonShape(String cacheId, List<Offset> vertices) async {
+  void cachePolygonShape(String cacheId, List<Offset> vertices) {
     _shapeCache[cacheId] = vertices;
   }
 
-  Future<List<Offset>?> getCachedPolygonShape(String cacheId) async {
+  List<Offset>? getCachedPolygonShape(String cacheId) {
     return _shapeCache[cacheId];
   }
 }

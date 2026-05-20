@@ -17,7 +17,10 @@ class Box2DWorld implements Finalizable {
   ///
   /// Computed as `accumulator / fixedDt` after the last [step] call.
   /// Use as: `renderPos = current * alpha + previous * (1.0 - alpha)`.
-  double get alpha => _accumulator / _fixedDt;
+  double get alpha {
+    _throwIfDisposed();
+    return _accumulator / _fixedDt;
+  }
 
   // NativeFinalizer safety net: calls `b2w_finalizer_world(token)` if Dart GC
   // collects this object before dispose() is called.
@@ -51,7 +54,10 @@ class Box2DWorld implements Finalizable {
     return Box2DWorld._(handle: h, subSteps: subSteps);
   }
 
-  int get handle => _handle;
+  int get handle {
+    _throwIfDisposed();
+    return _handle;
+  }
 
   /// Advance the simulation using a fixed-timestep accumulator.
   ///

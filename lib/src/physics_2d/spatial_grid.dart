@@ -34,7 +34,9 @@ class SpatialGrid {
   // heap allocation in hot paths.
   final List<PhysicsBody> _removedScratch = [];
   final List<BodyPair> _pairBuffer = [];
-  final Set<int> _pairKeySet = {};
+  // BodyPair.== is symmetric and PhysicsBody uses identity hashCode,
+  // so this Set correctly deduplicates (a,b) and (b,a) as the same pair.
+  final Set<BodyPair> _seenPairs = {};
 
   int _lastDirtyBodyCount = 0;
 
@@ -169,23 +171,19 @@ class SpatialGrid {
   /// the current physics tick.
   List<BodyPair> getPotentialCollisions() {
     _pairBuffer.clear();
-    _pairKeySet.clear();
+    _seenPairs.clear();
     for (final bin in cells.values) {
       if (bin.length > 1) {
         for (int i = 0; i < bin.length; i++) {
           for (int j = i + 1; j < bin.length; j++) {
             final a = bin[i];
             final b = bin[j];
-            // Deterministic pair key: use min/max identity hash codes so
-            // (a,b) and (b,a) map to the same integer, avoiding duplicates
-            // without allocating a BodyPair for the Set check.
-            final idA = identityHashCode(a);
-            final idB = identityHashCode(b);
-            final minId = idA < idB ? idA : idB;
-            final maxId = idA < idB ? idB : idA;
-            final key = minId * 0x100003 ^ maxId;
-            if (_pairKeySet.add(key)) {
-              _pairBuffer.add(BodyPair(a, b));
+            // Cell-hash collisions can place the same body in a bucket twice,
+            // producing meaningless self-pairs. Skip them before Set lookup.
+            if (identical(a, b)) continue;
+            final pair = BodyPair(a, b);
+            if (_seenPairs.add(pair)) {
+              _pairBuffer.add(pair);
             }
           }
         }

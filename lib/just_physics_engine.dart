@@ -20,8 +20,8 @@
 /// - [PhysicsGameLoop]       — fixed-timestep coordinator
 /// - [TransformInterpolator] — sub-frame render interpolation (α-blending)
 ///
-/// 3D (stub):
-/// - [PhysicsEngine3D], [PhysicsBody3D], [SphereShape3D], [BoxShape3D]
+/// 3D (stub, not yet implemented):
+/// - [PhysicsEngine3D]
 library;
 
 // ── Pure-Dart 2D backend (web fallback, unchanged) ─────────────────────────

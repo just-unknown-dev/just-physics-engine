@@ -83,14 +83,27 @@ class Box2DBody implements Finalizable {
     box2d.b2w_destroyBody(_handle);
   }
 
-  void applyForce(double fx, double fy) =>
-      box2d.b2w_applyForce(_handle, fx, fy);
+  void applyForce(double fx, double fy) {
+    _throwIfDestroyed();
+    box2d.b2w_applyForce(_handle, fx, fy);
+  }
 
-  void applyLinearImpulse(double ix, double iy) =>
-      box2d.b2w_applyLinearImpulse(_handle, ix, iy);
+  void applyLinearImpulse(double ix, double iy) {
+    _throwIfDestroyed();
+    box2d.b2w_applyLinearImpulse(_handle, ix, iy);
+  }
 
-  void applyTorque(double t) => box2d.b2w_applyTorque(_handle, t);
+  void applyTorque(double t) {
+    _throwIfDestroyed();
+    box2d.b2w_applyTorque(_handle, t);
+  }
 
-  void setLinearVelocity(double vx, double vy) =>
-      box2d.b2w_setLinearVelocity(_handle, vx, vy);
+  void setLinearVelocity(double vx, double vy) {
+    _throwIfDestroyed();
+    box2d.b2w_setLinearVelocity(_handle, vx, vy);
+  }
+
+  void _throwIfDestroyed() {
+    if (_destroyed) throw StateError('Box2DBody has already been destroyed.');
+  }
 }

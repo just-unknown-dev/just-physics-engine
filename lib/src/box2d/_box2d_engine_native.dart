@@ -1,3 +1,4 @@
+import '../physics_2d/physics_engine.dart';
 import 'box2d_physics_engine.dart';
 
 /// Returns a [Box2DPhysicsEngine] on native platforms (Android, iOS,
@@ -6,4 +7,4 @@ import 'box2d_physics_engine.dart';
 /// Imported conditionally by physics_engine_factory.dart:
 ///   import '_box2d_engine_native.dart'
 ///       if (dart.library.html) '_box2d_engine_stub.dart';
-dynamic createPhysicsEngine() => Box2DPhysicsEngine();
+PhysicsEngine createPhysicsEngine() => Box2DPhysicsEngine();
