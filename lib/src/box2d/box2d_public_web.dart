@@ -1,3 +1,5 @@
+import 'dart:ui' show Offset;
+
 import '../physics_2d/physics_engine.dart';
 
 export 'physics_engine_factory.dart';
@@ -65,18 +67,41 @@ class Box2DBody {
     prevAngle = currentAngle;
   }
 
-  void destroy() {}
+  void destroy() =>
+      throw UnsupportedError('Box2DBody is not available on web — use PhysicsBody via PhysicsEngine instead.');
 
-  void applyForce(double fx, double fy) {}
+  void applyForce(double fx, double fy) =>
+      throw UnsupportedError('Box2DBody.applyForce is not available on web.');
 
-  void applyLinearImpulse(double ix, double iy) {}
+  void applyLinearImpulse(double ix, double iy) =>
+      throw UnsupportedError('Box2DBody.applyLinearImpulse is not available on web.');
 
-  void applyTorque(double t) {}
+  void applyTorque(double t) =>
+      throw UnsupportedError('Box2DBody.applyTorque is not available on web.');
 
   void setLinearVelocity(double vx, double vy) {
     velocityX = vx;
     velocityY = vy;
   }
+}
+
+class Box2DJoint extends JointConstraint {
+  Box2DJoint._(super.type);
+
+  bool get isDestroyed => true;
+  void destroy() {}
+  @override
+  void applyConstraint(double dt) {}
+  void setRevoluteLimits(double lower, double upper, {bool enable = true}) {}
+  void setRevoluteMotor(double speed, double maxTorque, {bool enable = true}) {}
+  void setPrismaticLimits(double lower, double upper, {bool enable = true}) {}
+  void setPrismaticMotor(double speed, double maxForce, {bool enable = true}) {}
+  void setDistanceLimits(double minLen, double maxLen) {}
+  void setDistanceSpring(double stiffness, double damping) {}
+  void setTarget(double x, double y) {}
+  void setWheelSpring(double stiffness, double damping) {}
+  void setWheelMotor(double speed, double maxTorque, {bool enable = true}) {}
+  double get reactionTorque => 0.0;
 }
 
 class Box2DPhysicsEngine extends PhysicsEngine {
@@ -98,6 +123,13 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     ...super.stats,
     'backend': 'dart_fallback_web_stub',
   };
+
+  Box2DJoint? createWheelJoint(
+    PhysicsBody bodyA,
+    PhysicsBody bodyB,
+    Offset worldAnchor,
+    Offset axis,
+  ) => null;
 }
 
 class PhysicsGameLoop {

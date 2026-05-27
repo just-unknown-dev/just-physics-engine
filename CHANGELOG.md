@@ -1,3 +1,31 @@
+## 1.2.0 - 2026-05-27
+
+Feature release focused on richer 2D authoring/query APIs, compound bodies, and broader Box2D parity for joints and sensors.
+
+### Added
+
+- New 2D collision shapes: `CapsuleShape`, `SegmentShape`, `ChainShape`, and `RoundedPolygonShape`.
+- Compound-body support through `PhysicsBody.additionalShapes`, `PhysicsBody.isCompound`, and aggregate bounds handling for broad-phase collision.
+- World query APIs: `castRay()`, `castRayAll()`, `castCircle()`, `queryAABB()`, `queryCircle()`, and `queryPoint()`.
+- New query result types: `RayBodyHit` and `ShapeCastResult`.
+- Joint constraint support for the pure-Dart engine: `DistanceJoint`, `MouseJoint`, `WeldJoint`, `RevoluteJoint`, `PrismaticJoint`, and `WheelJoint` via the unified engine API.
+- Native Box2D joint wrappers and configuration helpers through `Box2DJoint` plus creation APIs for revolute, prismatic, distance, weld, and wheel joints.
+- Sensor begin/end polling across both backends, plus native Box2D sensor event bridging.
+- Expanded collision filtering and body flags with `categoryBits`, `maskBits`, `groupIndex`, and `isBullet` on `PhysicsBody`.
+- Comprehensive test coverage for joints, collision primitives, engine lifecycle, and query helpers.
+
+### Changed
+
+- Spatial grid broad-phase now uses compound bounds so multi-shape bodies are culled correctly.
+- Native Box2D fixture creation now applies sensor state during shape creation and supports rounded polygon, capsule, segment, and chain fixtures.
+- Web-safe Box2D public stubs were expanded to stay import-compatible with the new joint API surface.
+- `PhysicsEngine3D` is now explicitly marked experimental.
+
+### Notes
+
+- This release expands the 2D gameplay API significantly while keeping the package centered on a shared pure-Dart and Box2D-backed interface.
+- On the Box2D backend, mouse-joint behavior still falls back to the Dart-side spring constraint because Box2D v3 no longer exposes a native mouse joint.
+
 ## 1.1.0 - 2026-05-20
 
 Performance-focused update that streamlines 2D collision detection and simplifies the physics body force API.

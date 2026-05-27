@@ -7,6 +7,7 @@ import 'dart:ui'
 import 'package:flutter/foundation.dart' show debugPrint;
 
 import 'package:ffi/ffi.dart';
+import 'package:just_dart/just_dart.dart' show Vector2;
 
 // PhysicsBody, CollisionShape, CircleShape, RectangleShape, PolygonShape are
 // all part-files of physics_engine.dart — import the library, not the parts.
@@ -15,6 +16,7 @@ import 'box2d_body.dart';
 import 'box2d_world.dart';
 import 'ffi/box2d_bindings.dart' show ImpactCallbackFnFunction;
 import 'ffi/box2d_library.dart' show box2d, loadBox2DLibrary;
+import 'box2d_joint.dart';
 import 'physics_game_loop.dart';
 
 /// Box2D v3.0 physics engine adapter exposing the same duck-typed API as
@@ -59,6 +61,15 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   Pointer<Float>? _transformBuffer; // 6 floats per body: x,y,angle,vx,vy,pad
   int _bufferCapacity = 0;
 
+  // ── Dart-side sensor event accumulators ──────────────────────────────────
+  // Populated during update() immediately after b2w_step so events are never
+  // lost due to ticker ordering between the game loop and the demo ticker.
+
+  final List<({PhysicsBody sensor, PhysicsBody visitor})>
+  _nativeSensorBeginBuf = [];
+  final List<({PhysicsBody sensor, PhysicsBody visitor})>
+  _nativeSensorEndBuf = [];
+
   // ── NativeCallable for cross-thread impact audio callback ──────────────────
 
   NativeCallable<ImpactCallbackFnFunction>? _impactCallable;
@@ -93,6 +104,11 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
   @override
   void initialize() {
+    // Reset buffer state so a second initialize() call (after dispose()) does
+    // not skip re-allocation and cause a null assertion in _syncTransformsFromNative.
+    _bufferCapacity = 0;
+    _handleBuffer = null;
+    _transformBuffer = null;
     try {
       loadBox2DLibrary(); // throws if the shared library is missing
       _world = Box2DWorld(
@@ -106,6 +122,8 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     } catch (e) {
       // Native library not compiled yet (e.g. Box2D submodule not initialized).
       // Fall back to the pure-Dart engine so the app keeps running.
+      // debugPrint makes the fallback visible rather than silent — check logs if
+      // physics performance is unexpectedly low on a native platform.
       debugPrint(
         'Box2DPhysicsEngine: native init failed ($e) — falling back to pure-Dart',
       );
@@ -137,9 +155,58 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     _lastStepCount = _loop!.advance(deltaTime);
     _syncTransformsFromNative();
     _lastContactCount = box2d.b2w_getContactBeginCount(_world!.handle);
+    _pumpNativeSensorEvents();
 
     _stepStopwatch.stop();
     _lastStepMs = _stepStopwatch.elapsedMicroseconds / 1000.0;
+  }
+
+  /// Drain native sensor events into Dart-side buffers immediately after
+  /// b2w_step, so events survive until [pollSensorBeginEvents] is called
+  /// regardless of ticker ordering.
+  void _pumpNativeSensorEvents() {
+    _nativeSensorBeginBuf.clear();
+    _nativeSensorEndBuf.clear();
+
+    final beginCount = box2d.b2w_getSensorBeginCount(_world!.handle);
+    if (beginCount > 0) {
+      final outSensor = calloc<Int64>();
+      final outVisitor = calloc<Int64>();
+      try {
+        for (int i = 0; i < beginCount; i++) {
+          box2d.b2w_getSensorBeginEvent(_world!.handle, i, outSensor, outVisitor);
+          final pSensor = _handleToBody[outSensor.value];
+          final pVisitor = _handleToBody[outVisitor.value];
+          if (pSensor != null && pVisitor != null) {
+            _nativeSensorBeginBuf.add((sensor: pSensor, visitor: pVisitor));
+          }
+        }
+      } finally {
+        calloc
+          ..free(outSensor)
+          ..free(outVisitor);
+      }
+    }
+
+    final endCount = box2d.b2w_getSensorEndCount(_world!.handle);
+    if (endCount > 0) {
+      final outSensor = calloc<Int64>();
+      final outVisitor = calloc<Int64>();
+      try {
+        for (int i = 0; i < endCount; i++) {
+          box2d.b2w_getSensorEndEvent(_world!.handle, i, outSensor, outVisitor);
+          final pSensor = _handleToBody[outSensor.value];
+          final pVisitor = _handleToBody[outVisitor.value];
+          if (pSensor != null && pVisitor != null) {
+            _nativeSensorEndBuf.add((sensor: pSensor, visitor: pVisitor));
+          }
+        }
+      } finally {
+        calloc
+          ..free(outSensor)
+          ..free(outVisitor);
+      }
+    }
   }
 
   /// Add a [PhysicsBody] to the simulation.
@@ -173,7 +240,24 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       );
     }
 
+    // Register sensor/bullet BEFORE adding shape fixtures so the C wrapper
+    // applies isSensor to b2ShapeDef at creation time.
+    if (body.isSensor) {
+      box2d.b2w_setBodySensor(b2Body.handle, 1);
+    }
+    if (body.isBullet) {
+      box2d.b2w_setBodyBullet(b2Body.handle, 1);
+    }
+
     _addShapeFixture(b2Body, body);
+
+    // Collision filter can be applied post-creation.
+    box2d.b2w_setBodyFilter(
+      b2Body.handle,
+      body.categoryBits,
+      body.maskBits,
+      body.groupIndex,
+    );
 
     _bodyMap[body] = b2Body;
     _handleToBody[b2Body.handle] = body;
@@ -206,54 +290,90 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
 
+    final extraPaint = Paint()
+      ..color = const Color(0xFF00CCFF)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+
     for (final entry in _bodyMap.entries) {
       final body = entry.key;
       final b2 = entry.value;
       final paint = body.mass <= 0.0 ? staticPaint : strokePaint;
-      final shape = body.shape;
 
       canvas.save();
       canvas.translate(b2.currentX, b2.currentY);
       canvas.rotate(b2.currentAngle);
 
-      if (shape is CircleShape) {
-        canvas.drawCircle(Offset.zero, shape.radius, paint);
-        // Draw orientation line so rotation is visible.
-        canvas.drawLine(Offset.zero, Offset(shape.radius, 0), paint);
-      } else if (shape is RectangleShape) {
-        canvas.drawRect(
-          Rect.fromCenter(
-            center: Offset.zero,
-            width: shape.width,
-            height: shape.height,
-          ),
-          paint,
-        );
-      } else if (shape is PolygonShape) {
-        if (shape.vertices.isNotEmpty) {
-          final path = Path()
-            ..moveTo(shape.vertices.first.dx, shape.vertices.first.dy);
-          for (final v in shape.vertices.skip(1)) {
-            path.lineTo(v.dx, v.dy);
-          }
-          path.close();
-          canvas.drawPath(path, paint);
-        }
+      _drawShape(canvas, body.shape, paint);
+      for (final extra in body.additionalShapes) {
+        _drawShape(canvas, extra, extraPaint);
       }
 
       canvas.restore();
     }
   }
 
+  void _drawShape(Canvas canvas, CollisionShape shape, Paint paint) {
+    if (shape is CircleShape) {
+      canvas.drawCircle(Offset.zero, shape.radius, paint);
+      canvas.drawLine(Offset.zero, Offset(shape.radius, 0), paint);
+    } else if (shape is CapsuleShape) {
+      canvas.drawCircle(shape.center1, shape.radius, paint);
+      canvas.drawCircle(shape.center2, shape.radius, paint);
+      canvas.drawLine(shape.center1, shape.center2, paint);
+    } else if (shape is ChainShape) {
+      for (int i = 0; i < shape.vertices.length - 1; i++) {
+        canvas.drawLine(shape.vertices[i], shape.vertices[i + 1], paint);
+      }
+      if (shape.loop && shape.vertices.length > 1) {
+        canvas.drawLine(shape.vertices.last, shape.vertices.first, paint);
+      }
+    } else if (shape is SegmentShape) {
+      canvas.drawLine(shape.point1, shape.point2, paint);
+    } else if (shape is RectangleShape) {
+      canvas.drawRect(
+        Rect.fromCenter(
+          center: Offset.zero,
+          width: shape.width,
+          height: shape.height,
+        ),
+        paint,
+      );
+    } else if (shape is PolygonShape) {
+      if (shape.vertices.isNotEmpty) {
+        final path = Path()
+          ..moveTo(shape.vertices.first.dx, shape.vertices.first.dy);
+        for (final v in shape.vertices.skip(1)) {
+          path.lineTo(v.dx, v.dy);
+        }
+        path.close();
+        canvas.drawPath(path, paint);
+      }
+    }
+  }
+
+  // Stats include all pure-Dart keys (awakeBodies, potentialPairs,
+  // resolvedCollisions, broadphaseDirtyBodies, trackedCells) so callers can
+  // write backend-agnostic diagnostics regardless of which engine is active.
   @override
-  Map<String, dynamic> get stats => {
-    'bodyCount': _nativeReady ? _bodyMap.length : super.bodies.length,
-    'lastStepCount': _lastStepCount,
-    'lastStepMs': _lastStepMs,
-    'contactCount': _lastContactCount,
-    'alpha': _world?.alpha ?? 0.0,
-    'backend': _nativeReady ? 'box2d_v3' : 'dart_fallback',
-  };
+  Map<String, dynamic> get stats => _nativeReady
+      ? {
+          ...super.stats, // pure-Dart keys with zero values when native is running
+          'bodyCount': _bodyMap.length,
+          'awakeBodies': _bodyMap.length, // all native bodies are active
+          'lastStepCount': _lastStepCount,
+          'lastStepMs': _lastStepMs,
+          'contactCount': _lastContactCount,
+          'alpha': _world?.alpha ?? 0.0,
+          'backend': 'box2d_v3',
+        }
+      : {
+          ...super.stats,
+          'lastStepCount': 0,
+          'contactCount': 0,
+          'alpha': 0.0,
+          'backend': 'dart_fallback',
+        };
 
   @override
   List<PhysicsBody> get bodies =>
@@ -270,9 +390,14 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
   // ── Contact event polling ─────────────────────────────────────────────────
   //
-  // Call this from just_game_engine's Box2DCollisionSystem (priority 88) to
-  // translate contact events into ECS CollisionEvents on the event bus.
-  // This keeps just_physics_engine free of ECS dependencies.
+  // CONTRACT: call [pollContactBeginEvents] exactly once per frame, after
+  // [update] and before the next [update] call. The native buffer is cleared
+  // at the start of each step, so events not polled within the same frame are
+  // permanently lost.
+  //
+  // In just_game_engine this is called from Box2DCollisionSystem (priority 88),
+  // which runs after physics (priority 90) and before rendering (priority < 50).
+  // Any caller must maintain the same relative ordering.
 
   /// Iterate all begin-touch contact events from the last step.
   ///
@@ -314,6 +439,245 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     }
   }
 
+  // ── Body movement event polling ───────────────────────────────────────────
+
+  @override
+  void pollBodyMoveEvents(
+    void Function(PhysicsBody body, {required bool fellAsleep}) fn,
+  ) {
+    if (!_nativeReady) {
+      super.pollBodyMoveEvents(fn);
+      return;
+    }
+    final count = box2d.b2w_getBodyMoveEventCount(_world!.handle);
+    if (count == 0) return;
+
+    final outBody = calloc<Int64>();
+    final outSleep = calloc<Int32>();
+    try {
+      for (int i = 0; i < count; i++) {
+        box2d.b2w_getBodyMoveEvent(_world!.handle, i, outBody, outSleep);
+        final body = _handleToBody[outBody.value];
+        if (body != null) {
+          fn(body, fellAsleep: outSleep.value != 0);
+        }
+      }
+    } finally {
+      calloc
+        ..free(outBody)
+        ..free(outSleep);
+    }
+  }
+
+  // ── Sensor event polling ──────────────────────────────────────────────────
+
+  /// Iterate sensor-begin events (sensor body first touched by visitor).
+  @override
+  void pollSensorBeginEvents(
+    void Function(PhysicsBody sensor, PhysicsBody visitor) fn,
+  ) {
+    if (!_nativeReady) {
+      super.pollSensorBeginEvents(fn);
+      return;
+    }
+    for (final e in _nativeSensorBeginBuf) {
+      fn(e.sensor, e.visitor);
+    }
+  }
+
+  /// Iterate sensor-end events (visitor left the sensor).
+  @override
+  void pollSensorEndEvents(
+    void Function(PhysicsBody sensor, PhysicsBody visitor) fn,
+  ) {
+    if (!_nativeReady) {
+      super.pollSensorEndEvents(fn);
+      return;
+    }
+    for (final e in _nativeSensorEndBuf) {
+      fn(e.sensor, e.visitor);
+    }
+  }
+
+  // ── Joint factory (Box2D FFI backend) ────────────────────────────────────
+  //
+  // These methods create native joints and also call addJoint() so the base
+  // class tracks them for dispose() and the Dart fallback can list them.
+  // Box2DJoint.applyConstraint() is a no-op — Box2D handles it natively.
+
+  Box2DJoint? createRevoluteJoint(
+    PhysicsBody bodyA,
+    PhysicsBody bodyB,
+    Offset worldAnchor,
+  ) {
+    if (!_nativeReady) return null;
+    final b2A = _bodyMap[bodyA];
+    final b2B = _bodyMap[bodyB];
+    if (b2A == null || b2B == null) return null;
+    final joint = Box2DJointFactory.createRevolute(
+      _world!.handle,
+      b2A.handle,
+      b2B.handle,
+      worldAnchor,
+    );
+    addJoint(joint);
+    return joint;
+  }
+
+  Box2DJoint? createPrismaticJoint(
+    PhysicsBody bodyA,
+    PhysicsBody bodyB,
+    Offset worldAnchor,
+    Offset axis,
+  ) {
+    if (!_nativeReady) return null;
+    final b2A = _bodyMap[bodyA];
+    final b2B = _bodyMap[bodyB];
+    if (b2A == null || b2B == null) return null;
+    final joint = Box2DJointFactory.createPrismatic(
+      _world!.handle,
+      b2A.handle,
+      b2B.handle,
+      worldAnchor,
+      axis,
+    );
+    addJoint(joint);
+    return joint;
+  }
+
+  Box2DJoint? createDistanceJoint(
+    PhysicsBody bodyA,
+    PhysicsBody bodyB, {
+    required double minLength,
+    required double maxLength,
+  }) {
+    if (!_nativeReady) return null;
+    final b2A = _bodyMap[bodyA];
+    final b2B = _bodyMap[bodyB];
+    if (b2A == null || b2B == null) return null;
+    final joint = Box2DJointFactory.createDistance(
+      _world!.handle,
+      b2A.handle,
+      b2B.handle,
+      minLength,
+      maxLength,
+    );
+    addJoint(joint);
+    return joint;
+  }
+
+  Box2DJoint? createMouseJoint(PhysicsBody bodyB, Offset target) {
+    // Box2D v3.0 removed the native mouse joint; fall back to the pure-Dart
+    // MouseJoint which provides equivalent spring-damper drag behaviour.
+    // The returned joint is a JointConstraint, not a Box2DJoint — callers
+    // that downcast to Box2DJoint must handle null.
+    super.addMouseJoint(bodyB, Vector2(target.dx, target.dy));
+    return null;
+  }
+
+  Box2DJoint? createWeldJoint(
+    PhysicsBody bodyA,
+    PhysicsBody bodyB,
+    Offset worldAnchor,
+  ) {
+    if (!_nativeReady) return null;
+    final b2A = _bodyMap[bodyA];
+    final b2B = _bodyMap[bodyB];
+    if (b2A == null || b2B == null) return null;
+    final joint = Box2DJointFactory.createWeld(
+      _world!.handle,
+      b2A.handle,
+      b2B.handle,
+      worldAnchor,
+    );
+    addJoint(joint);
+    return joint;
+  }
+
+  Box2DJoint? createWheelJoint(
+    PhysicsBody bodyA,
+    PhysicsBody bodyB,
+    Offset worldAnchor,
+    Offset axis,
+  ) {
+    if (!_nativeReady) return null;
+    final b2A = _bodyMap[bodyA];
+    final b2B = _bodyMap[bodyB];
+    if (b2A == null || b2B == null) return null;
+    final joint = Box2DJointFactory.createWheel(
+      _world!.handle,
+      b2A.handle,
+      b2B.handle,
+      worldAnchor,
+      axis,
+    );
+    addJoint(joint);
+    return joint;
+  }
+
+  // ── Unified joint API overrides (delegates to native Box2D) ─────────────
+
+  @override
+  JointConstraint addRevoluteJoint(
+    PhysicsBody a,
+    PhysicsBody b,
+    Offset worldAnchor,
+  ) {
+    final native = createRevoluteJoint(a, b, worldAnchor);
+    return native ?? super.addRevoluteJoint(a, b, worldAnchor);
+  }
+
+  @override
+  JointConstraint addDistanceJoint(
+    PhysicsBody a,
+    PhysicsBody b, {
+    double? length,
+    double? minLength,
+    double? maxLength,
+    double stiffness = 0.0,
+    double damping = 0.3,
+  }) {
+    final l = length ?? ((b.position - a.position).length);
+    final mn = minLength ?? l;
+    final mx = maxLength ?? l;
+    final native = createDistanceJoint(a, b, minLength: mn, maxLength: mx);
+    if (native != null && stiffness > 0) {
+      native.setDistanceSpring(stiffness, damping);
+    }
+    return native ??
+        super.addDistanceJoint(
+          a,
+          b,
+          length: l,
+          minLength: minLength,
+          maxLength: maxLength,
+          stiffness: stiffness,
+          damping: damping,
+        );
+  }
+
+  @override
+  JointConstraint addWeldJoint(PhysicsBody a, PhysicsBody b) {
+    final anchor = Offset(
+      (a.position.x + b.position.x) / 2,
+      (a.position.y + b.position.y) / 2,
+    );
+    final native = createWeldJoint(a, b, anchor);
+    return native ?? super.addWeldJoint(a, b);
+  }
+
+  @override
+  JointConstraint addMouseJoint(PhysicsBody b, Vector2 target) {
+    final native = createMouseJoint(b, Offset(target.x, target.y));
+    return native ?? super.addMouseJoint(b, target);
+  }
+
+  /// Destroy a Box2D joint and remove it from the engine's joint list.
+  void destroyJoint(Box2DJoint joint) {
+    joint.destroy();
+    removeJoint(joint);
+  }
+
   // ── NativeCallable.listener — cross-thread audio impact callback ──────────
 
   /// Register a Dart callback to fire (on the main isolate) whenever a
@@ -344,6 +708,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   PhysicsBody? physicsBodyFromHandle(int handle) => _handleToBody[handle];
 
   /// Render interpolation alpha from the current frame (for ECS bridge use).
+  @override
   double get alpha => _loop?.alpha ?? 1.0;
 
   // ── Dispose ───────────────────────────────────────────────────────────────
@@ -387,28 +752,113 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   // ── Private helpers ───────────────────────────────────────────────────────
 
   void _addShapeFixture(Box2DBody b2Body, PhysicsBody body) {
-    final shape = body.shape;
     final density = (body.mass > 0) ? 1.0 : 0.0;
-    final friction = body.friction;
-    final restitution = body.restitution;
+    _addSingleShape(
+      b2Body.handle,
+      body.shape,
+      density,
+      body.friction,
+      body.restitution,
+    );
+    for (final extra in body.additionalShapes) {
+      _addSingleShape(
+        b2Body.handle,
+        extra,
+        density,
+        body.friction,
+        body.restitution,
+      );
+    }
+  }
 
+  void _addSingleShape(
+    int handle,
+    CollisionShape shape,
+    double density,
+    double friction,
+    double restitution,
+  ) {
     if (shape is CircleShape) {
       box2d.b2w_addCircleShape(
-        b2Body.handle,
+        handle,
         shape.radius,
         density,
         friction,
         restitution,
       );
+    } else if (shape is CapsuleShape) {
+      box2d.b2w_addCapsuleShape(
+        handle,
+        shape.center1.dx,
+        shape.center1.dy,
+        shape.center2.dx,
+        shape.center2.dy,
+        shape.radius,
+        density,
+        friction,
+        restitution,
+      );
+    } else if (shape is SegmentShape) {
+      box2d.b2w_addSegmentShape(
+        handle,
+        shape.point1.dx,
+        shape.point1.dy,
+        shape.point2.dx,
+        shape.point2.dy,
+        density,
+        friction,
+        restitution,
+      );
+    } else if (shape is ChainShape && shape.vertices.length >= 2) {
+      final pts = Float32List(shape.vertices.length * 2);
+      for (int i = 0; i < shape.vertices.length; i++) {
+        pts[i * 2] = shape.vertices[i].dx;
+        pts[i * 2 + 1] = shape.vertices[i].dy;
+      }
+      final ptr = calloc<Float>(pts.length);
+      try {
+        ptr.asTypedList(pts.length).setAll(0, pts);
+        box2d.b2w_addChainShape(
+          handle,
+          ptr,
+          shape.vertices.length,
+          shape.loop ? 1 : 0,
+          friction,
+          restitution,
+        );
+      } finally {
+        calloc.free(ptr);
+      }
     } else if (shape is RectangleShape) {
       box2d.b2w_addBoxShape(
-        b2Body.handle,
+        handle,
         shape.width / 2,
         shape.height / 2,
         density,
         friction,
         restitution,
       );
+    } else if (shape is RoundedPolygonShape) {
+      final verts = Float32List(shape.vertices.length * 2);
+      for (int i = 0; i < shape.vertices.length; i++) {
+        verts[i * 2] = shape.vertices[i].dx;
+        verts[i * 2 + 1] = shape.vertices[i].dy;
+      }
+      final ptr = calloc<Float>(verts.length);
+      try {
+        ptr.asTypedList(verts.length).setAll(0, verts);
+        box2d.b2w_addRoundedPolygonShape(
+          handle,
+          ptr,
+          shape.vertices.length,
+          shape.cornerRadius,
+          density,
+          friction,
+          restitution,
+        );
+      } finally {
+        calloc.free(ptr);
+      }
     } else if (shape is PolygonShape) {
       final verts = Float32List(shape.vertices.length * 2);
       for (int i = 0; i < shape.vertices.length; i++) {
@@ -419,7 +869,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       try {
         ptr.asTypedList(verts.length).setAll(0, verts);
         box2d.b2w_addPolygonShape(
-          b2Body.handle,
+          handle,
           ptr,
           shape.vertices.length,
           density,

@@ -65,6 +65,36 @@ void b2w_addPolygonShape(int64_t bodyHandle,
                           const float* verts, int32_t count,
                           float density, float friction, float restitution);
 
+/// Attach a convex polygon with rounded corners (Box2D radius parameter).
+/// verts: interleaved (x0,y0, x1,y1, ...) array of `count` vertices.
+void b2w_addRoundedPolygonShape(int64_t bodyHandle,
+                                 const float* verts, int32_t count,
+                                 float cornerRadius,
+                                 float density, float friction, float restitution);
+
+/// Attach a capsule (two circles of equal radius joined by a segment).
+/// (cx1,cy1) and (cx2,cy2) are the two center offsets relative to body origin.
+void b2w_addCapsuleShape(int64_t bodyHandle,
+                          float cx1, float cy1, float cx2, float cy2,
+                          float radius,
+                          float density, float friction, float restitution);
+
+/// Attach a single line-segment fixture (static geometry).
+void b2w_addSegmentShape(int64_t bodyHandle,
+                          float x1, float y1, float x2, float y2,
+                          float density, float friction, float restitution);
+
+/// Attach a chain-of-segments fixture.
+/// points: interleaved (x0,y0, x1,y1, ...) array of `count` vertices.
+/// If loop != 0 the last point connects back to the first.
+/// Returns a packed int64 chain handle; pass to b2w_destroyChain to remove it.
+int64_t b2w_addChainShape(int64_t bodyHandle,
+                           const float* points, int32_t count, int32_t loop,
+                           float friction, float restitution);
+
+/// Destroy a chain shape previously created with b2w_addChainShape.
+void b2w_destroyChain(int64_t chainHandle);
+
 // ── Forces & impulses ────────────────────────────────────────────────────────
 
 /// Apply a force at the body's mass centre (accumulates until next step).
@@ -117,6 +147,38 @@ int32_t b2w_getContactEndCount(int64_t worldHandle);
 void b2w_getContactEndEvent(int64_t worldHandle, int32_t index,
                              int64_t* outBodyA, int64_t* outBodyB);
 
+// ── Sensor events (polled once per step) ─────────────────────────────────────
+
+/// Number of sensor-begin events from the last step.
+int32_t b2w_getSensorBeginCount(int64_t worldHandle);
+
+/// Read one sensor-begin event by index.
+/// Writes the sensor body and visitor body as packed int64 handles.
+void b2w_getSensorBeginEvent(int64_t worldHandle, int32_t index,
+                              int64_t* outSensorBody, int64_t* outVisitorBody);
+
+/// Number of sensor-end events from the last step.
+int32_t b2w_getSensorEndCount(int64_t worldHandle);
+
+/// Read one sensor-end event by index.
+void b2w_getSensorEndEvent(int64_t worldHandle, int32_t index,
+                            int64_t* outSensorBody, int64_t* outVisitorBody);
+
+// ── Sensor / filter setters ───────────────────────────────────────────────────
+
+/// Mark all shapes on a body as sensor (isSensor != 0) or solid (isSensor == 0).
+void b2w_setBodySensor(int64_t bodyHandle, int32_t isSensor);
+
+/// Set the collision filter on all shapes of a body.
+void b2w_setBodyFilter(int64_t bodyHandle,
+                        uint32_t categoryBits, uint32_t maskBits,
+                        int32_t groupIndex);
+
+/// Enable or disable Continuous Collision Detection (bullet mode) on a body.
+/// isBullet != 0 → CCD enabled; prevents fast bodies from tunnelling through
+/// thin static geometry. Only meaningful for dynamic bodies.
+void b2w_setBodyBullet(int64_t bodyHandle, int32_t isBullet);
+
 // ── NativeCallable.listener — cross-thread collision audio callback ───────────
 //
 // Register a Dart function (via NativeCallable<ImpactCallbackC>.listener)
@@ -133,6 +195,104 @@ typedef void (*ImpactCallbackFn)(int64_t bodyA, int64_t bodyB, float speed);
 void b2w_setImpactCallback(int64_t worldHandle,
                             ImpactCallbackFn callback,
                             float speedThreshold);
+
+// ── Body movement events (polled once per step) ───────────────────────────────
+
+/// Number of body-move events from the last step.
+/// A body-move event fires for every dynamic body that moved, including when it
+/// goes to sleep (check fellAsleep flag).
+int32_t b2w_getBodyMoveEventCount(int64_t worldHandle);
+
+/// Read one body-move event by index.
+/// outBodyHandle: packed body int64 handle.
+/// outFellAsleep: 1 if the body fell asleep this step, else 0.
+void b2w_getBodyMoveEvent(int64_t worldHandle, int32_t index,
+                           int64_t* outBodyHandle, int32_t* outFellAsleep);
+
+// ── Joints ────────────────────────────────────────────────────────────────────
+//
+// Joint IDs are packed into int64_t using the same scheme as body IDs.
+// Returns 0 if creation fails.
+
+/// Create a revolute joint (hinge) between two bodies at a shared world anchor.
+int64_t b2w_createRevoluteJoint(int64_t worldHandle,
+                                 int64_t bodyA, int64_t bodyB,
+                                 float anchorX, float anchorY);
+
+/// Create a prismatic (slider) joint along the given world axis.
+int64_t b2w_createPrismaticJoint(int64_t worldHandle,
+                                  int64_t bodyA, int64_t bodyB,
+                                  float anchorX, float anchorY,
+                                  float axisX,   float axisY);
+
+/// Create a distance joint keeping bodies within [minLen, maxLen].
+int64_t b2w_createDistanceJoint(int64_t worldHandle,
+                                 int64_t bodyA, int64_t bodyB,
+                                 float minLen, float maxLen);
+
+/// Create a mouse joint that pulls bodyB toward a target point.
+int64_t b2w_createMouseJoint(int64_t worldHandle,
+                               int64_t bodyB,
+                               float targetX, float targetY);
+
+/// Create a weld (rigid) joint locking two bodies at a world anchor.
+int64_t b2w_createWeldJoint(int64_t worldHandle,
+                              int64_t bodyA, int64_t bodyB,
+                              float anchorX, float anchorY);
+
+/// Create a wheel joint (body attached via spring along an axis).
+int64_t b2w_createWheelJoint(int64_t worldHandle,
+                               int64_t bodyA, int64_t bodyB,
+                               float anchorX, float anchorY,
+                               float axisX,   float axisY);
+
+/// Destroy a joint by handle.
+void b2w_destroyJoint(int64_t jointHandle);
+
+// ── Joint configuration ───────────────────────────────────────────────────────
+
+/// Enable/disable revolute joint limits.
+void b2w_setRevoluteLimits(int64_t jointHandle,
+                            float lower, float upper, int32_t enable);
+
+/// Enable/disable revolute joint motor.
+void b2w_setRevoluteMotor(int64_t jointHandle,
+                           float speed, float maxTorque, int32_t enable);
+
+/// Enable/disable prismatic joint limits.
+void b2w_setPrismaticLimits(int64_t jointHandle,
+                             float lower, float upper, int32_t enable);
+
+/// Enable/disable prismatic joint motor.
+void b2w_setPrismaticMotor(int64_t jointHandle,
+                            float speed, float maxForce, int32_t enable);
+
+/// Set distance joint length range.
+void b2w_setDistanceLimits(int64_t jointHandle, float minLen, float maxLen);
+
+/// Set distance joint spring (stiffness + damping, 0 = rigid).
+void b2w_setDistanceSpring(int64_t jointHandle,
+                            float stiffness, float damping);
+
+/// Update the mouse joint target position.
+void b2w_setMouseJointTarget(int64_t jointHandle, float x, float y);
+
+/// Set wheel joint spring stiffness and damping.
+void b2w_setWheelSpring(int64_t jointHandle,
+                         float stiffness, float damping);
+
+/// Enable/disable wheel joint motor.
+void b2w_setWheelMotor(int64_t jointHandle,
+                        float speed, float maxTorque, int32_t enable);
+
+// ── Joint queries ─────────────────────────────────────────────────────────────
+
+/// Get the reaction force on joint bodyA (world-space, per second).
+void b2w_getJointReactionForce(int64_t jointHandle,
+                                float* outFx, float* outFy);
+
+/// Get the reaction torque on joint bodyA (per second).
+float b2w_getJointReactionTorque(int64_t jointHandle);
 
 // ── NativeFinalizer-compatible destructors ────────────────────────────────────
 //

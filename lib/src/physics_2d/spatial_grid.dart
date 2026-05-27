@@ -131,7 +131,7 @@ class SpatialGrid {
   _CellRange? _computeRange(PhysicsBody body) {
     if (!body.isActive || !body.checkCollision) return null;
 
-    final bounds = body.shape.getBounds(body.position.toOffset());
+    final bounds = body.getCompoundBounds(body.position.toOffset());
     return _CellRange(
       minX: (bounds.left / cellSize).floor(),
       minY: (bounds.top / cellSize).floor(),

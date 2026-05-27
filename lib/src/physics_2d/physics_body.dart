@@ -68,6 +68,33 @@ class PhysicsBody {
   /// Object Sleeping: amount of time to stay below threshold before sleeping
   double sleepTimeThreshold;
 
+  /// Sensor mode: if true this body detects overlaps but does not resolve them.
+  bool isSensor;
+
+  /// Bullet mode: enables Continuous Collision Detection (CCD) for fast-moving
+  /// bodies so they don't tunnel through thin static geometry.
+  /// Only effective on the Box2D FFI backend; the Dart fallback ignores it.
+  bool isBullet;
+
+  /// Additional collision shapes attached to this body (compound body support).
+  ///
+  /// All shapes share the same position as [position]. The [shape] field is
+  /// always the primary shape; [additionalShapes] are extra fixtures.
+  final List<CollisionShape> additionalShapes;
+
+  /// Collision filter category bits.
+  int categoryBits;
+
+  /// Collision filter mask bits — collides with bodies whose categoryBits
+  /// overlaps with this mask (bitwise AND != 0).
+  int maskBits;
+
+  /// Collision group index.
+  /// Positive: always collide with same index.
+  /// Negative: never collide with same index.
+  /// Zero: use category/mask filtering only.
+  int groupIndex;
+
   /// Create a physics body
   PhysicsBody({
     required Vector2 position,
@@ -89,13 +116,38 @@ class PhysicsBody {
     this.sleepTimer = 0.0,
     this.sleepVelocityThreshold = 5.0,
     this.sleepTimeThreshold = 0.5,
-  }) : position = Vector2(position.x, position.y),
+    this.isSensor = false,
+    this.isBullet = false,
+    List<CollisionShape>? additionalShapes,
+    this.categoryBits = 0x0001,
+    this.maskBits = 0xFFFF,
+    this.groupIndex = 0,
+  }) : additionalShapes = additionalShapes ?? [],
+       position = Vector2(position.x, position.y),
        velocity = velocity != null
            ? Vector2(velocity.x, velocity.y)
            : Vector2.zero(),
        acceleration = acceleration != null
            ? Vector2(acceleration.x, acceleration.y)
            : Vector2.zero();
+
+  /// True when this body has more than one collision shape.
+  bool get isCompound => additionalShapes.isNotEmpty;
+
+  /// Returns the AABB that covers all shapes on this body.
+  Rect getCompoundBounds(Offset position) {
+    var bounds = shape.getBounds(position);
+    for (final s in additionalShapes) {
+      final b = s.getBounds(position);
+      bounds = Rect.fromLTRB(
+        bounds.left < b.left ? bounds.left : b.left,
+        bounds.top < b.top ? bounds.top : b.top,
+        bounds.right > b.right ? bounds.right : b.right,
+        bounds.bottom > b.bottom ? bounds.bottom : b.bottom,
+      );
+    }
+    return bounds;
+  }
 
   /// Apply force
   void applyForce(Vector2 force) {

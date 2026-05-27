@@ -21,7 +21,7 @@ This package is part of the Just Game Engine workspace, but can be used independ
 ### Requirements
 
 - Dart SDK `^3.11.0`
-- Flutter `>=1.17.0`
+- Flutter `>=3.27.0`
 
 ### Add Dependency
 
@@ -29,7 +29,7 @@ Use the package from pub.dev:
 
 ```yaml
 dependencies:
-	just_physics_engine: ^1.1.0
+	just_physics_engine: ^1.2.0
 ```
 
 Or add it with Flutter tooling:

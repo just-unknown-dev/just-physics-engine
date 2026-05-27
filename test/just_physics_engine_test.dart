@@ -45,11 +45,13 @@ void main() {
       final engine = PhysicsEngine()..initialize();
       engine.update(0.016);
       final s = engine.stats;
+      // These keys are guaranteed by both the pure-Dart and Box2D backends.
       expect(s.containsKey('bodyCount'), isTrue);
       expect(s.containsKey('awakeBodies'), isTrue);
       expect(s.containsKey('potentialPairs'), isTrue);
       expect(s.containsKey('resolvedCollisions'), isTrue);
       expect(s.containsKey('lastStepMs'), isTrue);
+      expect(s.containsKey('backend'), isTrue);
       engine.dispose();
     });
   });
@@ -707,6 +709,159 @@ void main() {
       final engine = PhysicsEngine3D();
       engine.initialize();
       engine.update(0.016);
+      engine.dispose();
+    });
+  });
+
+  // ── Joint constraints ─────────────────────────────────────────────────────
+
+  PhysicsEngine dartEngine() => PhysicsEngine.pureDart()..initialize();
+
+  PhysicsBody makeBody(double x, double y, {double mass = 1.0}) => PhysicsBody(
+        position: Vector2(x, y),
+        shape: CircleShape(10),
+        mass: mass,
+        useGravity: false,
+        drag: 0.0,
+        sleepVelocityThreshold: 0.0,
+      );
+
+  group('DistanceJoint', () {
+    test('rigid distance is maintained', () {
+      final engine = dartEngine();
+      final a = makeBody(0, 0);
+      final b = makeBody(50, 0);
+      engine.addBody(a);
+      engine.addBody(b);
+      engine.addDistanceJoint(a, b, length: 50);
+
+      for (int i = 0; i < 60; i++) { engine.update(0.016); }
+
+      final dx = b.position.x - a.position.x;
+      final dy = b.position.y - a.position.y;
+      final dist = math.sqrt(dx * dx + dy * dy);
+      expect(dist, closeTo(50, 5));
+      engine.dispose();
+    });
+
+    test('spring pulls bodies together when stretched', () {
+      final engine = dartEngine();
+      final a = makeBody(0, 0)..mass = 0; // static
+      final b = makeBody(200, 0);
+      engine.addBody(a);
+      engine.addBody(b);
+      engine.addDistanceJoint(a, b, length: 50, stiffness: 300, damping: 0.5);
+
+      final startX = b.position.x;
+      for (int i = 0; i < 30; i++) { engine.update(0.016); }
+
+      expect(b.position.x, lessThan(startX));
+      engine.dispose();
+    });
+  });
+
+  group('WeldJoint', () {
+    test('bodies remain at fixed relative offset', () {
+      final engine = dartEngine();
+      final a = makeBody(0, 0);
+      final b = makeBody(30, 0);
+      engine.addBody(a);
+      engine.addBody(b);
+      engine.addWeldJoint(a, b);
+
+      // Push a rightward; b should follow.
+      a.velocity.x = 100;
+      for (int i = 0; i < 30; i++) { engine.update(0.016); }
+
+      final dx = b.position.x - a.position.x;
+      final dy = b.position.y - a.position.y;
+      expect(dx, closeTo(30, 10));
+      expect(dy, closeTo(0, 5));
+      engine.dispose();
+    });
+  });
+
+  group('RevoluteJoint', () {
+    test('anchor points on both bodies converge', () {
+      final engine = dartEngine();
+      final a = makeBody(0, 0)..mass = 0; // static pivot
+      final b = makeBody(40, 0);
+      engine.addBody(a);
+      engine.addBody(b);
+      engine.addRevoluteJoint(a, b, const Offset(0, 0));
+
+      for (int i = 0; i < 60; i++) { engine.update(0.016); }
+
+      // World anchor on b should be close to (0, 0).
+      expect(b.position.x, closeTo(40, 20));
+      engine.dispose();
+    });
+
+    test('motor applies angular acceleration', () {
+      final engine = dartEngine();
+      // inertia=0 on the static anchor so motor torque is not absorbed by it.
+      final a = makeBody(0, 0)..mass = 0..inertia = 0;
+      final b = makeBody(40, 0);
+      engine.addBody(a);
+      engine.addBody(b);
+      final j = engine.addRevoluteJoint(a, b, const Offset(0, 0))
+          as RevoluteJoint;
+      j.motorEnabled = true;
+      j.motorSpeed = 5.0;
+      // maxMotorTorque * inverseInertia * dt must be < motorSpeed to avoid
+      // bang-bang oscillation (50 * 1.0 * 0.016 = 0.8 rad/s per step).
+      j.maxMotorTorque = 50;
+
+      for (int i = 0; i < 20; i++) { engine.update(0.016); }
+      expect(b.angularVelocity, greaterThan(0));
+      engine.dispose();
+    });
+  });
+
+  group('MouseJoint', () {
+    test('body is pulled toward target', () {
+      final engine = dartEngine();
+      final b = makeBody(0, 0);
+      engine.addBody(b);
+      final j = engine.addMouseJoint(b, Vector2(200, 0)) as MouseJoint;
+      j.setTarget(200, 0);
+
+      for (int i = 0; i < 20; i++) { engine.update(0.016); }
+      expect(b.position.x, greaterThan(0));
+      engine.dispose();
+    });
+  });
+
+  group('PrismaticJoint', () {
+    test('off-axis displacement is corrected', () {
+      final engine = dartEngine();
+      final a = makeBody(0, 0)..mass = 0;
+      final b = makeBody(0, 50); // offset perpendicular to x-axis
+      engine.addBody(a);
+      engine.addBody(b);
+      // Allow sliding along x; should correct y offset.
+      engine.addPrismaticJoint(a, b, const Offset(1, 0));
+
+      for (int i = 0; i < 60; i++) { engine.update(0.016); }
+      // y-separation should shrink toward zero.
+      expect((b.position.y - a.position.y).abs(), lessThan(50));
+      engine.dispose();
+    });
+
+    test('motor drives body along axis', () {
+      final engine = dartEngine();
+      final a = makeBody(0, 0)..mass = 0;
+      final b = makeBody(0, 0);
+      engine.addBody(a);
+      engine.addBody(b);
+      final j = engine.addPrismaticJoint(a, b, const Offset(1, 0))
+          as PrismaticJoint;
+      j.motorEnabled = true;
+      j.motorSpeed = 100;
+      j.maxMotorForce = 500;
+
+      for (int i = 0; i < 20; i++) { engine.update(0.016); }
+      expect(b.velocity.x, greaterThan(0));
       engine.dispose();
     });
   });

@@ -429,6 +429,753 @@ class Box2DBindings {
   late final _b2w_setImpactCallback = _b2w_setImpactCallbackPtr
       .asFunction<void Function(int, ImpactCallbackFn, double)>();
 
+  // ── Sensor events ─────────────────────────────────────────────────────────
+
+  /// Number of sensor-begin events from the last step.
+  int b2w_getSensorBeginCount(int worldHandle) {
+    return _b2w_getSensorBeginCount(worldHandle);
+  }
+
+  late final _b2w_getSensorBeginCountPtr =
+      _lookup<ffi.NativeFunction<ffi.Int32 Function(ffi.Int64)>>(
+        'b2w_getSensorBeginCount',
+      );
+  late final _b2w_getSensorBeginCount = _b2w_getSensorBeginCountPtr
+      .asFunction<int Function(int)>();
+
+  /// Read one sensor-begin event by index.
+  void b2w_getSensorBeginEvent(
+    int worldHandle,
+    int index,
+    ffi.Pointer<ffi.Int64> outSensorBody,
+    ffi.Pointer<ffi.Int64> outVisitorBody,
+  ) {
+    return _b2w_getSensorBeginEvent(
+      worldHandle,
+      index,
+      outSensorBody,
+      outVisitorBody,
+    );
+  }
+
+  late final _b2w_getSensorBeginEventPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Void Function(
+            ffi.Int64,
+            ffi.Int32,
+            ffi.Pointer<ffi.Int64>,
+            ffi.Pointer<ffi.Int64>,
+          )
+        >
+      >('b2w_getSensorBeginEvent');
+  late final _b2w_getSensorBeginEvent = _b2w_getSensorBeginEventPtr
+      .asFunction<
+        void Function(int, int, ffi.Pointer<ffi.Int64>, ffi.Pointer<ffi.Int64>)
+      >();
+
+  /// Number of sensor-end events from the last step.
+  int b2w_getSensorEndCount(int worldHandle) {
+    return _b2w_getSensorEndCount(worldHandle);
+  }
+
+  late final _b2w_getSensorEndCountPtr =
+      _lookup<ffi.NativeFunction<ffi.Int32 Function(ffi.Int64)>>(
+        'b2w_getSensorEndCount',
+      );
+  late final _b2w_getSensorEndCount = _b2w_getSensorEndCountPtr
+      .asFunction<int Function(int)>();
+
+  /// Read one sensor-end event by index.
+  void b2w_getSensorEndEvent(
+    int worldHandle,
+    int index,
+    ffi.Pointer<ffi.Int64> outSensorBody,
+    ffi.Pointer<ffi.Int64> outVisitorBody,
+  ) {
+    return _b2w_getSensorEndEvent(
+      worldHandle,
+      index,
+      outSensorBody,
+      outVisitorBody,
+    );
+  }
+
+  late final _b2w_getSensorEndEventPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Void Function(
+            ffi.Int64,
+            ffi.Int32,
+            ffi.Pointer<ffi.Int64>,
+            ffi.Pointer<ffi.Int64>,
+          )
+        >
+      >('b2w_getSensorEndEvent');
+  late final _b2w_getSensorEndEvent = _b2w_getSensorEndEventPtr
+      .asFunction<
+        void Function(int, int, ffi.Pointer<ffi.Int64>, ffi.Pointer<ffi.Int64>)
+      >();
+
+  /// Mark all shapes on a body as sensor or solid.
+  void b2w_setBodySensor(int bodyHandle, int isSensor) {
+    return _b2w_setBodySensor(bodyHandle, isSensor);
+  }
+
+  late final _b2w_setBodySensorPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Int64, ffi.Int32)>>(
+        'b2w_setBodySensor',
+      );
+  late final _b2w_setBodySensor = _b2w_setBodySensorPtr
+      .asFunction<void Function(int, int)>();
+
+  /// Set the collision filter on all shapes of a body.
+  void b2w_setBodyFilter(
+    int bodyHandle,
+    int categoryBits,
+    int maskBits,
+    int groupIndex,
+  ) {
+    return _b2w_setBodyFilter(bodyHandle, categoryBits, maskBits, groupIndex);
+  }
+
+  late final _b2w_setBodyFilterPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Void Function(ffi.Int64, ffi.Uint32, ffi.Uint32, ffi.Int32)
+        >
+      >('b2w_setBodyFilter');
+  late final _b2w_setBodyFilter = _b2w_setBodyFilterPtr
+      .asFunction<void Function(int, int, int, int)>();
+
+  /// Attach a convex polygon with rounded corners.
+  void b2w_addRoundedPolygonShape(
+    int bodyHandle,
+    ffi.Pointer<ffi.Float> verts,
+    int count,
+    double cornerRadius,
+    double density,
+    double friction,
+    double restitution,
+  ) {
+    return _b2w_addRoundedPolygonShape(
+      bodyHandle,
+      verts,
+      count,
+      cornerRadius,
+      density,
+      friction,
+      restitution,
+    );
+  }
+
+  late final _b2w_addRoundedPolygonShapePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Void Function(
+            ffi.Int64,
+            ffi.Pointer<ffi.Float>,
+            ffi.Int32,
+            ffi.Float,
+            ffi.Float,
+            ffi.Float,
+            ffi.Float,
+          )
+        >
+      >('b2w_addRoundedPolygonShape');
+  late final _b2w_addRoundedPolygonShape = _b2w_addRoundedPolygonShapePtr
+      .asFunction<
+        void Function(
+          int,
+          ffi.Pointer<ffi.Float>,
+          int,
+          double,
+          double,
+          double,
+          double,
+        )
+      >();
+
+  /// Attach a capsule fixture. (cx1,cy1)/(cx2,cy2) are center offsets, radius is the capsule radius.
+  void b2w_addCapsuleShape(
+    int bodyHandle,
+    double cx1,
+    double cy1,
+    double cx2,
+    double cy2,
+    double radius,
+    double density,
+    double friction,
+    double restitution,
+  ) {
+    return _b2w_addCapsuleShape(
+      bodyHandle,
+      cx1,
+      cy1,
+      cx2,
+      cy2,
+      radius,
+      density,
+      friction,
+      restitution,
+    );
+  }
+
+  late final _b2w_addCapsuleShapePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Void Function(
+            ffi.Int64,
+            ffi.Float,
+            ffi.Float,
+            ffi.Float,
+            ffi.Float,
+            ffi.Float,
+            ffi.Float,
+            ffi.Float,
+            ffi.Float,
+          )
+        >
+      >('b2w_addCapsuleShape');
+  late final _b2w_addCapsuleShape = _b2w_addCapsuleShapePtr
+      .asFunction<
+        void Function(
+          int,
+          double,
+          double,
+          double,
+          double,
+          double,
+          double,
+          double,
+          double,
+        )
+      >();
+
+  /// Attach a segment (line) fixture.
+  void b2w_addSegmentShape(
+    int bodyHandle,
+    double x1,
+    double y1,
+    double x2,
+    double y2,
+    double density,
+    double friction,
+    double restitution,
+  ) {
+    return _b2w_addSegmentShape(
+      bodyHandle,
+      x1,
+      y1,
+      x2,
+      y2,
+      density,
+      friction,
+      restitution,
+    );
+  }
+
+  late final _b2w_addSegmentShapePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Void Function(
+            ffi.Int64,
+            ffi.Float,
+            ffi.Float,
+            ffi.Float,
+            ffi.Float,
+            ffi.Float,
+            ffi.Float,
+            ffi.Float,
+          )
+        >
+      >('b2w_addSegmentShape');
+  late final _b2w_addSegmentShape = _b2w_addSegmentShapePtr
+      .asFunction<
+        void Function(
+          int,
+          double,
+          double,
+          double,
+          double,
+          double,
+          double,
+          double,
+        )
+      >();
+
+  /// Attach a chain-of-segments fixture. Returns packed int64 chain handle.
+  int b2w_addChainShape(
+    int bodyHandle,
+    ffi.Pointer<ffi.Float> points,
+    int count,
+    int loop,
+    double friction,
+    double restitution,
+  ) {
+    return _b2w_addChainShape(
+      bodyHandle,
+      points,
+      count,
+      loop,
+      friction,
+      restitution,
+    );
+  }
+
+  late final _b2w_addChainShapePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int64 Function(
+            ffi.Int64,
+            ffi.Pointer<ffi.Float>,
+            ffi.Int32,
+            ffi.Int32,
+            ffi.Float,
+            ffi.Float,
+          )
+        >
+      >('b2w_addChainShape');
+  late final _b2w_addChainShape = _b2w_addChainShapePtr
+      .asFunction<
+        int Function(int, ffi.Pointer<ffi.Float>, int, int, double, double)
+      >();
+
+  /// Destroy a chain shape created with b2w_addChainShape.
+  void b2w_destroyChain(int chainHandle) {
+    return _b2w_destroyChain(chainHandle);
+  }
+
+  late final _b2w_destroyChainPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Int64)>>(
+        'b2w_destroyChain',
+      );
+  late final _b2w_destroyChain = _b2w_destroyChainPtr
+      .asFunction<void Function(int)>();
+
+  // ── Body movement events ──────────────────────────────────────────────────
+
+  int b2w_getBodyMoveEventCount(int worldHandle) {
+    return _b2w_getBodyMoveEventCount(worldHandle);
+  }
+
+  late final _b2w_getBodyMoveEventCountPtr =
+      _lookup<ffi.NativeFunction<ffi.Int32 Function(ffi.Int64)>>(
+        'b2w_getBodyMoveEventCount',
+      );
+  late final _b2w_getBodyMoveEventCount = _b2w_getBodyMoveEventCountPtr
+      .asFunction<int Function(int)>();
+
+  void b2w_getBodyMoveEvent(
+    int worldHandle,
+    int index,
+    ffi.Pointer<ffi.Int64> outBodyHandle,
+    ffi.Pointer<ffi.Int32> outFellAsleep,
+  ) {
+    return _b2w_getBodyMoveEvent(
+      worldHandle,
+      index,
+      outBodyHandle,
+      outFellAsleep,
+    );
+  }
+
+  late final _b2w_getBodyMoveEventPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Void Function(
+            ffi.Int64,
+            ffi.Int32,
+            ffi.Pointer<ffi.Int64>,
+            ffi.Pointer<ffi.Int32>,
+          )
+        >
+      >('b2w_getBodyMoveEvent');
+  late final _b2w_getBodyMoveEvent = _b2w_getBodyMoveEventPtr
+      .asFunction<
+        void Function(int, int, ffi.Pointer<ffi.Int64>, ffi.Pointer<ffi.Int32>)
+      >();
+
+  // ── Joint creation ────────────────────────────────────────────────────────
+
+  /// Enable or disable CCD (bullet mode) on a body.
+  void b2w_setBodyBullet(int bodyHandle, int isBullet) {
+    return _b2w_setBodyBullet(bodyHandle, isBullet);
+  }
+
+  late final _b2w_setBodyBulletPtr =
+      _lookup<
+        ffi.NativeFunction<ffi.Void Function(ffi.Int64, ffi.Int32)>
+      >('b2w_setBodyBullet');
+  late final _b2w_setBodyBullet = _b2w_setBodyBulletPtr
+      .asFunction<void Function(int, int)>();
+
+  // ── Joint creation ────────────────────────────────────────────────────────
+
+  int b2w_createRevoluteJoint(
+    int worldHandle,
+    int bodyA,
+    int bodyB,
+    double anchorX,
+    double anchorY,
+  ) {
+    return _b2w_createRevoluteJoint(
+      worldHandle,
+      bodyA,
+      bodyB,
+      anchorX,
+      anchorY,
+    );
+  }
+
+  late final _b2w_createRevoluteJointPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int64 Function(
+            ffi.Int64,
+            ffi.Int64,
+            ffi.Int64,
+            ffi.Float,
+            ffi.Float,
+          )
+        >
+      >('b2w_createRevoluteJoint');
+  late final _b2w_createRevoluteJoint = _b2w_createRevoluteJointPtr
+      .asFunction<int Function(int, int, int, double, double)>();
+
+  int b2w_createPrismaticJoint(
+    int worldHandle,
+    int bodyA,
+    int bodyB,
+    double anchorX,
+    double anchorY,
+    double axisX,
+    double axisY,
+  ) {
+    return _b2w_createPrismaticJoint(
+      worldHandle,
+      bodyA,
+      bodyB,
+      anchorX,
+      anchorY,
+      axisX,
+      axisY,
+    );
+  }
+
+  late final _b2w_createPrismaticJointPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int64 Function(
+            ffi.Int64,
+            ffi.Int64,
+            ffi.Int64,
+            ffi.Float,
+            ffi.Float,
+            ffi.Float,
+            ffi.Float,
+          )
+        >
+      >('b2w_createPrismaticJoint');
+  late final _b2w_createPrismaticJoint = _b2w_createPrismaticJointPtr
+      .asFunction<
+        int Function(int, int, int, double, double, double, double)
+      >();
+
+  int b2w_createDistanceJoint(
+    int worldHandle,
+    int bodyA,
+    int bodyB,
+    double minLen,
+    double maxLen,
+  ) {
+    return _b2w_createDistanceJoint(worldHandle, bodyA, bodyB, minLen, maxLen);
+  }
+
+  late final _b2w_createDistanceJointPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int64 Function(
+            ffi.Int64,
+            ffi.Int64,
+            ffi.Int64,
+            ffi.Float,
+            ffi.Float,
+          )
+        >
+      >('b2w_createDistanceJoint');
+  late final _b2w_createDistanceJoint = _b2w_createDistanceJointPtr
+      .asFunction<int Function(int, int, int, double, double)>();
+
+  int b2w_createMouseJoint(
+    int worldHandle,
+    int bodyB,
+    double targetX,
+    double targetY,
+  ) {
+    return _b2w_createMouseJoint(worldHandle, bodyB, targetX, targetY);
+  }
+
+  late final _b2w_createMouseJointPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int64 Function(ffi.Int64, ffi.Int64, ffi.Float, ffi.Float)
+        >
+      >('b2w_createMouseJoint');
+  late final _b2w_createMouseJoint = _b2w_createMouseJointPtr
+      .asFunction<int Function(int, int, double, double)>();
+
+  int b2w_createWeldJoint(
+    int worldHandle,
+    int bodyA,
+    int bodyB,
+    double anchorX,
+    double anchorY,
+  ) {
+    return _b2w_createWeldJoint(worldHandle, bodyA, bodyB, anchorX, anchorY);
+  }
+
+  late final _b2w_createWeldJointPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int64 Function(
+            ffi.Int64,
+            ffi.Int64,
+            ffi.Int64,
+            ffi.Float,
+            ffi.Float,
+          )
+        >
+      >('b2w_createWeldJoint');
+  late final _b2w_createWeldJoint = _b2w_createWeldJointPtr
+      .asFunction<int Function(int, int, int, double, double)>();
+
+  int b2w_createWheelJoint(
+    int worldHandle,
+    int bodyA,
+    int bodyB,
+    double anchorX,
+    double anchorY,
+    double axisX,
+    double axisY,
+  ) {
+    return _b2w_createWheelJoint(
+      worldHandle,
+      bodyA,
+      bodyB,
+      anchorX,
+      anchorY,
+      axisX,
+      axisY,
+    );
+  }
+
+  late final _b2w_createWheelJointPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int64 Function(
+            ffi.Int64,
+            ffi.Int64,
+            ffi.Int64,
+            ffi.Float,
+            ffi.Float,
+            ffi.Float,
+            ffi.Float,
+          )
+        >
+      >('b2w_createWheelJoint');
+  late final _b2w_createWheelJoint = _b2w_createWheelJointPtr
+      .asFunction<
+        int Function(int, int, int, double, double, double, double)
+      >();
+
+  void b2w_destroyJoint(int jointHandle) {
+    return _b2w_destroyJoint(jointHandle);
+  }
+
+  late final _b2w_destroyJointPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Int64)>>(
+        'b2w_destroyJoint',
+      );
+  late final _b2w_destroyJoint = _b2w_destroyJointPtr
+      .asFunction<void Function(int)>();
+
+  // ── Joint configuration ───────────────────────────────────────────────────
+
+  void b2w_setRevoluteLimits(
+    int jointHandle,
+    double lower,
+    double upper,
+    int enable,
+  ) {
+    return _b2w_setRevoluteLimits(jointHandle, lower, upper, enable);
+  }
+
+  late final _b2w_setRevoluteLimitsPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Void Function(ffi.Int64, ffi.Float, ffi.Float, ffi.Int32)
+        >
+      >('b2w_setRevoluteLimits');
+  late final _b2w_setRevoluteLimits = _b2w_setRevoluteLimitsPtr
+      .asFunction<void Function(int, double, double, int)>();
+
+  void b2w_setRevoluteMotor(
+    int jointHandle,
+    double speed,
+    double maxTorque,
+    int enable,
+  ) {
+    return _b2w_setRevoluteMotor(jointHandle, speed, maxTorque, enable);
+  }
+
+  late final _b2w_setRevoluteMotorPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Void Function(ffi.Int64, ffi.Float, ffi.Float, ffi.Int32)
+        >
+      >('b2w_setRevoluteMotor');
+  late final _b2w_setRevoluteMotor = _b2w_setRevoluteMotorPtr
+      .asFunction<void Function(int, double, double, int)>();
+
+  void b2w_setPrismaticLimits(
+    int jointHandle,
+    double lower,
+    double upper,
+    int enable,
+  ) {
+    return _b2w_setPrismaticLimits(jointHandle, lower, upper, enable);
+  }
+
+  late final _b2w_setPrismaticLimitsPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Void Function(ffi.Int64, ffi.Float, ffi.Float, ffi.Int32)
+        >
+      >('b2w_setPrismaticLimits');
+  late final _b2w_setPrismaticLimits = _b2w_setPrismaticLimitsPtr
+      .asFunction<void Function(int, double, double, int)>();
+
+  void b2w_setPrismaticMotor(
+    int jointHandle,
+    double speed,
+    double maxForce,
+    int enable,
+  ) {
+    return _b2w_setPrismaticMotor(jointHandle, speed, maxForce, enable);
+  }
+
+  late final _b2w_setPrismaticMotorPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Void Function(ffi.Int64, ffi.Float, ffi.Float, ffi.Int32)
+        >
+      >('b2w_setPrismaticMotor');
+  late final _b2w_setPrismaticMotor = _b2w_setPrismaticMotorPtr
+      .asFunction<void Function(int, double, double, int)>();
+
+  void b2w_setDistanceLimits(int jointHandle, double minLen, double maxLen) {
+    return _b2w_setDistanceLimits(jointHandle, minLen, maxLen);
+  }
+
+  late final _b2w_setDistanceLimitsPtr =
+      _lookup<
+        ffi.NativeFunction<ffi.Void Function(ffi.Int64, ffi.Float, ffi.Float)>
+      >('b2w_setDistanceLimits');
+  late final _b2w_setDistanceLimits = _b2w_setDistanceLimitsPtr
+      .asFunction<void Function(int, double, double)>();
+
+  void b2w_setDistanceSpring(
+    int jointHandle,
+    double stiffness,
+    double damping,
+  ) {
+    return _b2w_setDistanceSpring(jointHandle, stiffness, damping);
+  }
+
+  late final _b2w_setDistanceSpringPtr =
+      _lookup<
+        ffi.NativeFunction<ffi.Void Function(ffi.Int64, ffi.Float, ffi.Float)>
+      >('b2w_setDistanceSpring');
+  late final _b2w_setDistanceSpring = _b2w_setDistanceSpringPtr
+      .asFunction<void Function(int, double, double)>();
+
+  void b2w_setMouseJointTarget(int jointHandle, double x, double y) {
+    return _b2w_setMouseJointTarget(jointHandle, x, y);
+  }
+
+  late final _b2w_setMouseJointTargetPtr =
+      _lookup<
+        ffi.NativeFunction<ffi.Void Function(ffi.Int64, ffi.Float, ffi.Float)>
+      >('b2w_setMouseJointTarget');
+  late final _b2w_setMouseJointTarget = _b2w_setMouseJointTargetPtr
+      .asFunction<void Function(int, double, double)>();
+
+  void b2w_setWheelSpring(int jointHandle, double stiffness, double damping) {
+    return _b2w_setWheelSpring(jointHandle, stiffness, damping);
+  }
+
+  late final _b2w_setWheelSpringPtr =
+      _lookup<
+        ffi.NativeFunction<ffi.Void Function(ffi.Int64, ffi.Float, ffi.Float)>
+      >('b2w_setWheelSpring');
+  late final _b2w_setWheelSpring = _b2w_setWheelSpringPtr
+      .asFunction<void Function(int, double, double)>();
+
+  void b2w_setWheelMotor(
+    int jointHandle,
+    double speed,
+    double maxTorque,
+    int enable,
+  ) {
+    return _b2w_setWheelMotor(jointHandle, speed, maxTorque, enable);
+  }
+
+  late final _b2w_setWheelMotorPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Void Function(ffi.Int64, ffi.Float, ffi.Float, ffi.Int32)
+        >
+      >('b2w_setWheelMotor');
+  late final _b2w_setWheelMotor = _b2w_setWheelMotorPtr
+      .asFunction<void Function(int, double, double, int)>();
+
+  // ── Joint queries ─────────────────────────────────────────────────────────
+
+  void b2w_getJointReactionForce(
+    int jointHandle,
+    ffi.Pointer<ffi.Float> outFx,
+    ffi.Pointer<ffi.Float> outFy,
+  ) {
+    return _b2w_getJointReactionForce(jointHandle, outFx, outFy);
+  }
+
+  late final _b2w_getJointReactionForcePtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Void Function(
+            ffi.Int64,
+            ffi.Pointer<ffi.Float>,
+            ffi.Pointer<ffi.Float>,
+          )
+        >
+      >('b2w_getJointReactionForce');
+  late final _b2w_getJointReactionForce = _b2w_getJointReactionForcePtr
+      .asFunction<
+        void Function(int, ffi.Pointer<ffi.Float>, ffi.Pointer<ffi.Float>)
+      >();
+
+  double b2w_getJointReactionTorque(int jointHandle) {
+    return _b2w_getJointReactionTorque(jointHandle);
+  }
+
+  late final _b2w_getJointReactionTorquePtr =
+      _lookup<ffi.NativeFunction<ffi.Float Function(ffi.Int64)>>(
+        'b2w_getJointReactionTorque',
+      );
+  late final _b2w_getJointReactionTorque = _b2w_getJointReactionTorquePtr
+      .asFunction<double Function(int)>();
+
   /// ── NativeFinalizer-compatible destructors ────────────────────────────────────
   ///
   /// NativeFinalizer requires a native function with signature void(void*).

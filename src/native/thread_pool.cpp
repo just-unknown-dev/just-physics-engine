@@ -12,6 +12,9 @@ ThreadPool::~ThreadPool() {
         _stop = true;
     }
     _cv.notify_all();
+    // Workers check _stop after each task and exit when the queue is empty.
+    // join() therefore completes promptly unless item.fn() itself hangs —
+    // which would indicate a Box2D bug outside our control.
     for (auto& t : _workers) {
         if (t.joinable()) t.join();
     }
