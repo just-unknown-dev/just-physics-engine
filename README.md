@@ -185,6 +185,30 @@ flutter analyze
 flutter test
 ```
 
+### Phase 1 Benchmark Baseline
+
+Run deterministic benchmark baselines (pure Dart, best available backend, and
+just_memory arena micro-benchmark):
+
+```bash
+flutter pub get
+flutter test benchmark/phase1_deterministic_benchmark.dart \
+	--dart-define=JPE_BODIES=10000 \
+	--dart-define=JPE_STEPS=600 \
+	--dart-define=JPE_SEED=1337
+```
+
+For mid-range Android target validation, run with `--dart-define=JPE_BODIES=2000`.
+
+### Determinism and Parity Tests
+
+```bash
+flutter test test/deterministic_replay_test.dart
+flutter test test/pure_vs_box2d_parity_test.dart
+```
+
+The parity suite auto-skips strict backend comparison when Box2D is not active.
+
 ## Project Docs
 
 - Architecture: [ARCHITECTURE.md](ARCHITECTURE.md)
