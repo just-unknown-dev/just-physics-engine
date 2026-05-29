@@ -16,6 +16,12 @@ void main() {
     print('=== just_physics_engine phase1 benchmark ===');
     print('targets: desktop=10000 @ 60fps, android=2000 @ 60fps');
     print('seed=${config.seed} steps=${config.steps} dt=${config.dt}');
+    print(
+      'isolateTuning: minBodies=${config.isolateMinBodies} dispatchEvery=${config.isolateDispatchEverySteps}',
+    );
+    print(
+      'adaptiveTuning: enabled=${config.adaptiveEnabled} targetMs=${config.adaptiveTargetStepMs} checkEvery=${config.adaptiveCheckEverySteps} margin=${config.adaptiveMargin} minHold=${config.adaptiveMinHoldSteps}',
+    );
     print('--------------------------------------------');
 
     final pureResult = _runPhysicsScenario(
@@ -39,6 +45,45 @@ void main() {
     );
 
     _printScenario(bestResult);
+
+    final isolateResult = _runPhysicsScenario(
+      engineFactory: () => PhysicsEngine.pureDart(
+        experimentalIsolateBroadphaseEnabled: true,
+        experimentalIsolateBroadphaseMinBodies: config.isolateMinBodies,
+        experimentalIsolateBroadphaseDispatchEverySteps:
+            config.isolateDispatchEverySteps,
+      ),
+      bodyCount: config.bodyCount,
+      seed: config.seed,
+      steps: config.steps,
+      dt: config.dt,
+      label: 'pure_dart_isolate_tuned',
+    );
+
+    _printScenario(isolateResult);
+
+    final adaptiveResult = _runPhysicsScenario(
+      engineFactory: () => PhysicsEngine.pureDart(
+        experimentalIsolateBroadphaseAdaptiveEnabled: config.adaptiveEnabled,
+        experimentalIsolateBroadphaseEnabled: true,
+        experimentalIsolateBroadphaseMinBodies: config.isolateMinBodies,
+        experimentalIsolateBroadphaseDispatchEverySteps:
+            config.isolateDispatchEverySteps,
+        experimentalIsolateBroadphaseTargetStepMs: config.adaptiveTargetStepMs,
+        experimentalIsolateBroadphaseAdaptiveCheckIntervalSteps:
+            config.adaptiveCheckEverySteps,
+        experimentalIsolateBroadphaseAdaptiveMargin: config.adaptiveMargin,
+        experimentalIsolateBroadphaseAdaptiveMinHoldSteps:
+            config.adaptiveMinHoldSteps,
+      ),
+      bodyCount: config.bodyCount,
+      seed: config.seed,
+      steps: config.steps,
+      dt: config.dt,
+      label: 'pure_dart_isolate_adaptive',
+    );
+
+    _printScenario(adaptiveResult);
 
     final arenaResult = _runArenaMicroBenchmark(
       bodyCount: config.bodyCount,
@@ -259,25 +304,77 @@ class _BenchmarkConfig {
     required this.steps,
     required this.dt,
     required this.seed,
+    required this.isolateMinBodies,
+    required this.isolateDispatchEverySteps,
+    required this.adaptiveEnabled,
+    required this.adaptiveTargetStepMs,
+    required this.adaptiveCheckEverySteps,
+    required this.adaptiveMargin,
+    required this.adaptiveMinHoldSteps,
   });
 
   final int bodyCount;
   final int steps;
   final double dt;
   final int seed;
+  final int isolateMinBodies;
+  final int isolateDispatchEverySteps;
+  final bool adaptiveEnabled;
+  final double adaptiveTargetStepMs;
+  final int adaptiveCheckEverySteps;
+  final double adaptiveMargin;
+  final int adaptiveMinHoldSteps;
 
   factory _BenchmarkConfig.fromEnvironment() {
     const bodyCount = int.fromEnvironment('JPE_BODIES', defaultValue: 10000);
     const steps = int.fromEnvironment('JPE_STEPS', defaultValue: 600);
     const seed = int.fromEnvironment('JPE_SEED', defaultValue: 1337);
     const dtString = String.fromEnvironment('JPE_DT', defaultValue: '');
+    const isolateMinBodies = int.fromEnvironment(
+      'JPE_ISOLATE_MIN_BODIES',
+      defaultValue: 256,
+    );
+    const isolateDispatchEverySteps = int.fromEnvironment(
+      'JPE_ISOLATE_DISPATCH_EVERY',
+      defaultValue: 1,
+    );
+    const adaptiveEnabled = bool.fromEnvironment(
+      'JPE_ADAPTIVE_ENABLED',
+      defaultValue: true,
+    );
+    const adaptiveTargetStepMsString = String.fromEnvironment(
+      'JPE_ADAPTIVE_TARGET_MS',
+      defaultValue: '16.67',
+    );
+    const adaptiveCheckEverySteps = int.fromEnvironment(
+      'JPE_ADAPTIVE_CHECK_EVERY',
+      defaultValue: 30,
+    );
+    const adaptiveMarginString = String.fromEnvironment(
+      'JPE_ADAPTIVE_MARGIN',
+      defaultValue: '0.15',
+    );
+    const adaptiveMinHoldSteps = int.fromEnvironment(
+      'JPE_ADAPTIVE_MIN_HOLD_STEPS',
+      defaultValue: 30,
+    );
     final dt = dtString.isEmpty ? _dt60 : (double.tryParse(dtString) ?? _dt60);
+    final adaptiveTargetStepMs =
+        double.tryParse(adaptiveTargetStepMsString) ?? 16.67;
+    final adaptiveMargin = double.tryParse(adaptiveMarginString) ?? 0.15;
 
     return _BenchmarkConfig(
       bodyCount: bodyCount,
       steps: steps,
       dt: dt,
       seed: seed,
+      isolateMinBodies: isolateMinBodies,
+      isolateDispatchEverySteps: isolateDispatchEverySteps,
+      adaptiveEnabled: adaptiveEnabled,
+      adaptiveTargetStepMs: adaptiveTargetStepMs,
+      adaptiveCheckEverySteps: adaptiveCheckEverySteps,
+      adaptiveMargin: adaptiveMargin,
+      adaptiveMinHoldSteps: adaptiveMinHoldSteps,
     );
   }
 }

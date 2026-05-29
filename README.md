@@ -195,7 +195,14 @@ flutter pub get
 flutter test benchmark/phase1_deterministic_benchmark.dart \
 	--dart-define=JPE_BODIES=10000 \
 	--dart-define=JPE_STEPS=600 \
-	--dart-define=JPE_SEED=1337
+	--dart-define=JPE_SEED=1337 \
+	--dart-define=JPE_ISOLATE_MIN_BODIES=256 \
+	--dart-define=JPE_ISOLATE_DISPATCH_EVERY=1 \
+	--dart-define=JPE_ADAPTIVE_ENABLED=true \
+	--dart-define=JPE_ADAPTIVE_TARGET_MS=16.67 \
+	--dart-define=JPE_ADAPTIVE_CHECK_EVERY=30 \
+	--dart-define=JPE_ADAPTIVE_MARGIN=0.15 \
+	--dart-define=JPE_ADAPTIVE_MIN_HOLD_STEPS=30
 ```
 
 For mid-range Android target validation, run with `--dart-define=JPE_BODIES=2000`.

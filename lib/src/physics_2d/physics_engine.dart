@@ -3,10 +3,13 @@
 /// Simulates realistic movement, gravity, collision detection, and object interactions.
 library;
 
+import 'dart:isolate';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:just_dart/just_dart.dart';
+import 'package:just_memory/just_memory.dart';
 import 'ray_2d.dart';
 import '../box2d/_box2d_engine_native.dart'
     if (dart.library.html) '../box2d/_box2d_engine_stub.dart';
@@ -29,13 +32,110 @@ class PhysicsEngine {
   ///
   /// Use this when you intentionally want the Dart implementation regardless
   /// of platform selection.
-  PhysicsEngine.pureDart();
+  PhysicsEngine.pureDart({
+    this.experimentalArenaEnabled = true,
+    this.deterministicHashEnabled = false,
+    int deterministicHashIntervalSteps = 1,
+    this.experimentalIsolateBroadphaseEnabled = false,
+    this.experimentalIsolateBroadphaseAdaptiveEnabled = false,
+    int experimentalIsolateBroadphaseMinBodies = 256,
+    int experimentalIsolateBroadphaseDispatchEverySteps = 1,
+    double experimentalIsolateBroadphaseTargetStepMs = 16.67,
+    int experimentalIsolateBroadphaseAdaptiveCheckIntervalSteps = 30,
+    double experimentalIsolateBroadphaseAdaptiveMargin = 0.15,
+    int experimentalIsolateBroadphaseAdaptiveMinHoldSteps = 30,
+    this.experimentalAdaptiveStepMsOverrideForTesting,
+  }) : deterministicHashIntervalSteps = deterministicHashIntervalSteps < 1
+           ? 1
+           : deterministicHashIntervalSteps,
+       experimentalIsolateBroadphaseMinBodies =
+           experimentalIsolateBroadphaseMinBodies < 2
+           ? 2
+           : experimentalIsolateBroadphaseMinBodies,
+       experimentalIsolateBroadphaseDispatchEverySteps =
+           experimentalIsolateBroadphaseDispatchEverySteps < 1
+           ? 1
+           : experimentalIsolateBroadphaseDispatchEverySteps,
+       experimentalIsolateBroadphaseTargetStepMs =
+           experimentalIsolateBroadphaseTargetStepMs <= 0
+           ? 16.67
+           : experimentalIsolateBroadphaseTargetStepMs,
+       experimentalIsolateBroadphaseAdaptiveCheckIntervalSteps =
+           experimentalIsolateBroadphaseAdaptiveCheckIntervalSteps < 1
+           ? 1
+           : experimentalIsolateBroadphaseAdaptiveCheckIntervalSteps,
+       experimentalIsolateBroadphaseAdaptiveMargin =
+           experimentalIsolateBroadphaseAdaptiveMargin < 0
+           ? 0.0
+           : experimentalIsolateBroadphaseAdaptiveMargin,
+       experimentalIsolateBroadphaseAdaptiveMinHoldSteps =
+           experimentalIsolateBroadphaseAdaptiveMinHoldSteps < 1
+           ? 1
+           : experimentalIsolateBroadphaseAdaptiveMinHoldSteps;
+
+  /// Experimental just_memory-backed state mirroring for hot-loop integration.
+  ///
+  /// This is Phase 2 scaffolding: positions/velocities/angles for dynamic
+  /// bodies are mirrored into [MemoryArena], integrated there, and written
+  /// back to [PhysicsBody] each step.
+  final bool experimentalArenaEnabled;
+
+  /// Enables deterministic snapshot hashing in [stats] after each update.
+  ///
+  /// Disabled by default because hashing all bodies each frame has a cost.
+  final bool deterministicHashEnabled;
+
+  /// Hash cadence in simulation steps when [deterministicHashEnabled] is true.
+  ///
+  /// Example: 1 = every step, 5 = every fifth step.
+  final int deterministicHashIntervalSteps;
+
+  /// Experimental broad-phase pipeline selector.
+  ///
+  /// Currently runs synchronously while exposing the API/stats shape needed
+  /// for later isolate-based offload.
+  final bool experimentalIsolateBroadphaseEnabled;
+
+  /// Enables adaptive isolate broadphase selection based on measured step time.
+  final bool experimentalIsolateBroadphaseAdaptiveEnabled;
+
+  /// Minimum collider count before isolate broadphase is eligible.
+  final int experimentalIsolateBroadphaseMinBodies;
+
+  /// Dispatch cadence for isolate broadphase jobs (in simulation steps).
+  final int experimentalIsolateBroadphaseDispatchEverySteps;
+
+  /// Adaptive isolate target step time in milliseconds.
+  final double experimentalIsolateBroadphaseTargetStepMs;
+
+  /// Adaptive decision cadence in simulation steps.
+  final int experimentalIsolateBroadphaseAdaptiveCheckIntervalSteps;
+
+  /// Adaptive hysteresis margin around target step time.
+  final double experimentalIsolateBroadphaseAdaptiveMargin;
+
+  /// Minimum simulation steps to hold current adaptive isolate state.
+  final int experimentalIsolateBroadphaseAdaptiveMinHoldSteps;
+
+  /// Optional test hook to override measured step time before adaptive EMA.
+  ///
+  /// When null, adaptive policy uses real measured step time.
+  @visibleForTesting
+  final double Function(int simulationStep, double measuredStepMs)?
+  experimentalAdaptiveStepMsOverrideForTesting;
 
   /// All physics bodies — list preserves insertion order for deterministic iteration.
   final List<PhysicsBody> _bodies = [];
 
   /// Set mirror of [_bodies] for O(1) duplicate-check in [addBody].
   final Set<PhysicsBody> _bodySet = {};
+
+  /// Arena slots for dynamic bodies when [experimentalArenaEnabled] is true.
+  final Map<PhysicsBody, int> _arenaSlots = {};
+  MemoryArena? _stateArena;
+  bool _arenaDirty = true;
+
+  final _IsolateBroadphaseWorker _broadphaseWorker = _IsolateBroadphaseWorker();
 
   /// Global gravity vector. Default: 981 units/s² (9.81 m/s² at 1 unit = 1 cm),
   /// matching the Box2D backend so both simulate identically.
@@ -76,6 +176,21 @@ class PhysicsEngine {
   int _lastBroadphaseDirtyBodyCount = 0;
   int _lastTrackedCellCount = 0;
   double _lastStepMs = 0.0;
+  int _lastDeterministicHash = 0;
+  int _lastDeterministicHashStep = 0;
+  int _simulationStep = 0;
+  String _lastBroadphasePipeline = 'main_thread';
+  int _lastBroadphaseWorkerPairCount = 0;
+  bool _lastBroadphaseWorkerInFlight = false;
+  int _lastBroadphaseSerializedBodies = 0;
+  int _lastBroadphaseSerializedBytes = 0;
+  int _lastBroadphaseEligibleBodies = 0;
+
+  bool _adaptiveIsolateActive = false;
+  double _adaptiveAvgStepMs = 0.0;
+  String _adaptiveDecisionReason = 'not_evaluated';
+  int _adaptiveLastTransitionStep = 0;
+  int _adaptiveTransitionCount = 0;
 
   // Persistent Stopwatch instance — reused every frame to avoid heap allocation.
   final Stopwatch _stepStopwatch = Stopwatch();
@@ -85,6 +200,8 @@ class PhysicsEngine {
     _stepStopwatch
       ..reset()
       ..start();
+    _simulationStep++;
+    _rebuildArenaIfNeeded();
     var awakeBodyCount = 0;
     _lastResolvedCollisionCount = 0;
 
@@ -115,6 +232,50 @@ class PhysicsEngine {
 
           if (body.isAwake) {
             if (body.mass <= 0) continue; // static — never integrate
+
+            final slot = _arenaSlots[body];
+            if (slot != null && _stateArena != null) {
+              final arena = _stateArena!;
+              var velocityX = arena.getVelocityX(slot);
+              var velocityY = arena.getVelocityY(slot);
+              var angularVelocity = arena.getValue(
+                slot,
+                MemoryArena.offsetExtra,
+              );
+
+              // Semi-implicit Euler using arena-backed scalar state.
+              velocityX += _accel.x * deltaTime;
+              velocityY += _accel.y * deltaTime;
+              angularVelocity +=
+                  (body.torque * body.inverseInertia) * deltaTime;
+
+              final dragFactor = 1.0 - body.drag * deltaTime;
+              velocityX *= dragFactor;
+              velocityY *= dragFactor;
+              angularVelocity *= dragFactor;
+
+              final nextX = arena.getX(slot) + velocityX * deltaTime;
+              final nextY = arena.getY(slot) + velocityY * deltaTime;
+              final nextAngle =
+                  arena.getRotation(slot) + angularVelocity * deltaTime;
+
+              arena.setPosition(slot, nextX, nextY);
+              arena.setVelocity(slot, velocityX, velocityY);
+              arena.setRotation(slot, nextAngle);
+              arena.setValue(slot, MemoryArena.offsetExtra, angularVelocity);
+
+              // Write-through keeps external gameplay/ECS observers unchanged.
+              body.position.x = nextX;
+              body.position.y = nextY;
+              body.velocity.x = velocityX;
+              body.velocity.y = velocityY;
+              body.angle = nextAngle;
+              body.angularVelocity = angularVelocity;
+
+              body.acceleration.setZero();
+              body.torque = 0.0;
+              continue;
+            }
 
             // Semi-Implicit Euler Integration — all in-place Vec2 ops
             // 1. Update velocity: v += accel * dt
@@ -162,12 +323,19 @@ class PhysicsEngine {
     _stepStopwatch.stop();
     _lastAwakeBodyCount = awakeBodyCount;
     _lastStepMs = _stepStopwatch.elapsedMicroseconds / 1000.0;
+    _updateAdaptiveBroadphaseDecision();
+    if (deterministicHashEnabled &&
+        _simulationStep % deterministicHashIntervalSteps == 0) {
+      _lastDeterministicHash = _computeDeterministicHash();
+      _lastDeterministicHashStep = _simulationStep;
+    }
   }
 
   /// Add a physics body
   void addBody(PhysicsBody body) {
     if (_bodySet.add(body)) {
       _bodies.add(body);
+      _arenaDirty = true;
     }
   }
 
@@ -176,7 +344,64 @@ class PhysicsEngine {
     if (_bodySet.remove(body)) {
       _bodies.remove(body);
       _grid.removeBody(body);
+      _arenaSlots.remove(body);
+      _arenaDirty = true;
     }
+  }
+
+  void _rebuildArenaIfNeeded() {
+    if (!experimentalArenaEnabled) return;
+    if (!_arenaDirty && _stateArena != null) return;
+
+    _arenaSlots.clear();
+
+    final dynamicBodies = <PhysicsBody>[];
+    for (final body in _bodies) {
+      if (body.mass > 0) {
+        dynamicBodies.add(body);
+      }
+    }
+
+    if (dynamicBodies.isEmpty) {
+      _stateArena = null;
+      _arenaDirty = false;
+      return;
+    }
+
+    final arena = MemoryArena(capacity: dynamicBodies.length);
+    for (final body in dynamicBodies) {
+      final slot = arena.allocate();
+      if (slot < 0) continue;
+      _arenaSlots[body] = slot;
+      arena.setPosition(slot, body.position.x, body.position.y);
+      arena.setVelocity(slot, body.velocity.x, body.velocity.y);
+      arena.setRotation(slot, body.angle);
+      arena.setValue(slot, MemoryArena.offsetExtra, body.angularVelocity);
+    }
+
+    _stateArena = arena;
+    _arenaDirty = false;
+  }
+
+  int _computeDeterministicHash() {
+    var hash = 0xcbf29ce484222325;
+    for (final body in _bodies) {
+      final px = (body.position.x * 1000).round();
+      final py = (body.position.y * 1000).round();
+      final vx = (body.velocity.x * 1000).round();
+      final vy = (body.velocity.y * 1000).round();
+
+      hash ^= px;
+      hash *= 0x100000001b3;
+      hash ^= py;
+      hash *= 0x100000001b3;
+      hash ^= vx;
+      hash *= 0x100000001b3;
+      hash ^= vy;
+      hash *= 0x100000001b3;
+      hash &= 0x7fffffffffffffff;
+    }
+    return hash;
   }
 
   /// Broad-phase grid
@@ -193,11 +418,7 @@ class PhysicsEngine {
 
   /// Detect collisions
   void _detectCollisions() {
-    _grid.syncBodies(_bodies);
-    _lastBroadphaseDirtyBodyCount = _grid.dirtyBodyCount;
-    _lastTrackedCellCount = _grid.trackedCellCount;
-
-    final potentialPairs = _grid.getPotentialCollisions();
+    final potentialPairs = _getPotentialCollisions();
     _lastPotentialPairCount = potentialPairs.length;
 
     // Reset sensor buffers for this step.
@@ -253,6 +474,165 @@ class PhysicsEngine {
     _activeSensorPairs
       ..clear()
       ..addAll(currentSensorPairs);
+  }
+
+  List<BodyPair> _getPotentialCollisions() {
+    final isolateConfigured =
+        experimentalIsolateBroadphaseEnabled ||
+        experimentalIsolateBroadphaseAdaptiveEnabled;
+
+    if (!isolateConfigured) {
+      _grid.syncBodies(_bodies);
+      _lastBroadphaseDirtyBodyCount = _grid.dirtyBodyCount;
+      _lastTrackedCellCount = _grid.trackedCellCount;
+      _lastBroadphasePipeline = 'main_thread';
+      _lastBroadphaseWorkerPairCount = 0;
+      _lastBroadphaseWorkerInFlight = false;
+      _lastBroadphaseSerializedBodies = 0;
+      _lastBroadphaseSerializedBytes = 0;
+      _lastBroadphaseEligibleBodies = 0;
+      _adaptiveDecisionReason = 'disabled';
+      return _grid.getPotentialCollisions();
+    }
+
+    final eligibleBodies = _countEligibleBroadphaseBodies();
+    _lastBroadphaseEligibleBodies = eligibleBodies;
+    final aboveMinBodies =
+        eligibleBodies >= experimentalIsolateBroadphaseMinBodies;
+    final dispatchStep =
+        _simulationStep % experimentalIsolateBroadphaseDispatchEverySteps == 0;
+
+    if (!aboveMinBodies) {
+      _grid.syncBodies(_bodies);
+      _lastBroadphasePipeline = 'isolate_disabled_small_world';
+      _lastBroadphaseDirtyBodyCount = _grid.dirtyBodyCount;
+      _lastTrackedCellCount = _grid.trackedCellCount;
+      _lastBroadphaseWorkerPairCount = 0;
+      _lastBroadphaseWorkerInFlight = false;
+      _lastBroadphaseSerializedBodies = 0;
+      _lastBroadphaseSerializedBytes = 0;
+      _adaptiveDecisionReason = 'below_min_bodies';
+      return _grid.getPotentialCollisions();
+    }
+
+    if (_isolateBlockedByAdaptivePolicy()) {
+      _grid.syncBodies(_bodies);
+      _lastBroadphasePipeline = 'adaptive_disabled_main_thread';
+      _lastBroadphaseDirtyBodyCount = _grid.dirtyBodyCount;
+      _lastTrackedCellCount = _grid.trackedCellCount;
+      _lastBroadphaseWorkerPairCount = 0;
+      _lastBroadphaseWorkerInFlight = false;
+      _lastBroadphaseSerializedBodies = 0;
+      _lastBroadphaseSerializedBytes = 0;
+      return _grid.getPotentialCollisions();
+    }
+
+    final usedWorkerPairs = _broadphaseWorker.consumePairs(_bodies);
+    final scheduled = dispatchStep
+        ? _broadphaseWorker.scheduleIfIdle(_bodies, _grid.cellSize)
+        : false;
+
+    _lastBroadphaseWorkerInFlight = _broadphaseWorker.isInFlight;
+    _lastBroadphaseSerializedBodies = _broadphaseWorker.lastSerializedBodies;
+    _lastBroadphaseSerializedBytes = _broadphaseWorker.lastSerializedBytes;
+    _lastBroadphaseDirtyBodyCount = -1;
+    _lastTrackedCellCount = -1;
+
+    if (usedWorkerPairs != null) {
+      _lastBroadphasePipeline = 'isolate_worker';
+      _lastBroadphaseWorkerPairCount = usedWorkerPairs.length;
+      return usedWorkerPairs;
+    }
+
+    // Before the first isolate result arrives, keep simulation functional.
+    _grid.syncBodies(_bodies);
+    if (!dispatchStep && !_broadphaseWorker.isInFlight) {
+      _lastBroadphasePipeline = 'isolate_waiting_dispatch';
+    } else {
+      _lastBroadphasePipeline = scheduled
+          ? 'isolate_fallback_main_thread'
+          : 'main_thread_fallback';
+    }
+    _lastBroadphaseDirtyBodyCount = _grid.dirtyBodyCount;
+    _lastTrackedCellCount = _grid.trackedCellCount;
+    _lastBroadphaseWorkerPairCount = 0;
+    return _grid.getPotentialCollisions();
+  }
+
+  bool _isolateBlockedByAdaptivePolicy() {
+    if (!experimentalIsolateBroadphaseAdaptiveEnabled) return false;
+    return !_adaptiveIsolateActive;
+  }
+
+  void _updateAdaptiveBroadphaseDecision() {
+    if (!experimentalIsolateBroadphaseAdaptiveEnabled) return;
+
+    final observedStepMs =
+        experimentalAdaptiveStepMsOverrideForTesting?.call(
+          _simulationStep,
+          _lastStepMs,
+        ) ??
+        _lastStepMs;
+
+    if (_adaptiveAvgStepMs == 0.0) {
+      _adaptiveAvgStepMs = observedStepMs;
+    } else {
+      // Exponential moving average for stable decisions.
+      _adaptiveAvgStepMs = _adaptiveAvgStepMs * 0.85 + observedStepMs * 0.15;
+    }
+
+    if (_simulationStep %
+            experimentalIsolateBroadphaseAdaptiveCheckIntervalSteps !=
+        0) {
+      return;
+    }
+
+    final hi =
+        experimentalIsolateBroadphaseTargetStepMs *
+        (1.0 + experimentalIsolateBroadphaseAdaptiveMargin);
+    final lo =
+        experimentalIsolateBroadphaseTargetStepMs *
+        (1.0 - experimentalIsolateBroadphaseAdaptiveMargin);
+
+    final allowFirstTransition = _adaptiveTransitionCount == 0;
+    final heldLongEnough =
+        (_simulationStep - _adaptiveLastTransitionStep) >=
+        experimentalIsolateBroadphaseAdaptiveMinHoldSteps;
+    final canTransition = allowFirstTransition || heldLongEnough;
+
+    if (_adaptiveAvgStepMs > hi) {
+      if (!_adaptiveIsolateActive && canTransition) {
+        _adaptiveIsolateActive = true;
+        _adaptiveLastTransitionStep = _simulationStep;
+        _adaptiveTransitionCount++;
+        _adaptiveDecisionReason = 'above_target';
+      } else if (!_adaptiveIsolateActive && !canTransition) {
+        _adaptiveDecisionReason = 'hold_locked';
+      } else {
+        _adaptiveDecisionReason = 'above_target';
+      }
+    } else if (_adaptiveAvgStepMs < lo) {
+      if (_adaptiveIsolateActive && canTransition) {
+        _adaptiveIsolateActive = false;
+        _adaptiveLastTransitionStep = _simulationStep;
+        _adaptiveTransitionCount++;
+        _adaptiveDecisionReason = 'below_target';
+      } else if (_adaptiveIsolateActive && !canTransition) {
+        _adaptiveDecisionReason = 'hold_locked';
+      } else {
+        _adaptiveDecisionReason = 'below_target';
+      }
+    } else {
+      _adaptiveDecisionReason = 'within_band';
+    }
+  }
+
+  int _countEligibleBroadphaseBodies() {
+    var count = 0;
+    for (final body in _bodies) {
+      if (body.isActive && body.checkCollision) count++;
+    }
+    return count;
   }
 
   /// Iterate sensor-enter events from the last step.
@@ -479,6 +859,24 @@ class PhysicsEngine {
   void dispose() {
     _bodies.clear();
     _bodySet.clear();
+    _arenaSlots.clear();
+    _stateArena = null;
+    _arenaDirty = true;
+    _broadphaseWorker.dispose();
+    _simulationStep = 0;
+    _lastDeterministicHash = 0;
+    _lastDeterministicHashStep = 0;
+    _lastBroadphasePipeline = 'main_thread';
+    _lastBroadphaseWorkerPairCount = 0;
+    _lastBroadphaseWorkerInFlight = false;
+    _lastBroadphaseSerializedBodies = 0;
+    _lastBroadphaseSerializedBytes = 0;
+    _lastBroadphaseEligibleBodies = 0;
+    _adaptiveIsolateActive = false;
+    _adaptiveAvgStepMs = 0.0;
+    _adaptiveDecisionReason = 'not_evaluated';
+    _adaptiveLastTransitionStep = 0;
+    _adaptiveTransitionCount = 0;
     _grid.clear();
     _activeSensorPairs.clear();
     _sensorBeginBuffer.clear();
@@ -559,11 +957,7 @@ class PhysicsEngine {
     return j;
   }
 
-  JointConstraint addPrismaticJoint(
-    PhysicsBody a,
-    PhysicsBody b,
-    Offset axis,
-  ) {
+  JointConstraint addPrismaticJoint(PhysicsBody a, PhysicsBody b, Offset axis) {
     final j = PrismaticJoint(bodyA: a, bodyB: b, axis: axis);
     addJoint(j);
     return j;
@@ -870,7 +1264,100 @@ class PhysicsEngine {
     'broadphaseDirtyBodies': _lastBroadphaseDirtyBodyCount,
     'trackedCells': _lastTrackedCellCount,
     'lastStepMs': _lastStepMs,
+    'experimentalArena': experimentalArenaEnabled,
+    'arenaTrackedBodies': _arenaSlots.length,
+    'experimentalIsolateBroadphase': experimentalIsolateBroadphaseEnabled,
+    'experimentalIsolateBroadphaseAdaptiveEnabled':
+        experimentalIsolateBroadphaseAdaptiveEnabled,
+    'experimentalIsolateBroadphaseMinBodies':
+        experimentalIsolateBroadphaseMinBodies,
+    'experimentalIsolateBroadphaseDispatchEverySteps':
+        experimentalIsolateBroadphaseDispatchEverySteps,
+    'experimentalIsolateBroadphaseTargetStepMs':
+        experimentalIsolateBroadphaseTargetStepMs,
+    'experimentalIsolateBroadphaseAdaptiveCheckIntervalSteps':
+        experimentalIsolateBroadphaseAdaptiveCheckIntervalSteps,
+    'experimentalIsolateBroadphaseAdaptiveMargin':
+        experimentalIsolateBroadphaseAdaptiveMargin,
+    'experimentalIsolateBroadphaseAdaptiveMinHoldSteps':
+        experimentalIsolateBroadphaseAdaptiveMinHoldSteps,
+    'adaptiveIsolateActive': _adaptiveIsolateActive,
+    'adaptiveAvgStepMs': _adaptiveAvgStepMs,
+    'adaptiveDecisionReason': _adaptiveDecisionReason,
+    'adaptiveLastTransitionStep': _adaptiveLastTransitionStep,
+    'adaptiveTransitionCount': _adaptiveTransitionCount,
+    'broadphasePipeline': _lastBroadphasePipeline,
+    'broadphaseWorkerPairCount': _lastBroadphaseWorkerPairCount,
+    'broadphaseWorkerInFlight': _lastBroadphaseWorkerInFlight,
+    'broadphaseEligibleBodies': _lastBroadphaseEligibleBodies,
+    'broadphaseSerializedBodies': _lastBroadphaseSerializedBodies,
+    'broadphaseSerializedBytes': _lastBroadphaseSerializedBytes,
+    'deterministicHashEnabled': deterministicHashEnabled,
+    'deterministicHashIntervalSteps': deterministicHashIntervalSteps,
+    'deterministicHash': _lastDeterministicHash,
+    'deterministicHashLastStep': _lastDeterministicHashStep,
+    'simulationStep': _simulationStep,
   };
+
+  /// Deterministic broad-phase pair-key snapshot for algorithm parity checks.
+  ///
+  /// Keys are derived from body insertion indices (not identity hash codes),
+  /// so they are stable across equivalent runs.
+  @visibleForTesting
+  Set<int> debugBroadphasePairKeys({required bool useIsolateAlgorithm}) {
+    if (!useIsolateAlgorithm) {
+      _grid.syncBodies(_bodies);
+      final pairs = _grid.getPotentialCollisions();
+      final base = _bodies.length + 1;
+      final keys = <int>{};
+      for (final pair in pairs) {
+        final ai = _bodies.indexOf(pair.a);
+        final bi = _bodies.indexOf(pair.b);
+        if (ai < 0 || bi < 0) continue;
+        var a = ai;
+        var b = bi;
+        if (a > b) {
+          final tmp = a;
+          a = b;
+          b = tmp;
+        }
+        keys.add(a * base + b);
+      }
+      return keys;
+    }
+
+    final payload = _serializeBodiesForWorker(_bodies);
+    if (payload.enabledBodyCount < 2) return <int>{};
+
+    final bounds = payload.boundsData.materialize().asFloat32List();
+    final packedPairs = _computeBroadphasePairsFromBounds(
+      bounds,
+      payload.enabledBodyCount,
+      _grid.cellSize,
+    );
+
+    final base = _bodies.length + 1;
+    final keys = <int>{};
+    for (var i = 0; i + 1 < packedPairs.length; i += 2) {
+      final compactA = packedPairs[i];
+      final compactB = packedPairs[i + 1];
+      if (compactA >= payload.originalBodyIndices.length ||
+          compactB >= payload.originalBodyIndices.length) {
+        continue;
+      }
+
+      var a = payload.originalBodyIndices[compactA];
+      var b = payload.originalBodyIndices[compactB];
+      if (a > b) {
+        final tmp = a;
+        a = b;
+        b = tmp;
+      }
+      keys.add(a * base + b);
+    }
+
+    return keys;
+  }
 
   // ── Shape casts ──────────────────────────────────────────────────────────
 
@@ -1024,4 +1511,213 @@ class RayBodyHit {
     required this.normal,
     required this.distance,
   });
+}
+
+class _IsolateBroadphaseWorker {
+  Future<TransferableTypedData>? _inFlight;
+  Uint32List? _readyPairIndices;
+  List<int> _originalBodyIndices = const [];
+  int _lastSerializedBodies = 0;
+  int _lastSerializedBytes = 0;
+
+  bool get isInFlight => _inFlight != null;
+  int get lastSerializedBodies => _lastSerializedBodies;
+  int get lastSerializedBytes => _lastSerializedBytes;
+
+  bool scheduleIfIdle(List<PhysicsBody> bodies, double cellSize) {
+    if (_inFlight != null) return false;
+
+    final payload = _serializeBodiesForWorker(bodies);
+    _originalBodyIndices = payload.originalBodyIndices;
+    _lastSerializedBodies = payload.enabledBodyCount;
+    _lastSerializedBytes = payload.serializedBytes;
+    if (payload.enabledBodyCount < 2) {
+      _readyPairIndices = Uint32List(0);
+      return false;
+    }
+
+    try {
+      _inFlight = Isolate.run(
+        () => _computeBroadphasePairsInWorker(
+          payload.boundsData,
+          payload.enabledBodyCount,
+          cellSize,
+        ),
+      );
+
+      _inFlight!
+          .then((result) {
+            _readyPairIndices = result.materialize().asUint32List();
+          })
+          .whenComplete(() {
+            _inFlight = null;
+          });
+      return true;
+    } catch (_) {
+      _inFlight = null;
+      return false;
+    }
+  }
+
+  List<BodyPair>? consumePairs(List<PhysicsBody> bodies) {
+    final packed = _readyPairIndices;
+    if (packed == null) return null;
+    _readyPairIndices = null;
+
+    final pairs = <BodyPair>[];
+    for (var i = 0; i + 1 < packed.length; i += 2) {
+      final compactA = packed[i];
+      final compactB = packed[i + 1];
+      if (compactA >= _originalBodyIndices.length ||
+          compactB >= _originalBodyIndices.length) {
+        continue;
+      }
+
+      final aIndex = _originalBodyIndices[compactA];
+      final bIndex = _originalBodyIndices[compactB];
+      if (aIndex >= bodies.length || bIndex >= bodies.length) continue;
+
+      final a = bodies[aIndex];
+      final b = bodies[bIndex];
+      if (!a.isActive ||
+          !b.isActive ||
+          !a.checkCollision ||
+          !b.checkCollision) {
+        continue;
+      }
+      pairs.add(BodyPair(a, b));
+    }
+    return pairs;
+  }
+
+  void dispose() {
+    _inFlight = null;
+    _readyPairIndices = null;
+    _originalBodyIndices = const [];
+    _lastSerializedBodies = 0;
+    _lastSerializedBytes = 0;
+  }
+}
+
+class _BroadphaseWorkerPayload {
+  final TransferableTypedData boundsData;
+  final int enabledBodyCount;
+  final List<int> originalBodyIndices;
+  final int serializedBytes;
+
+  const _BroadphaseWorkerPayload({
+    required this.boundsData,
+    required this.enabledBodyCount,
+    required this.originalBodyIndices,
+    required this.serializedBytes,
+  });
+}
+
+_BroadphaseWorkerPayload _serializeBodiesForWorker(List<PhysicsBody> bodies) {
+  final originalIndices = <int>[];
+  for (var i = 0; i < bodies.length; i++) {
+    final body = bodies[i];
+    if (!body.isActive || !body.checkCollision) continue;
+    originalIndices.add(i);
+  }
+
+  // Compact transfer: only enabled bodies, 4 floats each (l,t,r,b).
+  final data = Float32List(originalIndices.length * 4);
+
+  for (
+    var compactIndex = 0;
+    compactIndex < originalIndices.length;
+    compactIndex++
+  ) {
+    final body = bodies[originalIndices[compactIndex]];
+    final base = compactIndex * 4;
+
+    final bounds = body.getCompoundBounds(body.position.toOffset());
+    data[base] = bounds.left;
+    data[base + 1] = bounds.top;
+    data[base + 2] = bounds.right;
+    data[base + 3] = bounds.bottom;
+  }
+
+  final bytes = data.length * Float32List.bytesPerElement;
+
+  return _BroadphaseWorkerPayload(
+    boundsData: TransferableTypedData.fromList([data.buffer.asUint8List()]),
+    enabledBodyCount: originalIndices.length,
+    originalBodyIndices: originalIndices,
+    serializedBytes: bytes,
+  );
+}
+
+TransferableTypedData _computeBroadphasePairsInWorker(
+  TransferableTypedData packedBounds,
+  int enabledBodyCount,
+  double cellSize,
+) {
+  final bounds = packedBounds.materialize().asFloat32List();
+
+  final packedPairs = _computeBroadphasePairsFromBounds(
+    bounds,
+    enabledBodyCount,
+    cellSize,
+  );
+
+  return TransferableTypedData.fromList([packedPairs.buffer.asUint8List()]);
+}
+
+Uint32List _computeBroadphasePairsFromBounds(
+  Float32List bounds,
+  int enabledBodyCount,
+  double cellSize,
+) {
+  if (enabledBodyCount < 2) return Uint32List(0);
+
+  final buckets = <int, List<int>>{};
+
+  int hashCell(int x, int y) => (x * 73856093) ^ (y * 83492791);
+
+  for (var i = 0; i < enabledBodyCount; i++) {
+    final base = i * 4;
+
+    final minX = (bounds[base] / cellSize).floor();
+    final minY = (bounds[base + 1] / cellSize).floor();
+    final maxX = (bounds[base + 2] / cellSize).floor();
+    final maxY = (bounds[base + 3] / cellSize).floor();
+
+    for (var x = minX; x <= maxX; x++) {
+      for (var y = minY; y <= maxY; y++) {
+        final cellHash = hashCell(x, y);
+        (buckets[cellHash] ??= <int>[]).add(i);
+      }
+    }
+  }
+
+  final seen = <int>{};
+  final pairList = <int>[];
+  for (final bucket in buckets.values) {
+    if (bucket.length < 2) continue;
+
+    for (var i = 0; i < bucket.length; i++) {
+      for (var j = i + 1; j < bucket.length; j++) {
+        var a = bucket[i];
+        var b = bucket[j];
+        if (a == b) continue;
+        if (a > b) {
+          final tmp = a;
+          a = b;
+          b = tmp;
+        }
+
+        final key = a * enabledBodyCount + b;
+        if (seen.add(key)) {
+          pairList
+            ..add(a)
+            ..add(b);
+        }
+      }
+    }
+  }
+
+  final packedPairs = Uint32List.fromList(pairList);
+  return packedPairs;
 }
