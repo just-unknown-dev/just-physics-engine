@@ -15,6 +15,48 @@ class BodyPair {
   int get hashCode => a.hashCode ^ b.hashCode;
 }
 
+class _ContactWarmStartState {
+  final double normalImpulse;
+  final double tangentImpulse;
+  final double normalX;
+  final double normalY;
+  final double localAnchorAX;
+  final double localAnchorAY;
+  final double localAnchorBX;
+  final double localAnchorBY;
+  final int? contactFeatureId;
+  final int lastSeenStep;
+
+  const _ContactWarmStartState({
+    required this.normalImpulse,
+    required this.tangentImpulse,
+    required this.normalX,
+    required this.normalY,
+    required this.localAnchorAX,
+    required this.localAnchorAY,
+    required this.localAnchorBX,
+    required this.localAnchorBY,
+    required this.contactFeatureId,
+    required this.lastSeenStep,
+  });
+}
+
+class _ResolvedContactImpulse {
+  final double normalImpulse;
+  final double tangentImpulse;
+
+  const _ResolvedContactImpulse({
+    required this.normalImpulse,
+    required this.tangentImpulse,
+  });
+}
+
+class _BlockSolveHysteresisState {
+  bool normalActive = false;
+  bool frictionActive = false;
+  int lastSeenStep = 0;
+}
+
 /// A uniform grid for broad-phase collision detection.
 ///
 /// Cell lists are pooled and reused between frames to avoid per-frame GC

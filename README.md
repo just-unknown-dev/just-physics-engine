@@ -8,10 +8,12 @@ This package is part of the Just Game Engine workspace, but can be used independ
 
 - 2D rigid-body simulation (`PhysicsEngine`, `PhysicsBody`)
 - Gravity, drag, restitution, friction, torque, and sleeping
+- Joint-connected wake propagation for sleeping dynamic bodies
 - Collision shapes: `CircleShape`, `PolygonShape`, `RectangleShape`
 - Broad-phase collision culling via `SpatialGrid`
 - Collision response with impulse + friction + positional correction
 - Runtime simulation stats (`engine.stats`)
+- Contact warm-start cache for persistent collision pairs
 - Debug rendering (`engine.renderDebug`)
 - 2D ray utility (`Ray`, `Ray.fromPoints`)
 - 3D API stubs (`PhysicsEngine3D`)
@@ -168,6 +170,28 @@ class PhysicsDebugPainter extends CustomPainter {
 - The 2D engine is the production-ready part of this package.
 - 3D classes are currently scaffolding/stubs and do not provide full simulation yet.
 - For deterministic gameplay, use a fixed timestep (for example, `1/60`) rather than variable-frame integration.
+- Contact solve and warm-start behavior in `PhysicsEngine.pureDart` can be tuned with `experimentalContactVelocityIterations`, `experimentalContactTwoPointBlockNormalSolveEnabled`, `experimentalContactTwoPointBlockFrictionSolveEnabled`, `experimentalContactTwoPointBlockNormalSolveMinWarmStates`, `experimentalContactTwoPointBlockFrictionSolveMinWarmStates`, `experimentalContactTwoPointBlockNormalSolveDisableBelowWarmStates`, `experimentalContactTwoPointBlockFrictionSolveDisableBelowWarmStates`, `experimentalContactBlockHysteresisTransitionRateWindowSteps`, `experimentalContactWarmStartImpulseDecay`, `experimentalContactWarmStartNormalImpulseDecay`, `experimentalContactWarmStartTangentImpulseDecay`, `experimentalContactWarmStartMaxImpulse`, `experimentalContactWarmStartMaxAgeSteps`, `experimentalContactWarmStartNormalAlignmentThreshold`, `experimentalContactWarmStartAnchorDistanceThreshold`, and `experimentalContactWarmStartManifoldSlots`.
+- Warm-start anchor continuity uses manifold contact-point estimates when available, with midpoint fallback.
+- Warm-start cache selection can optionally require manifold feature-id consistency via `experimentalContactWarmStartFeatureIdMatchingEnabled`.
+- When a manifold provides multiple contact points, warm-start now caches each point (bounded by `experimentalContactWarmStartManifoldSlots`) for better replay continuity on edge contacts.
+- Warm-start solve pre-injection now aggregates matched cached states across manifold points (`warmStartMatchedStates` in stats) while the solver transitions toward full multi-point iteration.
+- Contact impulse solve now iterates per manifold point with rotational lever-arm response (linear + angular impulse) and reports `resolvedManifoldPoints` in stats for multi-point validation.
+- Contact velocity solve supports configurable sequential passes via `experimentalContactVelocityIterations` and reports executed passes as `resolvedVelocityIterations` in stats.
+- Optional coupled 2-point edge-contact normal solve can be enabled via `experimentalContactTwoPointBlockNormalSolveEnabled` and reports executed block passes as `resolvedBlockSolves`.
+- Optional coupled 2-point edge-contact friction solve can be enabled via `experimentalContactTwoPointBlockFrictionSolveEnabled` and reports executed block passes as `resolvedBlockFrictionSolves`.
+- Both block solve paths can be deferred until persistent contacts are warm-started by setting `experimentalContactTwoPointBlockNormalSolveMinWarmStates` and `experimentalContactTwoPointBlockFrictionSolveMinWarmStates`.
+- Pair-level hysteresis for block solves can be configured via `experimentalContactTwoPointBlockNormalSolveDisableBelowWarmStates` and `experimentalContactTwoPointBlockFrictionSolveDisableBelowWarmStates` (enable at min-warm threshold, disable below the corresponding disable threshold).
+- Runtime diagnostics include hysteresis-active contact counts: `blockNormalHysteresisActiveContacts` and `blockFrictionHysteresisActiveContacts`.
+- Runtime diagnostics also expose per-step hysteresis transitions: `blockNormalHysteresisActivations`, `blockNormalHysteresisDeactivations`, `blockFrictionHysteresisActivations`, and `blockFrictionHysteresisDeactivations`.
+- Reason-level transition diagnostics are also available: `blockNormalHysteresisActivatedByThreshold`, `blockNormalHysteresisDeactivatedBelowDisable`, `blockNormalHysteresisDeactivatedNonTwoPoint`, `blockFrictionHysteresisActivatedByThreshold`, `blockFrictionHysteresisDeactivatedBelowDisable`, and `blockFrictionHysteresisDeactivatedNonTwoPoint`.
+- Run-level cumulative transition diagnostics are available as `totalBlockNormalHysteresisActivations`, `totalBlockNormalHysteresisDeactivations`, `totalBlockFrictionHysteresisActivations`, and `totalBlockFrictionHysteresisDeactivations`.
+- Optional rolling per-step transition rates (`rollingBlockNormalHysteresisActivationRate`, `rollingBlockNormalHysteresisDeactivationRate`, `rollingBlockFrictionHysteresisActivationRate`, `rollingBlockFrictionHysteresisDeactivationRate`) are computed over `experimentalContactBlockHysteresisTransitionRateWindowSteps`.
+- Warm-start pre-injection now replays per-point angular preload at cached anchors and reports `warmStartAngularPreloadCount` in stats for off-center contact continuity diagnostics.
+- Warm-start cache writes now prefer per-feature impulses resolved in the current step before falling back to averaged manifold impulses (`warmStartResolvedFeatureSeeded` in stats).
+- Warm-start normal/tangent impulse decay can be tuned independently (`experimentalContactWarmStartNormalImpulseDecay` and `experimentalContactWarmStartTangentImpulseDecay`) when a single shared decay is too coarse.
+- Polygon-vs-polygon manifolds now use reference/incident edge clipping to estimate up to two stable contact points with paired feature ids.
+- Rounded-polygon vs polygon and polygon vs capsule manifolds now also expose stable contact-point feature identifiers for better warm-start continuity.
+- Warm-start caches track feature-scoped impulse history reuse (`warmStartFeatureHistoryReused` in stats) so persistent manifold points retain their own impulse memory.
 
 ## Compatibility
 

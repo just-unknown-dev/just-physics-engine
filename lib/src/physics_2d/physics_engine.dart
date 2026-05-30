@@ -34,6 +34,27 @@ class PhysicsEngine {
   /// of platform selection.
   PhysicsEngine.pureDart({
     this.experimentalArenaEnabled = true,
+    this.experimentalContactWarmStartEnabled = true,
+    int experimentalContactVelocityIterations = 1,
+    this.experimentalContactTwoPointBlockNormalSolveEnabled = false,
+    this.experimentalContactTwoPointBlockFrictionSolveEnabled = false,
+    int experimentalContactTwoPointBlockNormalSolveMinWarmStates = 0,
+    int experimentalContactTwoPointBlockFrictionSolveMinWarmStates = 0,
+    int? experimentalContactTwoPointBlockNormalSolveDisableBelowWarmStates,
+    int? experimentalContactTwoPointBlockFrictionSolveDisableBelowWarmStates,
+    int experimentalContactBlockHysteresisTransitionRateWindowSteps = 0,
+    double experimentalContactWarmStartImpulseDecay = 1.0,
+    double? experimentalContactWarmStartNormalImpulseDecay,
+    double? experimentalContactWarmStartTangentImpulseDecay,
+    double experimentalContactWarmStartMaxImpulse = double.infinity,
+    int experimentalContactWarmStartMaxAgeSteps = 2,
+    double experimentalContactWarmStartNormalAlignmentThreshold = 0.0,
+    double experimentalContactWarmStartAnchorDistanceThreshold =
+        double.infinity,
+    int experimentalContactWarmStartManifoldSlots = 1,
+    this.experimentalContactWarmStartFeatureIdMatchingEnabled = true,
+    this.experimentalContactWarmStartAlignmentOverrideForTesting,
+    this.experimentalContactWarmStartFeatureIdOverrideForTesting,
     this.deterministicHashEnabled = false,
     int deterministicHashIntervalSteps = 1,
     this.experimentalIsolateBroadphaseEnabled = false,
@@ -48,6 +69,88 @@ class PhysicsEngine {
   }) : deterministicHashIntervalSteps = deterministicHashIntervalSteps < 1
            ? 1
            : deterministicHashIntervalSteps,
+       experimentalContactWarmStartImpulseDecay =
+           experimentalContactWarmStartImpulseDecay.clamp(0.0, 1.0).toDouble(),
+       experimentalContactWarmStartNormalImpulseDecay =
+           (experimentalContactWarmStartNormalImpulseDecay ??
+                   experimentalContactWarmStartImpulseDecay)
+               .clamp(0.0, 1.0)
+               .toDouble(),
+       experimentalContactWarmStartTangentImpulseDecay =
+           (experimentalContactWarmStartTangentImpulseDecay ??
+                   experimentalContactWarmStartImpulseDecay)
+               .clamp(0.0, 1.0)
+               .toDouble(),
+       experimentalContactVelocityIterations =
+           experimentalContactVelocityIterations < 1
+           ? 1
+           : (experimentalContactVelocityIterations > 8
+                 ? 8
+                 : experimentalContactVelocityIterations),
+       experimentalContactTwoPointBlockNormalSolveMinWarmStates =
+           experimentalContactTwoPointBlockNormalSolveMinWarmStates < 0
+           ? 0
+           : (experimentalContactTwoPointBlockNormalSolveMinWarmStates > 4
+                 ? 4
+                 : experimentalContactTwoPointBlockNormalSolveMinWarmStates),
+       experimentalContactTwoPointBlockFrictionSolveMinWarmStates =
+           experimentalContactTwoPointBlockFrictionSolveMinWarmStates < 0
+           ? 0
+           : (experimentalContactTwoPointBlockFrictionSolveMinWarmStates > 4
+                 ? 4
+                 : experimentalContactTwoPointBlockFrictionSolveMinWarmStates),
+       experimentalContactTwoPointBlockNormalSolveDisableBelowWarmStates =
+           ((experimentalContactTwoPointBlockNormalSolveDisableBelowWarmStates ??
+                   experimentalContactTwoPointBlockNormalSolveMinWarmStates) <
+               0)
+           ? 0
+           : ((experimentalContactTwoPointBlockNormalSolveDisableBelowWarmStates ??
+                         experimentalContactTwoPointBlockNormalSolveMinWarmStates) >
+                     4
+                 ? 4
+                 : (experimentalContactTwoPointBlockNormalSolveDisableBelowWarmStates ??
+                       experimentalContactTwoPointBlockNormalSolveMinWarmStates)),
+       experimentalContactTwoPointBlockFrictionSolveDisableBelowWarmStates =
+           ((experimentalContactTwoPointBlockFrictionSolveDisableBelowWarmStates ??
+                   experimentalContactTwoPointBlockFrictionSolveMinWarmStates) <
+               0)
+           ? 0
+           : ((experimentalContactTwoPointBlockFrictionSolveDisableBelowWarmStates ??
+                         experimentalContactTwoPointBlockFrictionSolveMinWarmStates) >
+                     4
+                 ? 4
+                 : (experimentalContactTwoPointBlockFrictionSolveDisableBelowWarmStates ??
+                       experimentalContactTwoPointBlockFrictionSolveMinWarmStates)),
+       experimentalContactBlockHysteresisTransitionRateWindowSteps =
+           experimentalContactBlockHysteresisTransitionRateWindowSteps < 0
+           ? 0
+           : (experimentalContactBlockHysteresisTransitionRateWindowSteps > 600
+                 ? 600
+                 : experimentalContactBlockHysteresisTransitionRateWindowSteps),
+       experimentalContactWarmStartMaxImpulse =
+           experimentalContactWarmStartMaxImpulse.isNaN ||
+               experimentalContactWarmStartMaxImpulse < 0
+           ? 0.0
+           : experimentalContactWarmStartMaxImpulse,
+       experimentalContactWarmStartMaxAgeSteps =
+           experimentalContactWarmStartMaxAgeSteps < 1
+           ? 1
+           : experimentalContactWarmStartMaxAgeSteps,
+       experimentalContactWarmStartNormalAlignmentThreshold =
+           experimentalContactWarmStartNormalAlignmentThreshold
+               .clamp(0.0, 1.0)
+               .toDouble(),
+       experimentalContactWarmStartAnchorDistanceThreshold =
+           experimentalContactWarmStartAnchorDistanceThreshold.isNaN ||
+               experimentalContactWarmStartAnchorDistanceThreshold < 0
+           ? 0.0
+           : experimentalContactWarmStartAnchorDistanceThreshold,
+       experimentalContactWarmStartManifoldSlots =
+           experimentalContactWarmStartManifoldSlots < 1
+           ? 1
+           : (experimentalContactWarmStartManifoldSlots > 4
+                 ? 4
+                 : experimentalContactWarmStartManifoldSlots),
        experimentalIsolateBroadphaseMinBodies =
            experimentalIsolateBroadphaseMinBodies < 2
            ? 2
@@ -84,6 +187,78 @@ class PhysicsEngine {
   ///
   /// Disabled by default because hashing all bodies each frame has a cost.
   final bool deterministicHashEnabled;
+
+  /// Enables contact impulse persistence (warm-start) for repeated contacts.
+  final bool experimentalContactWarmStartEnabled;
+
+  /// Number of sequential velocity-solve iterations applied per contact point.
+  final int experimentalContactVelocityIterations;
+
+  /// Enables an additional coupled 2-point normal solve for edge contacts.
+  final bool experimentalContactTwoPointBlockNormalSolveEnabled;
+
+  /// Enables an additional coupled 2-point friction solve for edge contacts.
+  final bool experimentalContactTwoPointBlockFrictionSolveEnabled;
+
+  /// Minimum matched warm-start states required before running block normal solve.
+  final int experimentalContactTwoPointBlockNormalSolveMinWarmStates;
+
+  /// Minimum matched warm-start states required before running block friction solve.
+  final int experimentalContactTwoPointBlockFrictionSolveMinWarmStates;
+
+  /// Matched warm-start count below which an active block normal solve disables.
+  final int experimentalContactTwoPointBlockNormalSolveDisableBelowWarmStates;
+
+  /// Matched warm-start count below which an active block friction solve disables.
+  final int experimentalContactTwoPointBlockFrictionSolveDisableBelowWarmStates;
+
+  /// Rolling window size (in steps) for hysteresis transition rates.
+  ///
+  /// A value of 0 disables rolling rate metrics.
+  final int experimentalContactBlockHysteresisTransitionRateWindowSteps;
+
+  /// Multiplier applied to cached impulses when storing warm-start state.
+  ///
+  /// 1.0 keeps full impulse, lower values gradually decay cached impulses.
+  final double experimentalContactWarmStartImpulseDecay;
+
+  /// Optional normal-impulse-specific warm-start decay multiplier.
+  ///
+  /// Defaults to [experimentalContactWarmStartImpulseDecay] when not provided.
+  final double experimentalContactWarmStartNormalImpulseDecay;
+
+  /// Optional tangent-impulse-specific warm-start decay multiplier.
+  ///
+  /// Defaults to [experimentalContactWarmStartImpulseDecay] when not provided.
+  final double experimentalContactWarmStartTangentImpulseDecay;
+
+  /// Absolute cap applied to cached normal/tangent impulses.
+  final double experimentalContactWarmStartMaxImpulse;
+
+  /// Maximum age (in simulation steps) to keep a warm-start contact cached.
+  final int experimentalContactWarmStartMaxAgeSteps;
+
+  /// Minimum normal dot-product required to reuse cached contact impulses.
+  final double experimentalContactWarmStartNormalAlignmentThreshold;
+
+  /// Maximum allowed anchor mismatch distance for warm-start reuse.
+  final double experimentalContactWarmStartAnchorDistanceThreshold;
+
+  /// Number of cached warm-start states retained per body pair.
+  final int experimentalContactWarmStartManifoldSlots;
+
+  /// Enables feature-id matching when selecting cached warm-start states.
+  final bool experimentalContactWarmStartFeatureIdMatchingEnabled;
+
+  /// Optional test hook to override computed warm-start normal alignment.
+  @visibleForTesting
+  final double Function(int simulationStep, double computedAlignment)?
+  experimentalContactWarmStartAlignmentOverrideForTesting;
+
+  /// Optional test hook to override computed warm-start manifold feature id.
+  @visibleForTesting
+  final int? Function(int simulationStep, int? computedFeatureId)?
+  experimentalContactWarmStartFeatureIdOverrideForTesting;
 
   /// Hash cadence in simulation steps when [deterministicHashEnabled] is true.
   ///
@@ -172,6 +347,33 @@ class PhysicsEngine {
 
   int _lastPotentialPairCount = 0;
   int _lastResolvedCollisionCount = 0;
+  int _lastResolvedManifoldPointCount = 0;
+  int _lastResolvedVelocityIterationCount = 0;
+  int _lastResolvedBlockSolveCount = 0;
+  int _lastResolvedBlockFrictionSolveCount = 0;
+  int _lastBlockNormalHysteresisActiveContacts = 0;
+  int _lastBlockFrictionHysteresisActiveContacts = 0;
+  int _lastBlockNormalHysteresisActivationCount = 0;
+  int _lastBlockNormalHysteresisDeactivationCount = 0;
+  int _lastBlockFrictionHysteresisActivationCount = 0;
+  int _lastBlockFrictionHysteresisDeactivationCount = 0;
+  int _lastBlockNormalHysteresisActivatedByThresholdCount = 0;
+  int _lastBlockNormalHysteresisDeactivatedBelowDisableCount = 0;
+  int _lastBlockNormalHysteresisDeactivatedNonTwoPointCount = 0;
+  int _lastBlockFrictionHysteresisActivatedByThresholdCount = 0;
+  int _lastBlockFrictionHysteresisDeactivatedBelowDisableCount = 0;
+  int _lastBlockFrictionHysteresisDeactivatedNonTwoPointCount = 0;
+  int _totalBlockNormalHysteresisActivationCount = 0;
+  int _totalBlockNormalHysteresisDeactivationCount = 0;
+  int _totalBlockFrictionHysteresisActivationCount = 0;
+  int _totalBlockFrictionHysteresisDeactivationCount = 0;
+  final List<({int nAct, int nDeact, int fAct, int fDeact})>
+  _blockHysteresisTransitionWindow =
+      <({int nAct, int nDeact, int fAct, int fDeact})>[];
+  int _rollingBlockNormalHysteresisActivationCount = 0;
+  int _rollingBlockNormalHysteresisDeactivationCount = 0;
+  int _rollingBlockFrictionHysteresisActivationCount = 0;
+  int _rollingBlockFrictionHysteresisDeactivationCount = 0;
   int _lastAwakeBodyCount = 0;
   int _lastBroadphaseDirtyBodyCount = 0;
   int _lastTrackedCellCount = 0;
@@ -185,6 +387,23 @@ class PhysicsEngine {
   int _lastBroadphaseSerializedBodies = 0;
   int _lastBroadphaseSerializedBytes = 0;
   int _lastBroadphaseEligibleBodies = 0;
+  int _lastJointWakeActivations = 0;
+  int _lastWarmStartContactCount = 0;
+  int _lastWarmStartHitCount = 0;
+  int _lastWarmStartRejectedByAgeCount = 0;
+  int _lastWarmStartRejectedByNormalCount = 0;
+  int _lastWarmStartRejectedByAnchorCount = 0;
+  int _lastWarmStartRejectedByFeatureCount = 0;
+  int _lastWarmStartMatchedStateCount = 0;
+  int _lastWarmStartFeatureHistoryReuseCount = 0;
+  int _lastWarmStartResolvedFeatureSeedCount = 0;
+  int _lastWarmStartAngularPreloadCount = 0;
+  double _lastWarmStartMaxCachedNormalImpulse = 0.0;
+  double _lastWarmStartMaxCachedTangentImpulse = 0.0;
+
+  final Map<BodyPair, List<_ContactWarmStartState>> _contactWarmStartCache = {};
+  final Map<BodyPair, _BlockSolveHysteresisState> _blockSolveHysteresisByPair =
+      {};
 
   bool _adaptiveIsolateActive = false;
   double _adaptiveAvgStepMs = 0.0;
@@ -202,6 +421,8 @@ class PhysicsEngine {
       ..start();
     _simulationStep++;
     _rebuildArenaIfNeeded();
+    _lastJointWakeActivations = 0;
+    _propagateJointWakefulness();
     var awakeBodyCount = 0;
     _lastResolvedCollisionCount = 0;
 
@@ -303,6 +524,9 @@ class PhysicsEngine {
     // Simple collision detection
     _detectCollisions();
 
+    // Keep connected islands awake when contacts wake one member.
+    _propagateJointWakefulness();
+
     // Apply joint constraints after collision resolution.
     for (final joint in _joints) {
       joint.applyConstraint(deltaTime);
@@ -320,6 +544,8 @@ class PhysicsEngine {
       _prevAwake[body] = body.isAwake;
     }
 
+    _recordBlockHysteresisTransitionWindowSample();
+
     _stepStopwatch.stop();
     _lastAwakeBodyCount = awakeBodyCount;
     _lastStepMs = _stepStopwatch.elapsedMicroseconds / 1000.0;
@@ -328,6 +554,57 @@ class PhysicsEngine {
         _simulationStep % deterministicHashIntervalSteps == 0) {
       _lastDeterministicHash = _computeDeterministicHash();
       _lastDeterministicHashStep = _simulationStep;
+    }
+  }
+
+  void _wakeBody(PhysicsBody body) {
+    if (body.mass <= 0 || !body.isActive || body.isAwake) return;
+    body.isAwake = true;
+    body.sleepTimer = 0.0;
+    _lastJointWakeActivations++;
+  }
+
+  void _propagateWakePair(PhysicsBody a, PhysicsBody b) {
+    if (!a.isActive || !b.isActive) return;
+    if (a.mass <= 0 || b.mass <= 0) return;
+    if (a.isAwake && !b.isAwake) {
+      _wakeBody(b);
+    } else if (b.isAwake && !a.isAwake) {
+      _wakeBody(a);
+    }
+  }
+
+  void _propagateJointWakefulness() {
+    if (_joints.isEmpty) return;
+
+    var changed = true;
+    var passBudget = _joints.length;
+
+    while (changed && passBudget-- > 0) {
+      changed = false;
+      for (final joint in _joints) {
+        final prevActivations = _lastJointWakeActivations;
+
+        switch (joint) {
+          case DistanceJoint():
+            _propagateWakePair(joint.bodyA, joint.bodyB);
+          case WeldJoint():
+            _propagateWakePair(joint.bodyA, joint.bodyB);
+          case PrismaticJoint():
+            _propagateWakePair(joint.bodyA, joint.bodyB);
+          case RevoluteJoint():
+            _propagateWakePair(joint.bodyA, joint.bodyB);
+          case MouseJoint():
+            // Mouse joints already keep their single body awake internally.
+            continue;
+          default:
+            continue;
+        }
+
+        if (_lastJointWakeActivations != prevActivations) {
+          changed = true;
+        }
+      }
     }
   }
 
@@ -420,12 +697,41 @@ class PhysicsEngine {
   void _detectCollisions() {
     final potentialPairs = _getPotentialCollisions();
     _lastPotentialPairCount = potentialPairs.length;
+    _lastWarmStartContactCount = 0;
+    _lastWarmStartHitCount = 0;
+    _lastWarmStartRejectedByAgeCount = 0;
+    _lastWarmStartRejectedByNormalCount = 0;
+    _lastWarmStartRejectedByAnchorCount = 0;
+    _lastWarmStartRejectedByFeatureCount = 0;
+    _lastWarmStartMatchedStateCount = 0;
+    _lastWarmStartFeatureHistoryReuseCount = 0;
+    _lastWarmStartResolvedFeatureSeedCount = 0;
+    _lastWarmStartAngularPreloadCount = 0;
+    _lastWarmStartMaxCachedNormalImpulse = 0.0;
+    _lastWarmStartMaxCachedTangentImpulse = 0.0;
+    _lastResolvedManifoldPointCount = 0;
+    _lastResolvedVelocityIterationCount = 0;
+    _lastResolvedBlockSolveCount = 0;
+    _lastResolvedBlockFrictionSolveCount = 0;
+    _lastBlockNormalHysteresisActiveContacts = 0;
+    _lastBlockFrictionHysteresisActiveContacts = 0;
+    _lastBlockNormalHysteresisActivationCount = 0;
+    _lastBlockNormalHysteresisDeactivationCount = 0;
+    _lastBlockFrictionHysteresisActivationCount = 0;
+    _lastBlockFrictionHysteresisDeactivationCount = 0;
+    _lastBlockNormalHysteresisActivatedByThresholdCount = 0;
+    _lastBlockNormalHysteresisDeactivatedBelowDisableCount = 0;
+    _lastBlockNormalHysteresisDeactivatedNonTwoPointCount = 0;
+    _lastBlockFrictionHysteresisActivatedByThresholdCount = 0;
+    _lastBlockFrictionHysteresisDeactivatedBelowDisableCount = 0;
+    _lastBlockFrictionHysteresisDeactivatedNonTwoPointCount = 0;
 
     // Reset sensor buffers for this step.
     _sensorBeginBuffer.clear();
     _sensorEndBuffer.clear();
     final previousSensorPairs = Set<BodyPair>.from(_activeSensorPairs);
     final currentSensorPairs = <BodyPair>{};
+    final currentCollisionPairs = <BodyPair>{};
 
     for (final pair in potentialPairs) {
       final bodyA = pair.a;
@@ -460,9 +766,218 @@ class PhysicsEngine {
           _sensorBeginBuffer.add(pair);
         }
       } else {
+        _lastWarmStartContactCount++;
+        final contactPoints = best.contactPoints.isNotEmpty
+            ? best.contactPoints
+            : (best.contactPoint == null
+                  ? const <CollisionContactPoint>[]
+                  : <CollisionContactPoint>[
+                      CollisionContactPoint(
+                        point: best.contactPoint!,
+                        featureId: best.contactFeatureId,
+                      ),
+                    ]);
+        final currentFeatureIds = contactPoints
+            .map((cp) => cp.featureId)
+            .whereType<int>()
+            .toSet()
+            .toList(growable: false);
+        final warmStates = _selectWarmStartStates(
+          pair,
+          best.normal,
+          bodyA,
+          bodyB,
+          contactPoints: contactPoints,
+          currentFeatureIds: currentFeatureIds,
+        );
+        _lastWarmStartMatchedStateCount += warmStates.length;
+        if (warmStates.isNotEmpty) _lastWarmStartHitCount++;
+        currentCollisionPairs.add(pair);
+
+        final solverPointCountForGate = contactPoints.isNotEmpty
+            ? contactPoints.length
+            : (best.contactPoint == null ? 0 : 1);
+        final isTwoPointContact = solverPointCountForGate == 2;
+        final blockSolveState = _blockSolveHysteresisByPair.putIfAbsent(
+          pair,
+          () => _BlockSolveHysteresisState(),
+        );
+        blockSolveState.lastSeenStep = _simulationStep;
+
+        var blockNormalSolveAllowed = false;
+        var blockFrictionSolveAllowed = false;
+        final wasBlockNormalSolveActive = blockSolveState.normalActive;
+        final wasBlockFrictionSolveActive = blockSolveState.frictionActive;
+        if (isTwoPointContact) {
+          blockNormalSolveAllowed = _updateBlockSolveHysteresisActive(
+            currentlyActive: blockSolveState.normalActive,
+            matchedWarmStateCount: warmStates.length,
+            enableAtWarmStates:
+                experimentalContactTwoPointBlockNormalSolveMinWarmStates,
+            disableBelowWarmStates:
+                experimentalContactTwoPointBlockNormalSolveDisableBelowWarmStates,
+          );
+          blockFrictionSolveAllowed = _updateBlockSolveHysteresisActive(
+            currentlyActive: blockSolveState.frictionActive,
+            matchedWarmStateCount: warmStates.length,
+            enableAtWarmStates:
+                experimentalContactTwoPointBlockFrictionSolveMinWarmStates,
+            disableBelowWarmStates:
+                experimentalContactTwoPointBlockFrictionSolveDisableBelowWarmStates,
+          );
+        }
+
+        if (!wasBlockNormalSolveActive && blockNormalSolveAllowed) {
+          _lastBlockNormalHysteresisActivationCount++;
+          _lastBlockNormalHysteresisActivatedByThresholdCount++;
+        } else if (wasBlockNormalSolveActive && !blockNormalSolveAllowed) {
+          _lastBlockNormalHysteresisDeactivationCount++;
+          if (isTwoPointContact) {
+            _lastBlockNormalHysteresisDeactivatedBelowDisableCount++;
+          } else {
+            _lastBlockNormalHysteresisDeactivatedNonTwoPointCount++;
+          }
+        }
+        if (!wasBlockFrictionSolveActive && blockFrictionSolveAllowed) {
+          _lastBlockFrictionHysteresisActivationCount++;
+          _lastBlockFrictionHysteresisActivatedByThresholdCount++;
+        } else if (wasBlockFrictionSolveActive && !blockFrictionSolveAllowed) {
+          _lastBlockFrictionHysteresisDeactivationCount++;
+          if (isTwoPointContact) {
+            _lastBlockFrictionHysteresisDeactivatedBelowDisableCount++;
+          } else {
+            _lastBlockFrictionHysteresisDeactivatedNonTwoPointCount++;
+          }
+        }
+
+        blockSolveState.normalActive = blockNormalSolveAllowed;
+        blockSolveState.frictionActive = blockFrictionSolveAllowed;
+        if (blockNormalSolveAllowed) {
+          _lastBlockNormalHysteresisActiveContacts++;
+        }
+        if (blockFrictionSolveAllowed) {
+          _lastBlockFrictionHysteresisActiveContacts++;
+        }
+
         _lastResolvedCollisionCount++;
-        _resolveCollision(bodyA, bodyB, best);
+        _resolveCollision(
+          bodyA,
+          bodyB,
+          best,
+          warmStates: warmStates,
+          blockNormalSolveAllowed: blockNormalSolveAllowed,
+          blockFrictionSolveAllowed: blockFrictionSolveAllowed,
+        );
+
+        if (experimentalContactWarmStartEnabled) {
+          final normalLen = math.sqrt(
+            best.normal.dx * best.normal.dx + best.normal.dy * best.normal.dy,
+          );
+          final normalX = normalLen > 1e-9 ? best.normal.dx / normalLen : 0.0;
+          final normalY = normalLen > 1e-9 ? best.normal.dy / normalLen : 0.0;
+          final cacheContacts = contactPoints.isNotEmpty
+              ? contactPoints
+              : <CollisionContactPoint>[
+                  CollisionContactPoint(
+                    point: Offset(
+                      (bodyA.position.x + bodyB.position.x) * 0.5,
+                      (bodyA.position.y + bodyB.position.y) * 0.5,
+                    ),
+                    featureId: best.contactFeatureId,
+                  ),
+                ];
+          for (final cp in cacheContacts) {
+            final contactX = cp.point.dx;
+            final contactY = cp.point.dy;
+            final featureId =
+                experimentalContactWarmStartFeatureIdOverrideForTesting?.call(
+                  _simulationStep,
+                  cp.featureId,
+                ) ??
+                cp.featureId;
+
+            final priorFeatureState = _findWarmStartStateByFeature(
+              pair,
+              featureId,
+            );
+            final resolvedFeatureImpulse =
+                _lastResolvedImpulsesByFeature[featureId];
+            final sourceNormalImpulse =
+                priorFeatureState?.normalImpulse ??
+                resolvedFeatureImpulse?.normalImpulse ??
+                _lastResolvedNormalImpulse;
+            final sourceTangentImpulse =
+                priorFeatureState?.tangentImpulse ??
+                resolvedFeatureImpulse?.tangentImpulse ??
+                _lastResolvedTangentImpulse;
+            if (priorFeatureState != null) {
+              _lastWarmStartFeatureHistoryReuseCount++;
+            } else if (resolvedFeatureImpulse != null) {
+              _lastWarmStartResolvedFeatureSeedCount++;
+            }
+
+            final featureCachedNormal = _clampWarmStartNormalImpulse(
+              sourceNormalImpulse *
+                  experimentalContactWarmStartNormalImpulseDecay,
+            );
+            final featureCachedTangent = _clampWarmStartTangentImpulse(
+              sourceTangentImpulse *
+                  experimentalContactWarmStartTangentImpulseDecay,
+            );
+
+            final cached = _ContactWarmStartState(
+              normalImpulse: featureCachedNormal,
+              tangentImpulse: featureCachedTangent,
+              normalX: normalX,
+              normalY: normalY,
+              localAnchorAX: contactX - bodyA.position.x,
+              localAnchorAY: contactY - bodyA.position.y,
+              localAnchorBX: contactX - bodyB.position.x,
+              localAnchorBY: contactY - bodyB.position.y,
+              contactFeatureId: featureId,
+              lastSeenStep: _simulationStep,
+            );
+            _upsertWarmStartState(pair, cached);
+            _recordWarmStartCachePeak(cached);
+          }
+        }
       }
+    }
+
+    if (experimentalContactWarmStartEnabled) {
+      _contactWarmStartCache.removeWhere((pair, cachedList) {
+        cachedList.removeWhere(
+          (cached) =>
+              (_simulationStep - cached.lastSeenStep) >
+              experimentalContactWarmStartMaxAgeSteps,
+        );
+        return cachedList.isEmpty;
+      });
+      for (final cachedList in _contactWarmStartCache.values) {
+        for (final cached in cachedList) {
+          _recordWarmStartCachePeak(cached);
+        }
+      }
+    } else {
+      _contactWarmStartCache.clear();
+    }
+
+    final stalePairs = <BodyPair>[];
+    _blockSolveHysteresisByPair.forEach((pair, state) {
+      if (!currentCollisionPairs.contains(pair)) {
+        if (state.normalActive) {
+          _lastBlockNormalHysteresisDeactivationCount++;
+          _lastBlockNormalHysteresisDeactivatedNonTwoPointCount++;
+        }
+        if (state.frictionActive) {
+          _lastBlockFrictionHysteresisDeactivationCount++;
+          _lastBlockFrictionHysteresisDeactivatedNonTwoPointCount++;
+        }
+        stalePairs.add(pair);
+      }
+    });
+    for (final pair in stalePairs) {
+      _blockSolveHysteresisByPair.remove(pair);
     }
 
     // Any previously active sensor pair no longer overlapping → end event.
@@ -654,13 +1169,389 @@ class PhysicsEngine {
   }
 
   /// Resolve collision
+  double _lastResolvedNormalImpulse = 0.0;
+  double _lastResolvedTangentImpulse = 0.0;
+  Map<int?, _ResolvedContactImpulse> _lastResolvedImpulsesByFeature =
+      const <int?, _ResolvedContactImpulse>{};
+
+  double _clampWarmStartNormalImpulse(double impulse) {
+    final maxImpulse = experimentalContactWarmStartMaxImpulse;
+    if (maxImpulse.isInfinite) return impulse < 0 ? 0.0 : impulse;
+    return impulse.clamp(0.0, maxImpulse).toDouble();
+  }
+
+  double _clampWarmStartTangentImpulse(double impulse) {
+    final maxImpulse = experimentalContactWarmStartMaxImpulse;
+    if (maxImpulse.isInfinite) return impulse;
+    return impulse.clamp(-maxImpulse, maxImpulse).toDouble();
+  }
+
+  _ContactWarmStartState? _selectWarmStartState(
+    BodyPair pair,
+    Offset currentNormal,
+    PhysicsBody bodyA,
+    PhysicsBody bodyB, {
+    required List<int> currentFeatureIds,
+  }) {
+    if (!experimentalContactWarmStartEnabled) return null;
+    final cachedList = _contactWarmStartCache[pair];
+    if (cachedList == null || cachedList.isEmpty) return null;
+
+    final currentLen = math.sqrt(
+      currentNormal.dx * currentNormal.dx + currentNormal.dy * currentNormal.dy,
+    );
+    if (currentLen <= 1e-9) {
+      _lastWarmStartRejectedByNormalCount++;
+      return null;
+    }
+    final currentNx = currentNormal.dx / currentLen;
+    final currentNy = currentNormal.dy / currentLen;
+    final effectiveFeatureIds = currentFeatureIds
+        .map(
+          (featureId) =>
+              experimentalContactWarmStartFeatureIdOverrideForTesting?.call(
+                _simulationStep,
+                featureId,
+              ) ??
+              featureId,
+        )
+        .whereType<int>()
+        .toSet();
+
+    var sawAgeReject = false;
+    var sawNormalReject = false;
+    var sawAnchorReject = false;
+    var sawFeatureReject = false;
+    _ContactWarmStartState? bestCandidate;
+    var bestAnchorDistance = double.infinity;
+
+    for (final cached in cachedList) {
+      final age = _simulationStep - cached.lastSeenStep;
+      if (age > experimentalContactWarmStartMaxAgeSteps) {
+        sawAgeReject = true;
+        continue;
+      }
+
+      final rawAlignment =
+          cached.normalX * currentNx + cached.normalY * currentNy;
+      final alignment =
+          experimentalContactWarmStartAlignmentOverrideForTesting?.call(
+            _simulationStep,
+            rawAlignment,
+          ) ??
+          rawAlignment;
+      if (alignment < experimentalContactWarmStartNormalAlignmentThreshold) {
+        sawNormalReject = true;
+        continue;
+      }
+
+      if (experimentalContactWarmStartFeatureIdMatchingEnabled &&
+          effectiveFeatureIds.isNotEmpty &&
+          cached.contactFeatureId != null &&
+          !effectiveFeatureIds.contains(cached.contactFeatureId)) {
+        sawFeatureReject = true;
+        continue;
+      }
+
+      final anchorDistance = _computeWarmStartAnchorDistance(
+        cached,
+        bodyA,
+        bodyB,
+      );
+      if (anchorDistance >
+          experimentalContactWarmStartAnchorDistanceThreshold) {
+        sawAnchorReject = true;
+        continue;
+      }
+
+      if (anchorDistance < bestAnchorDistance) {
+        bestAnchorDistance = anchorDistance;
+        bestCandidate = cached;
+      }
+    }
+
+    if (bestCandidate != null) return bestCandidate;
+
+    if (sawFeatureReject) {
+      _lastWarmStartRejectedByFeatureCount++;
+    } else if (sawAnchorReject) {
+      _lastWarmStartRejectedByAnchorCount++;
+    } else if (sawNormalReject) {
+      _lastWarmStartRejectedByNormalCount++;
+    } else if (sawAgeReject) {
+      _lastWarmStartRejectedByAgeCount++;
+    }
+    return null;
+  }
+
+  List<_ContactWarmStartState> _selectWarmStartStates(
+    BodyPair pair,
+    Offset currentNormal,
+    PhysicsBody bodyA,
+    PhysicsBody bodyB, {
+    required List<CollisionContactPoint> contactPoints,
+    required List<int> currentFeatureIds,
+  }) {
+    if (!experimentalContactWarmStartEnabled) {
+      return const <_ContactWarmStartState>[];
+    }
+
+    final states = <_ContactWarmStartState>[];
+    final seen = <_ContactWarmStartState>{};
+
+    if (contactPoints.isNotEmpty) {
+      for (final cp in contactPoints) {
+        final effectiveFeatureId =
+            experimentalContactWarmStartFeatureIdOverrideForTesting?.call(
+              _simulationStep,
+              cp.featureId,
+            ) ??
+            cp.featureId;
+        final featureScope = effectiveFeatureId == null
+            ? currentFeatureIds
+            : <int>[effectiveFeatureId];
+        final state = _selectWarmStartState(
+          pair,
+          currentNormal,
+          bodyA,
+          bodyB,
+          currentFeatureIds: featureScope,
+        );
+        if (state == null || seen.contains(state)) continue;
+        seen.add(state);
+        states.add(state);
+      }
+    }
+
+    if (states.isEmpty) {
+      final fallback = _selectWarmStartState(
+        pair,
+        currentNormal,
+        bodyA,
+        bodyB,
+        currentFeatureIds: currentFeatureIds,
+      );
+      if (fallback != null) {
+        states.add(fallback);
+      }
+    }
+
+    return states;
+  }
+
+  void _upsertWarmStartState(BodyPair pair, _ContactWarmStartState state) {
+    final cachedList = _contactWarmStartCache.putIfAbsent(
+      pair,
+      () => <_ContactWarmStartState>[],
+    );
+
+    final mergeThreshold =
+        experimentalContactWarmStartAnchorDistanceThreshold.isInfinite
+        ? 4.0
+        : math.max(1.0, experimentalContactWarmStartAnchorDistanceThreshold);
+
+    var mergeIndex = -1;
+    var bestDelta = double.infinity;
+    for (var i = 0; i < cachedList.length; i++) {
+      if (experimentalContactWarmStartFeatureIdMatchingEnabled &&
+          cachedList[i].contactFeatureId != null &&
+          state.contactFeatureId != null &&
+          cachedList[i].contactFeatureId != state.contactFeatureId) {
+        continue;
+      }
+
+      final alignment = _computeCachedStateNormalAlignment(
+        cachedList[i],
+        state,
+      );
+      if (alignment < 0.95) continue;
+
+      final delta = _computeCachedStateAnchorDelta(cachedList[i], state);
+      if (delta < bestDelta) {
+        bestDelta = delta;
+        mergeIndex = i;
+      }
+    }
+
+    if (mergeIndex >= 0 && bestDelta <= mergeThreshold) {
+      cachedList[mergeIndex] = state;
+    } else {
+      cachedList.add(state);
+      if (cachedList.length > experimentalContactWarmStartManifoldSlots) {
+        var oldestIndex = 0;
+        var oldestStep = cachedList[0].lastSeenStep;
+        for (var i = 1; i < cachedList.length; i++) {
+          if (cachedList[i].lastSeenStep < oldestStep) {
+            oldestStep = cachedList[i].lastSeenStep;
+            oldestIndex = i;
+          }
+        }
+        cachedList.removeAt(oldestIndex);
+      }
+    }
+  }
+
+  _ContactWarmStartState? _findWarmStartStateByFeature(
+    BodyPair pair,
+    int? featureId,
+  ) {
+    if (featureId == null) return null;
+    final cachedList = _contactWarmStartCache[pair];
+    if (cachedList == null || cachedList.isEmpty) return null;
+
+    for (final cached in cachedList) {
+      if (cached.contactFeatureId == featureId) {
+        return cached;
+      }
+    }
+    return null;
+  }
+
+  double _computeCachedStateAnchorDelta(
+    _ContactWarmStartState a,
+    _ContactWarmStartState b,
+  ) {
+    final forwardAx = a.localAnchorAX - b.localAnchorAX;
+    final forwardAy = a.localAnchorAY - b.localAnchorAY;
+    final forwardBx = a.localAnchorBX - b.localAnchorBX;
+    final forwardBy = a.localAnchorBY - b.localAnchorBY;
+    final forward = math.sqrt(
+      forwardAx * forwardAx +
+          forwardAy * forwardAy +
+          forwardBx * forwardBx +
+          forwardBy * forwardBy,
+    );
+
+    final reverseAx = a.localAnchorAX - b.localAnchorBX;
+    final reverseAy = a.localAnchorAY - b.localAnchorBY;
+    final reverseBx = a.localAnchorBX - b.localAnchorAX;
+    final reverseBy = a.localAnchorBY - b.localAnchorAY;
+    final reverse = math.sqrt(
+      reverseAx * reverseAx +
+          reverseAy * reverseAy +
+          reverseBx * reverseBx +
+          reverseBy * reverseBy,
+    );
+
+    return math.min(forward, reverse);
+  }
+
+  double _computeCachedStateNormalAlignment(
+    _ContactWarmStartState a,
+    _ContactWarmStartState b,
+  ) {
+    final direct = a.normalX * b.normalX + a.normalY * b.normalY;
+    return direct.abs();
+  }
+
+  double _computeWarmStartAnchorDistance(
+    _ContactWarmStartState cached,
+    PhysicsBody bodyA,
+    PhysicsBody bodyB,
+  ) {
+    final aForwardX = bodyA.position.x + cached.localAnchorAX;
+    final aForwardY = bodyA.position.y + cached.localAnchorAY;
+    final bForwardX = bodyB.position.x + cached.localAnchorBX;
+    final bForwardY = bodyB.position.y + cached.localAnchorBY;
+    final forwardDx = aForwardX - bForwardX;
+    final forwardDy = aForwardY - bForwardY;
+    final forwardDist = math.sqrt(
+      forwardDx * forwardDx + forwardDy * forwardDy,
+    );
+
+    final aReverseX = bodyA.position.x + cached.localAnchorBX;
+    final aReverseY = bodyA.position.y + cached.localAnchorBY;
+    final bReverseX = bodyB.position.x + cached.localAnchorAX;
+    final bReverseY = bodyB.position.y + cached.localAnchorAY;
+    final reverseDx = aReverseX - bReverseX;
+    final reverseDy = aReverseY - bReverseY;
+    final reverseDist = math.sqrt(
+      reverseDx * reverseDx + reverseDy * reverseDy,
+    );
+
+    return math.min(forwardDist, reverseDist);
+  }
+
+  void _recordWarmStartCachePeak(_ContactWarmStartState state) {
+    if (state.normalImpulse > _lastWarmStartMaxCachedNormalImpulse) {
+      _lastWarmStartMaxCachedNormalImpulse = state.normalImpulse;
+    }
+    final tangentAbs = state.tangentImpulse.abs();
+    if (tangentAbs > _lastWarmStartMaxCachedTangentImpulse) {
+      _lastWarmStartMaxCachedTangentImpulse = tangentAbs;
+    }
+  }
+
+  bool _updateBlockSolveHysteresisActive({
+    required bool currentlyActive,
+    required int matchedWarmStateCount,
+    required int enableAtWarmStates,
+    required int disableBelowWarmStates,
+  }) {
+    if (currentlyActive) {
+      return matchedWarmStateCount >= disableBelowWarmStates;
+    }
+    return matchedWarmStateCount >= enableAtWarmStates;
+  }
+
+  void _recordBlockHysteresisTransitionWindowSample() {
+    _totalBlockNormalHysteresisActivationCount +=
+        _lastBlockNormalHysteresisActivationCount;
+    _totalBlockNormalHysteresisDeactivationCount +=
+        _lastBlockNormalHysteresisDeactivationCount;
+    _totalBlockFrictionHysteresisActivationCount +=
+        _lastBlockFrictionHysteresisActivationCount;
+    _totalBlockFrictionHysteresisDeactivationCount +=
+        _lastBlockFrictionHysteresisDeactivationCount;
+
+    if (experimentalContactBlockHysteresisTransitionRateWindowSteps <= 0) {
+      _blockHysteresisTransitionWindow.clear();
+      _rollingBlockNormalHysteresisActivationCount = 0;
+      _rollingBlockNormalHysteresisDeactivationCount = 0;
+      _rollingBlockFrictionHysteresisActivationCount = 0;
+      _rollingBlockFrictionHysteresisDeactivationCount = 0;
+      return;
+    }
+
+    _blockHysteresisTransitionWindow.add((
+      nAct: _lastBlockNormalHysteresisActivationCount,
+      nDeact: _lastBlockNormalHysteresisDeactivationCount,
+      fAct: _lastBlockFrictionHysteresisActivationCount,
+      fDeact: _lastBlockFrictionHysteresisDeactivationCount,
+    ));
+
+    _rollingBlockNormalHysteresisActivationCount +=
+        _lastBlockNormalHysteresisActivationCount;
+    _rollingBlockNormalHysteresisDeactivationCount +=
+        _lastBlockNormalHysteresisDeactivationCount;
+    _rollingBlockFrictionHysteresisActivationCount +=
+        _lastBlockFrictionHysteresisActivationCount;
+    _rollingBlockFrictionHysteresisDeactivationCount +=
+        _lastBlockFrictionHysteresisDeactivationCount;
+
+    while (_blockHysteresisTransitionWindow.length >
+        experimentalContactBlockHysteresisTransitionRateWindowSteps) {
+      final evicted = _blockHysteresisTransitionWindow.removeAt(0);
+      _rollingBlockNormalHysteresisActivationCount -= evicted.nAct;
+      _rollingBlockNormalHysteresisDeactivationCount -= evicted.nDeact;
+      _rollingBlockFrictionHysteresisActivationCount -= evicted.fAct;
+      _rollingBlockFrictionHysteresisDeactivationCount -= evicted.fDeact;
+    }
+  }
+
   void _resolveCollision(
     PhysicsBody a,
     PhysicsBody b,
-    CollisionManifold manifold,
-  ) {
+    CollisionManifold manifold, {
+    List<_ContactWarmStartState> warmStates = const <_ContactWarmStartState>[],
+    bool blockNormalSolveAllowed = false,
+    bool blockFrictionSolveAllowed = false,
+  }) {
     final normal = manifold.normal;
     final penetration = manifold.penetration;
+    _lastResolvedNormalImpulse = 0.0;
+    _lastResolvedTangentImpulse = 0.0;
+    _lastResolvedImpulsesByFeature = const <int?, _ResolvedContactImpulse>{};
 
     if (penetration <= 0) return;
 
@@ -679,6 +1570,68 @@ class PhysicsEngine {
 
     if (inverseMassSum == 0) return; // both immovable
 
+    if (warmStates.isNotEmpty) {
+      final warmNx = normal.dx;
+      final warmNy = normal.dy;
+      final warmTx = -warmNy;
+      final warmTy = warmNx;
+
+      final warmScale = 1.0 / warmStates.length;
+      for (final warmState in warmStates) {
+        final warmNormalImpulse =
+            _clampWarmStartNormalImpulse(warmState.normalImpulse) * warmScale;
+        final warmTangentImpulse =
+            _clampWarmStartTangentImpulse(warmState.tangentImpulse) * warmScale;
+
+        final pnX = warmNx * warmNormalImpulse;
+        final pnY = warmNy * warmNormalImpulse;
+        final ptX = warmTx * warmTangentImpulse;
+        final ptY = warmTy * warmTangentImpulse;
+        final warmX = pnX + ptX;
+        final warmY = pnY + ptY;
+
+        final forwardAX = warmState.localAnchorAX;
+        final forwardAY = warmState.localAnchorAY;
+        final forwardBX = warmState.localAnchorBX;
+        final forwardBY = warmState.localAnchorBY;
+        final forwardDx =
+            (a.position.x + forwardAX) - (b.position.x + forwardBX);
+        final forwardDy =
+            (a.position.y + forwardAY) - (b.position.y + forwardBY);
+        final forwardDistSq = forwardDx * forwardDx + forwardDy * forwardDy;
+
+        final reverseAX = warmState.localAnchorBX;
+        final reverseAY = warmState.localAnchorBY;
+        final reverseBX = warmState.localAnchorAX;
+        final reverseBY = warmState.localAnchorAY;
+        final reverseDx =
+            (a.position.x + reverseAX) - (b.position.x + reverseBX);
+        final reverseDy =
+            (a.position.y + reverseAY) - (b.position.y + reverseBY);
+        final reverseDistSq = reverseDx * reverseDx + reverseDy * reverseDy;
+
+        final useReverse = reverseDistSq < forwardDistSq;
+        final raX = useReverse ? reverseAX : forwardAX;
+        final raY = useReverse ? reverseAY : forwardAY;
+        final rbX = useReverse ? reverseBX : forwardBX;
+        final rbY = useReverse ? reverseBY : forwardBY;
+
+        a.velocity.x -= warmX * a.inverseMass;
+        a.velocity.y -= warmY * a.inverseMass;
+        b.velocity.x += warmX * b.inverseMass;
+        b.velocity.y += warmY * b.inverseMass;
+
+        final torqueA = (raX * warmY - raY * warmX) * a.inverseInertia;
+        final torqueB = (rbX * warmY - rbY * warmX) * b.inverseInertia;
+        a.angularVelocity -= torqueA;
+        b.angularVelocity += torqueB;
+
+        if (torqueA.abs() > 1e-9 || torqueB.abs() > 1e-9) {
+          _lastWarmStartAngularPreloadCount++;
+        }
+      }
+    }
+
     const correctionPercent = 0.8;
     const slop = 0.05;
     final correctionMag =
@@ -688,49 +1641,507 @@ class PhysicsEngine {
     b.position.x += normal.dx * correctionMag * b.inverseMass;
     b.position.y += normal.dy * correctionMag * b.inverseMass;
 
+    final solveContacts = manifold.contactPoints.isNotEmpty
+        ? manifold.contactPoints
+        : <CollisionContactPoint>[
+            CollisionContactPoint(
+              point:
+                  manifold.contactPoint ??
+                  Offset(
+                    (a.position.x + b.position.x) * 0.5,
+                    (a.position.y + b.position.y) * 0.5,
+                  ),
+              featureId: manifold.contactFeatureId,
+            ),
+          ];
+    final solverPointCount = solveContacts.length;
+    _lastResolvedManifoldPointCount += solverPointCount;
+
     // ── Impulse resolution ────────────────────────────────────────────────
-    final rvx = b.velocity.x - a.velocity.x;
-    final rvy = b.velocity.y - a.velocity.y;
-    final velAlongNormal = rvx * normal.dx + rvy * normal.dy;
-
-    if (velAlongNormal > 0) return; // separating
-
     final restitution = math.min(a.restitution, b.restitution);
-    final j = -(1.0 + restitution) * velAlongNormal / inverseMassSum;
+    final mu = (a.friction + b.friction) / 2.0;
+    var accumulatedNormalImpulse = 0.0;
+    var accumulatedTangentImpulse = 0.0;
+    final resolvedImpulsesByFeature = <int?, _ResolvedContactImpulse>{};
+    final accumulatedNormalLambdas = List<double>.filled(solverPointCount, 0.0);
+    final accumulatedTangentLambdas = List<double>.filled(
+      solverPointCount,
+      0.0,
+    );
+    final velocityIterations = experimentalContactVelocityIterations;
+    final blockNormalSolveEnabledForContact =
+        blockNormalSolveAllowed && solveContacts.length == 2;
+    final blockFrictionSolveEnabledForContact =
+        blockFrictionSolveAllowed && solveContacts.length == 2;
 
-    final jnx = normal.dx * j;
-    final jny = normal.dy * j;
-    a.velocity.x -= jnx * a.inverseMass;
-    a.velocity.y -= jny * a.inverseMass;
-    b.velocity.x += jnx * b.inverseMass;
-    b.velocity.y += jny * b.inverseMass;
+    for (var iteration = 0; iteration < velocityIterations; iteration++) {
+      final effectiveRestitution = iteration == 0 ? restitution : 0.0;
+      for (var pointIndex = 0; pointIndex < solverPointCount; pointIndex++) {
+        final contact = solveContacts[pointIndex];
+        _lastResolvedVelocityIterationCount++;
+        final raX = contact.point.dx - a.position.x;
+        final raY = contact.point.dy - a.position.y;
+        final rbX = contact.point.dx - b.position.x;
+        final rbY = contact.point.dy - b.position.y;
 
-    // ── Friction (Tangent Impulse) ──────────────────────────────────────────
-    final rvx2 = b.velocity.x - a.velocity.x;
-    final rvy2 = b.velocity.y - a.velocity.y;
-    final rvDotN = rvx2 * normal.dx + rvy2 * normal.dy;
-    var tx = rvx2 - normal.dx * rvDotN;
-    var ty = rvy2 - normal.dy * rvDotN;
+        final vaX = a.velocity.x + (-a.angularVelocity * raY);
+        final vaY = a.velocity.y + (a.angularVelocity * raX);
+        final vbX = b.velocity.x + (-b.angularVelocity * rbY);
+        final vbY = b.velocity.y + (b.angularVelocity * rbX);
 
-    final tangentLen = math.sqrt(tx * tx + ty * ty);
-    if (tangentLen > 0.0001) {
-      final invLen = 1.0 / tangentLen;
-      tx *= invLen;
-      ty *= invLen;
+        final rvx = vbX - vaX;
+        final rvy = vbY - vaY;
+        final velAlongNormal = rvx * normal.dx + rvy * normal.dy;
 
-      final jt = -(rvx2 * tx + rvy2 * ty) / inverseMassSum;
-      final mu = (a.friction + b.friction) / 2.0;
+        if (velAlongNormal > 0) continue; // separating
 
-      double fScalar = jt;
-      if (fScalar.abs() > j * mu) {
-        fScalar = (fScalar > 0 ? 1.0 : -1.0) * j * mu;
+        final raCrossN = raX * normal.dy - raY * normal.dx;
+        final rbCrossN = rbX * normal.dy - rbY * normal.dx;
+        final normalMass =
+            inverseMassSum +
+            (raCrossN * raCrossN) * a.inverseInertia +
+            (rbCrossN * rbCrossN) * b.inverseInertia;
+        if (normalMass <= 1e-9) continue;
+
+        final rawNormalDelta =
+            -(1.0 + effectiveRestitution) *
+            velAlongNormal /
+            (normalMass * solverPointCount);
+        final previousNormalLambda = accumulatedNormalLambdas[pointIndex];
+        final nextNormalLambda = math.max(
+          0.0,
+          previousNormalLambda + rawNormalDelta,
+        );
+        final j = nextNormalLambda - previousNormalLambda;
+        if (j <= 1e-9) continue;
+        accumulatedNormalLambdas[pointIndex] = nextNormalLambda;
+
+        final jnx = normal.dx * j;
+        final jny = normal.dy * j;
+        a.velocity.x -= jnx * a.inverseMass;
+        a.velocity.y -= jny * a.inverseMass;
+        b.velocity.x += jnx * b.inverseMass;
+        b.velocity.y += jny * b.inverseMass;
+        a.angularVelocity -= (raX * jny - raY * jnx) * a.inverseInertia;
+        b.angularVelocity += (rbX * jny - rbY * jnx) * b.inverseInertia;
+        accumulatedNormalImpulse += j;
+
+        final previous = resolvedImpulsesByFeature[contact.featureId];
+        if (previous == null) {
+          resolvedImpulsesByFeature[contact.featureId] =
+              _ResolvedContactImpulse(normalImpulse: j, tangentImpulse: 0.0);
+        } else {
+          resolvedImpulsesByFeature[contact.featureId] =
+              _ResolvedContactImpulse(
+                normalImpulse: previous.normalImpulse + j,
+                tangentImpulse: previous.tangentImpulse,
+              );
+        }
+
+        // For 2-point edge contacts, use the optional coupled friction block
+        // pass instead of sequential per-point friction.
+        if (blockFrictionSolveEnabledForContact) {
+          continue;
+        }
+
+        // ── Friction (Tangent Impulse) ───────────────────────────────────
+        final vaX2 = a.velocity.x + (-a.angularVelocity * raY);
+        final vaY2 = a.velocity.y + (a.angularVelocity * raX);
+        final vbX2 = b.velocity.x + (-b.angularVelocity * rbY);
+        final vbY2 = b.velocity.y + (b.angularVelocity * rbX);
+        final rvx2 = vbX2 - vaX2;
+        final rvy2 = vbY2 - vaY2;
+        final rvDotN = rvx2 * normal.dx + rvy2 * normal.dy;
+        var tx = rvx2 - normal.dx * rvDotN;
+        var ty = rvy2 - normal.dy * rvDotN;
+
+        final tangentLen = math.sqrt(tx * tx + ty * ty);
+        if (tangentLen <= 0.0001) continue;
+
+        final invLen = 1.0 / tangentLen;
+        tx *= invLen;
+        ty *= invLen;
+
+        final raCrossT = raX * ty - raY * tx;
+        final rbCrossT = rbX * ty - rbY * tx;
+        final tangentMass =
+            inverseMassSum +
+            (raCrossT * raCrossT) * a.inverseInertia +
+            (rbCrossT * rbCrossT) * b.inverseInertia;
+        if (tangentMass <= 1e-9) continue;
+
+        final jt = -(rvx2 * tx + rvy2 * ty) / (tangentMass * solverPointCount);
+        final previousTangentLambda = accumulatedTangentLambdas[pointIndex];
+        final maxFriction = accumulatedNormalLambdas[pointIndex] * mu;
+        final nextTangentLambda = (previousTangentLambda + jt).clamp(
+          -maxFriction,
+          maxFriction,
+        );
+        final fScalar = nextTangentLambda - previousTangentLambda;
+        if (fScalar.abs() <= 1e-9) continue;
+        accumulatedTangentLambdas[pointIndex] = nextTangentLambda;
+
+        a.velocity.x -= tx * fScalar * a.inverseMass;
+        a.velocity.y -= ty * fScalar * a.inverseMass;
+        b.velocity.x += tx * fScalar * b.inverseMass;
+        b.velocity.y += ty * fScalar * b.inverseMass;
+        final fX = tx * fScalar;
+        final fY = ty * fScalar;
+        a.angularVelocity -= (raX * fY - raY * fX) * a.inverseInertia;
+        b.angularVelocity += (rbX * fY - rbY * fX) * b.inverseInertia;
+        accumulatedTangentImpulse += fScalar;
+
+        final withNormal = resolvedImpulsesByFeature[contact.featureId];
+        if (withNormal != null) {
+          resolvedImpulsesByFeature[contact.featureId] =
+              _ResolvedContactImpulse(
+                normalImpulse: withNormal.normalImpulse,
+                tangentImpulse: withNormal.tangentImpulse + fScalar,
+              );
+        }
       }
 
-      a.velocity.x -= tx * fScalar * a.inverseMass;
-      a.velocity.y -= ty * fScalar * a.inverseMass;
-      b.velocity.x += tx * fScalar * b.inverseMass;
-      b.velocity.y += ty * fScalar * b.inverseMass;
+      if (blockNormalSolveEnabledForContact) {
+        final c1 = solveContacts[0];
+        final c2 = solveContacts[1];
+
+        final ra1X = c1.point.dx - a.position.x;
+        final ra1Y = c1.point.dy - a.position.y;
+        final rb1X = c1.point.dx - b.position.x;
+        final rb1Y = c1.point.dy - b.position.y;
+        final ra2X = c2.point.dx - a.position.x;
+        final ra2Y = c2.point.dy - a.position.y;
+        final rb2X = c2.point.dx - b.position.x;
+        final rb2Y = c2.point.dy - b.position.y;
+
+        final va1X = a.velocity.x + (-a.angularVelocity * ra1Y);
+        final va1Y = a.velocity.y + (a.angularVelocity * ra1X);
+        final vb1X = b.velocity.x + (-b.angularVelocity * rb1Y);
+        final vb1Y = b.velocity.y + (b.angularVelocity * rb1X);
+        final va2X = a.velocity.x + (-a.angularVelocity * ra2Y);
+        final va2Y = a.velocity.y + (a.angularVelocity * ra2X);
+        final vb2X = b.velocity.x + (-b.angularVelocity * rb2Y);
+        final vb2Y = b.velocity.y + (b.angularVelocity * rb2X);
+
+        final rv1X = vb1X - va1X;
+        final rv1Y = vb1Y - va1Y;
+        final rv2X = vb2X - va2X;
+        final rv2Y = vb2Y - va2Y;
+        final vn1 = rv1X * normal.dx + rv1Y * normal.dy;
+        final vn2 = rv2X * normal.dx + rv2Y * normal.dy;
+
+        final ra1CrossN = ra1X * normal.dy - ra1Y * normal.dx;
+        final rb1CrossN = rb1X * normal.dy - rb1Y * normal.dx;
+        final ra2CrossN = ra2X * normal.dy - ra2Y * normal.dx;
+        final rb2CrossN = rb2X * normal.dy - rb2Y * normal.dx;
+
+        final k11 =
+            inverseMassSum +
+            (ra1CrossN * ra1CrossN) * a.inverseInertia +
+            (rb1CrossN * rb1CrossN) * b.inverseInertia;
+        final k22 =
+            inverseMassSum +
+            (ra2CrossN * ra2CrossN) * a.inverseInertia +
+            (rb2CrossN * rb2CrossN) * b.inverseInertia;
+        final k12 =
+            inverseMassSum +
+            (ra1CrossN * ra2CrossN) * a.inverseInertia +
+            (rb1CrossN * rb2CrossN) * b.inverseInertia;
+
+        final det = k11 * k22 - k12 * k12;
+        if (det > 1e-9) {
+          final rhs1 = -(1.0 + effectiveRestitution) * vn1 / solverPointCount;
+          final rhs2 = -(1.0 + effectiveRestitution) * vn2 / solverPointCount;
+
+          final blockDelta1 = (k22 * rhs1 - k12 * rhs2) / det;
+          final blockDelta2 = (k11 * rhs2 - k12 * rhs1) / det;
+          final previousLambda1 = accumulatedNormalLambdas[0];
+          final previousLambda2 = accumulatedNormalLambdas[1];
+          final nextLambda1 = math.max(0.0, previousLambda1 + blockDelta1);
+          final nextLambda2 = math.max(0.0, previousLambda2 + blockDelta2);
+          final lambda1 = nextLambda1 - previousLambda1;
+          final lambda2 = nextLambda2 - previousLambda2;
+
+          if (lambda1 > 1e-9 || lambda2 > 1e-9) {
+            _lastResolvedBlockSolveCount++;
+            accumulatedNormalLambdas[0] = nextLambda1;
+            accumulatedNormalLambdas[1] = nextLambda2;
+
+            final j1x = normal.dx * lambda1;
+            final j1y = normal.dy * lambda1;
+            a.velocity.x -= j1x * a.inverseMass;
+            a.velocity.y -= j1y * a.inverseMass;
+            b.velocity.x += j1x * b.inverseMass;
+            b.velocity.y += j1y * b.inverseMass;
+            a.angularVelocity -= (ra1X * j1y - ra1Y * j1x) * a.inverseInertia;
+            b.angularVelocity += (rb1X * j1y - rb1Y * j1x) * b.inverseInertia;
+
+            final j2x = normal.dx * lambda2;
+            final j2y = normal.dy * lambda2;
+            a.velocity.x -= j2x * a.inverseMass;
+            a.velocity.y -= j2y * a.inverseMass;
+            b.velocity.x += j2x * b.inverseMass;
+            b.velocity.y += j2y * b.inverseMass;
+            a.angularVelocity -= (ra2X * j2y - ra2Y * j2x) * a.inverseInertia;
+            b.angularVelocity += (rb2X * j2y - rb2Y * j2x) * b.inverseInertia;
+
+            accumulatedNormalImpulse += lambda1 + lambda2;
+
+            final prev1 = resolvedImpulsesByFeature[c1.featureId];
+            if (prev1 == null) {
+              resolvedImpulsesByFeature[c1.featureId] = _ResolvedContactImpulse(
+                normalImpulse: lambda1,
+                tangentImpulse: 0.0,
+              );
+            } else {
+              resolvedImpulsesByFeature[c1.featureId] = _ResolvedContactImpulse(
+                normalImpulse: prev1.normalImpulse + lambda1,
+                tangentImpulse: prev1.tangentImpulse,
+              );
+            }
+
+            final prev2 = resolvedImpulsesByFeature[c2.featureId];
+            if (prev2 == null) {
+              resolvedImpulsesByFeature[c2.featureId] = _ResolvedContactImpulse(
+                normalImpulse: lambda2,
+                tangentImpulse: 0.0,
+              );
+            } else {
+              resolvedImpulsesByFeature[c2.featureId] = _ResolvedContactImpulse(
+                normalImpulse: prev2.normalImpulse + lambda2,
+                tangentImpulse: prev2.tangentImpulse,
+              );
+            }
+          }
+        }
+      }
+
+      if (blockFrictionSolveEnabledForContact) {
+        final c1 = solveContacts[0];
+        final c2 = solveContacts[1];
+
+        final ra1X = c1.point.dx - a.position.x;
+        final ra1Y = c1.point.dy - a.position.y;
+        final rb1X = c1.point.dx - b.position.x;
+        final rb1Y = c1.point.dy - b.position.y;
+        final ra2X = c2.point.dx - a.position.x;
+        final ra2Y = c2.point.dy - a.position.y;
+        final rb2X = c2.point.dx - b.position.x;
+        final rb2Y = c2.point.dy - b.position.y;
+
+        final va1X = a.velocity.x + (-a.angularVelocity * ra1Y);
+        final va1Y = a.velocity.y + (a.angularVelocity * ra1X);
+        final vb1X = b.velocity.x + (-b.angularVelocity * rb1Y);
+        final vb1Y = b.velocity.y + (b.angularVelocity * rb1X);
+        final va2X = a.velocity.x + (-a.angularVelocity * ra2Y);
+        final va2Y = a.velocity.y + (a.angularVelocity * ra2X);
+        final vb2X = b.velocity.x + (-b.angularVelocity * rb2Y);
+        final vb2Y = b.velocity.y + (b.angularVelocity * rb2X);
+
+        final rv1X = vb1X - va1X;
+        final rv1Y = vb1Y - va1Y;
+        final rv2X = vb2X - va2X;
+        final rv2Y = vb2Y - va2Y;
+
+        final vn1 = rv1X * normal.dx + rv1Y * normal.dy;
+        final vn2 = rv2X * normal.dx + rv2Y * normal.dy;
+        var tx = (rv1X - normal.dx * vn1) + (rv2X - normal.dx * vn2);
+        var ty = (rv1Y - normal.dy * vn1) + (rv2Y - normal.dy * vn2);
+
+        final tangentLenSq = tx * tx + ty * ty;
+        if (tangentLenSq <= 1e-9) {
+          tx = -normal.dy;
+          ty = normal.dx;
+        } else {
+          final invLen = 1.0 / math.sqrt(tangentLenSq);
+          tx *= invLen;
+          ty *= invLen;
+        }
+
+        final vt1 = rv1X * tx + rv1Y * ty;
+        final vt2 = rv2X * tx + rv2Y * ty;
+
+        final ra1CrossT = ra1X * ty - ra1Y * tx;
+        final rb1CrossT = rb1X * ty - rb1Y * tx;
+        final ra2CrossT = ra2X * ty - ra2Y * tx;
+        final rb2CrossT = rb2X * ty - rb2Y * tx;
+
+        final k11 =
+            inverseMassSum +
+            (ra1CrossT * ra1CrossT) * a.inverseInertia +
+            (rb1CrossT * rb1CrossT) * b.inverseInertia;
+        final k22 =
+            inverseMassSum +
+            (ra2CrossT * ra2CrossT) * a.inverseInertia +
+            (rb2CrossT * rb2CrossT) * b.inverseInertia;
+        final k12 =
+            inverseMassSum +
+            (ra1CrossT * ra2CrossT) * a.inverseInertia +
+            (rb1CrossT * rb2CrossT) * b.inverseInertia;
+
+        final sharedNormalLambda = accumulatedNormalImpulse / solverPointCount;
+        final maxFriction1 =
+            math.max(accumulatedNormalLambdas[0], sharedNormalLambda) * mu;
+        final maxFriction2 =
+            math.max(accumulatedNormalLambdas[1], sharedNormalLambda) * mu;
+
+        final det = k11 * k22 - k12 * k12;
+        if (det > 1e-9) {
+          final rhs1 = -vt1 / solverPointCount;
+          final rhs2 = -vt2 / solverPointCount;
+
+          final blockDelta1 = (k22 * rhs1 - k12 * rhs2) / det;
+          final blockDelta2 = (k11 * rhs2 - k12 * rhs1) / det;
+          final previousLambda1 = accumulatedTangentLambdas[0];
+          final previousLambda2 = accumulatedTangentLambdas[1];
+          final nextLambda1 = (previousLambda1 + blockDelta1)
+              .clamp(-maxFriction1, maxFriction1)
+              .toDouble();
+          final nextLambda2 = (previousLambda2 + blockDelta2)
+              .clamp(-maxFriction2, maxFriction2)
+              .toDouble();
+          final lambda1 = nextLambda1 - previousLambda1;
+          final lambda2 = nextLambda2 - previousLambda2;
+
+          if (lambda1.abs() > 1e-9 || lambda2.abs() > 1e-9) {
+            _lastResolvedBlockFrictionSolveCount++;
+            accumulatedTangentLambdas[0] = nextLambda1;
+            accumulatedTangentLambdas[1] = nextLambda2;
+
+            final j1x = tx * lambda1;
+            final j1y = ty * lambda1;
+            a.velocity.x -= j1x * a.inverseMass;
+            a.velocity.y -= j1y * a.inverseMass;
+            b.velocity.x += j1x * b.inverseMass;
+            b.velocity.y += j1y * b.inverseMass;
+            a.angularVelocity -= (ra1X * j1y - ra1Y * j1x) * a.inverseInertia;
+            b.angularVelocity += (rb1X * j1y - rb1Y * j1x) * b.inverseInertia;
+
+            final j2x = tx * lambda2;
+            final j2y = ty * lambda2;
+            a.velocity.x -= j2x * a.inverseMass;
+            a.velocity.y -= j2y * a.inverseMass;
+            b.velocity.x += j2x * b.inverseMass;
+            b.velocity.y += j2y * b.inverseMass;
+            a.angularVelocity -= (ra2X * j2y - ra2Y * j2x) * a.inverseInertia;
+            b.angularVelocity += (rb2X * j2y - rb2Y * j2x) * b.inverseInertia;
+
+            accumulatedTangentImpulse += lambda1 + lambda2;
+
+            final prev1 = resolvedImpulsesByFeature[c1.featureId];
+            if (prev1 == null) {
+              resolvedImpulsesByFeature[c1.featureId] = _ResolvedContactImpulse(
+                normalImpulse: 0.0,
+                tangentImpulse: lambda1,
+              );
+            } else {
+              resolvedImpulsesByFeature[c1.featureId] = _ResolvedContactImpulse(
+                normalImpulse: prev1.normalImpulse,
+                tangentImpulse: prev1.tangentImpulse + lambda1,
+              );
+            }
+
+            final prev2 = resolvedImpulsesByFeature[c2.featureId];
+            if (prev2 == null) {
+              resolvedImpulsesByFeature[c2.featureId] = _ResolvedContactImpulse(
+                normalImpulse: 0.0,
+                tangentImpulse: lambda2,
+              );
+            } else {
+              resolvedImpulsesByFeature[c2.featureId] = _ResolvedContactImpulse(
+                normalImpulse: prev2.normalImpulse,
+                tangentImpulse: prev2.tangentImpulse + lambda2,
+              );
+            }
+          }
+        } else {
+          var appliedAny = false;
+          if (k11 > 1e-9) {
+            final previousLambda1 = accumulatedTangentLambdas[0];
+            final delta1 = -vt1 / (k11 * solverPointCount);
+            final nextLambda1 = (previousLambda1 + delta1)
+                .clamp(-maxFriction1, maxFriction1)
+                .toDouble();
+            final lambda1 = nextLambda1 - previousLambda1;
+            if (lambda1.abs() > 1e-9) {
+              appliedAny = true;
+              accumulatedTangentLambdas[0] = nextLambda1;
+
+              final j1x = tx * lambda1;
+              final j1y = ty * lambda1;
+              a.velocity.x -= j1x * a.inverseMass;
+              a.velocity.y -= j1y * a.inverseMass;
+              b.velocity.x += j1x * b.inverseMass;
+              b.velocity.y += j1y * b.inverseMass;
+              a.angularVelocity -= (ra1X * j1y - ra1Y * j1x) * a.inverseInertia;
+              b.angularVelocity += (rb1X * j1y - rb1Y * j1x) * b.inverseInertia;
+              accumulatedTangentImpulse += lambda1;
+
+              final prev1 = resolvedImpulsesByFeature[c1.featureId];
+              if (prev1 == null) {
+                resolvedImpulsesByFeature[c1.featureId] =
+                    _ResolvedContactImpulse(
+                      normalImpulse: 0.0,
+                      tangentImpulse: lambda1,
+                    );
+              } else {
+                resolvedImpulsesByFeature[c1.featureId] =
+                    _ResolvedContactImpulse(
+                      normalImpulse: prev1.normalImpulse,
+                      tangentImpulse: prev1.tangentImpulse + lambda1,
+                    );
+              }
+            }
+          }
+
+          if (k22 > 1e-9) {
+            final previousLambda2 = accumulatedTangentLambdas[1];
+            final delta2 = -vt2 / (k22 * solverPointCount);
+            final nextLambda2 = (previousLambda2 + delta2)
+                .clamp(-maxFriction2, maxFriction2)
+                .toDouble();
+            final lambda2 = nextLambda2 - previousLambda2;
+            if (lambda2.abs() > 1e-9) {
+              appliedAny = true;
+              accumulatedTangentLambdas[1] = nextLambda2;
+
+              final j2x = tx * lambda2;
+              final j2y = ty * lambda2;
+              a.velocity.x -= j2x * a.inverseMass;
+              a.velocity.y -= j2y * a.inverseMass;
+              b.velocity.x += j2x * b.inverseMass;
+              b.velocity.y += j2y * b.inverseMass;
+              a.angularVelocity -= (ra2X * j2y - ra2Y * j2x) * a.inverseInertia;
+              b.angularVelocity += (rb2X * j2y - rb2Y * j2x) * b.inverseInertia;
+              accumulatedTangentImpulse += lambda2;
+
+              final prev2 = resolvedImpulsesByFeature[c2.featureId];
+              if (prev2 == null) {
+                resolvedImpulsesByFeature[c2.featureId] =
+                    _ResolvedContactImpulse(
+                      normalImpulse: 0.0,
+                      tangentImpulse: lambda2,
+                    );
+              } else {
+                resolvedImpulsesByFeature[c2.featureId] =
+                    _ResolvedContactImpulse(
+                      normalImpulse: prev2.normalImpulse,
+                      tangentImpulse: prev2.tangentImpulse + lambda2,
+                    );
+              }
+            }
+          }
+
+          if (appliedAny) {
+            _lastResolvedBlockFrictionSolveCount++;
+          }
+        }
+      }
     }
+
+    _lastResolvedImpulsesByFeature = resolvedImpulsesByFeature;
+    _lastResolvedNormalImpulse = accumulatedNormalImpulse / solverPointCount;
+    _lastResolvedTangentImpulse = accumulatedTangentImpulse / solverPointCount;
   }
 
   // ── Cached debug paints ────────────────────────────────────────────────
@@ -872,6 +2283,47 @@ class PhysicsEngine {
     _lastBroadphaseSerializedBodies = 0;
     _lastBroadphaseSerializedBytes = 0;
     _lastBroadphaseEligibleBodies = 0;
+    _lastJointWakeActivations = 0;
+    _lastWarmStartContactCount = 0;
+    _lastWarmStartHitCount = 0;
+    _lastWarmStartRejectedByAgeCount = 0;
+    _lastWarmStartRejectedByNormalCount = 0;
+    _lastWarmStartRejectedByAnchorCount = 0;
+    _lastWarmStartRejectedByFeatureCount = 0;
+    _lastWarmStartMatchedStateCount = 0;
+    _lastWarmStartFeatureHistoryReuseCount = 0;
+    _lastWarmStartResolvedFeatureSeedCount = 0;
+    _lastWarmStartAngularPreloadCount = 0;
+    _lastResolvedManifoldPointCount = 0;
+    _lastResolvedVelocityIterationCount = 0;
+    _lastResolvedBlockSolveCount = 0;
+    _lastResolvedBlockFrictionSolveCount = 0;
+    _lastBlockNormalHysteresisActiveContacts = 0;
+    _lastBlockFrictionHysteresisActiveContacts = 0;
+    _lastBlockNormalHysteresisActivationCount = 0;
+    _lastBlockNormalHysteresisDeactivationCount = 0;
+    _lastBlockFrictionHysteresisActivationCount = 0;
+    _lastBlockFrictionHysteresisDeactivationCount = 0;
+    _lastBlockNormalHysteresisActivatedByThresholdCount = 0;
+    _lastBlockNormalHysteresisDeactivatedBelowDisableCount = 0;
+    _lastBlockNormalHysteresisDeactivatedNonTwoPointCount = 0;
+    _lastBlockFrictionHysteresisActivatedByThresholdCount = 0;
+    _lastBlockFrictionHysteresisDeactivatedBelowDisableCount = 0;
+    _lastBlockFrictionHysteresisDeactivatedNonTwoPointCount = 0;
+    _totalBlockNormalHysteresisActivationCount = 0;
+    _totalBlockNormalHysteresisDeactivationCount = 0;
+    _totalBlockFrictionHysteresisActivationCount = 0;
+    _totalBlockFrictionHysteresisDeactivationCount = 0;
+    _blockHysteresisTransitionWindow.clear();
+    _rollingBlockNormalHysteresisActivationCount = 0;
+    _rollingBlockNormalHysteresisDeactivationCount = 0;
+    _rollingBlockFrictionHysteresisActivationCount = 0;
+    _rollingBlockFrictionHysteresisDeactivationCount = 0;
+    _lastWarmStartMaxCachedNormalImpulse = 0.0;
+    _lastWarmStartMaxCachedTangentImpulse = 0.0;
+    _lastResolvedImpulsesByFeature = const <int?, _ResolvedContactImpulse>{};
+    _contactWarmStartCache.clear();
+    _blockSolveHysteresisByPair.clear();
     _adaptiveIsolateActive = false;
     _adaptiveAvgStepMs = 0.0;
     _adaptiveDecisionReason = 'not_evaluated';
@@ -1257,6 +2709,11 @@ class PhysicsEngine {
 
   /// Lightweight physics diagnostics from the last simulation step.
   Map<String, dynamic> get stats => {
+    'warmStartPairCount': _contactWarmStartCache.length,
+    'warmStartStateCount': _contactWarmStartCache.values.fold<int>(
+      0,
+      (sum, list) => sum + list.length,
+    ),
     'bodyCount': _bodies.length,
     'awakeBodies': _lastAwakeBodyCount,
     'potentialPairs': _lastPotentialPairCount,
@@ -1265,6 +2722,41 @@ class PhysicsEngine {
     'trackedCells': _lastTrackedCellCount,
     'lastStepMs': _lastStepMs,
     'experimentalArena': experimentalArenaEnabled,
+    'experimentalContactWarmStart': experimentalContactWarmStartEnabled,
+    'experimentalContactVelocityIterations':
+        experimentalContactVelocityIterations,
+    'experimentalContactTwoPointBlockNormalSolveEnabled':
+        experimentalContactTwoPointBlockNormalSolveEnabled,
+    'experimentalContactTwoPointBlockFrictionSolveEnabled':
+        experimentalContactTwoPointBlockFrictionSolveEnabled,
+    'experimentalContactTwoPointBlockNormalSolveMinWarmStates':
+        experimentalContactTwoPointBlockNormalSolveMinWarmStates,
+    'experimentalContactTwoPointBlockFrictionSolveMinWarmStates':
+        experimentalContactTwoPointBlockFrictionSolveMinWarmStates,
+    'experimentalContactTwoPointBlockNormalSolveDisableBelowWarmStates':
+        experimentalContactTwoPointBlockNormalSolveDisableBelowWarmStates,
+    'experimentalContactTwoPointBlockFrictionSolveDisableBelowWarmStates':
+        experimentalContactTwoPointBlockFrictionSolveDisableBelowWarmStates,
+    'experimentalContactBlockHysteresisTransitionRateWindowSteps':
+        experimentalContactBlockHysteresisTransitionRateWindowSteps,
+    'experimentalContactWarmStartImpulseDecay':
+        experimentalContactWarmStartImpulseDecay,
+    'experimentalContactWarmStartNormalImpulseDecay':
+        experimentalContactWarmStartNormalImpulseDecay,
+    'experimentalContactWarmStartTangentImpulseDecay':
+        experimentalContactWarmStartTangentImpulseDecay,
+    'experimentalContactWarmStartMaxImpulse':
+        experimentalContactWarmStartMaxImpulse,
+    'experimentalContactWarmStartMaxAgeSteps':
+        experimentalContactWarmStartMaxAgeSteps,
+    'experimentalContactWarmStartNormalAlignmentThreshold':
+        experimentalContactWarmStartNormalAlignmentThreshold,
+    'experimentalContactWarmStartAnchorDistanceThreshold':
+        experimentalContactWarmStartAnchorDistanceThreshold,
+    'experimentalContactWarmStartManifoldSlots':
+        experimentalContactWarmStartManifoldSlots,
+    'experimentalContactWarmStartFeatureIdMatchingEnabled':
+        experimentalContactWarmStartFeatureIdMatchingEnabled,
     'arenaTrackedBodies': _arenaSlots.length,
     'experimentalIsolateBroadphase': experimentalIsolateBroadphaseEnabled,
     'experimentalIsolateBroadphaseAdaptiveEnabled':
@@ -1292,6 +2784,81 @@ class PhysicsEngine {
     'broadphaseEligibleBodies': _lastBroadphaseEligibleBodies,
     'broadphaseSerializedBodies': _lastBroadphaseSerializedBodies,
     'broadphaseSerializedBytes': _lastBroadphaseSerializedBytes,
+    'jointWakeActivations': _lastJointWakeActivations,
+    'warmStartContacts': _lastWarmStartContactCount,
+    'warmStartHits': _lastWarmStartHitCount,
+    'resolvedManifoldPoints': _lastResolvedManifoldPointCount,
+    'resolvedVelocityIterations': _lastResolvedVelocityIterationCount,
+    'resolvedNormalImpulse': _lastResolvedNormalImpulse,
+    'resolvedTangentImpulse': _lastResolvedTangentImpulse,
+    'resolvedBlockSolves': _lastResolvedBlockSolveCount,
+    'resolvedBlockFrictionSolves': _lastResolvedBlockFrictionSolveCount,
+    'blockNormalHysteresisActiveContacts':
+        _lastBlockNormalHysteresisActiveContacts,
+    'blockFrictionHysteresisActiveContacts':
+        _lastBlockFrictionHysteresisActiveContacts,
+    'blockNormalHysteresisActivations':
+        _lastBlockNormalHysteresisActivationCount,
+    'blockNormalHysteresisDeactivations':
+        _lastBlockNormalHysteresisDeactivationCount,
+    'blockNormalHysteresisActivatedByThreshold':
+        _lastBlockNormalHysteresisActivatedByThresholdCount,
+    'blockNormalHysteresisDeactivatedBelowDisable':
+        _lastBlockNormalHysteresisDeactivatedBelowDisableCount,
+    'blockNormalHysteresisDeactivatedNonTwoPoint':
+        _lastBlockNormalHysteresisDeactivatedNonTwoPointCount,
+    'blockFrictionHysteresisActivations':
+        _lastBlockFrictionHysteresisActivationCount,
+    'blockFrictionHysteresisDeactivations':
+        _lastBlockFrictionHysteresisDeactivationCount,
+    'blockFrictionHysteresisActivatedByThreshold':
+        _lastBlockFrictionHysteresisActivatedByThresholdCount,
+    'blockFrictionHysteresisDeactivatedBelowDisable':
+        _lastBlockFrictionHysteresisDeactivatedBelowDisableCount,
+    'blockFrictionHysteresisDeactivatedNonTwoPoint':
+        _lastBlockFrictionHysteresisDeactivatedNonTwoPointCount,
+    'totalBlockNormalHysteresisActivations':
+        _totalBlockNormalHysteresisActivationCount,
+    'totalBlockNormalHysteresisDeactivations':
+        _totalBlockNormalHysteresisDeactivationCount,
+    'totalBlockFrictionHysteresisActivations':
+        _totalBlockFrictionHysteresisActivationCount,
+    'totalBlockFrictionHysteresisDeactivations':
+        _totalBlockFrictionHysteresisDeactivationCount,
+    'rollingBlockNormalHysteresisActivationRate':
+        experimentalContactBlockHysteresisTransitionRateWindowSteps <= 0
+        ? 0.0
+        : _rollingBlockNormalHysteresisActivationCount /
+              experimentalContactBlockHysteresisTransitionRateWindowSteps,
+    'rollingBlockNormalHysteresisDeactivationRate':
+        experimentalContactBlockHysteresisTransitionRateWindowSteps <= 0
+        ? 0.0
+        : _rollingBlockNormalHysteresisDeactivationCount /
+              experimentalContactBlockHysteresisTransitionRateWindowSteps,
+    'rollingBlockFrictionHysteresisActivationRate':
+        experimentalContactBlockHysteresisTransitionRateWindowSteps <= 0
+        ? 0.0
+        : _rollingBlockFrictionHysteresisActivationCount /
+              experimentalContactBlockHysteresisTransitionRateWindowSteps,
+    'rollingBlockFrictionHysteresisDeactivationRate':
+        experimentalContactBlockHysteresisTransitionRateWindowSteps <= 0
+        ? 0.0
+        : _rollingBlockFrictionHysteresisDeactivationCount /
+              experimentalContactBlockHysteresisTransitionRateWindowSteps,
+    'warmStartRejectedByAge': _lastWarmStartRejectedByAgeCount,
+    'warmStartRejectedByNormal': _lastWarmStartRejectedByNormalCount,
+    'warmStartRejectedByAnchor': _lastWarmStartRejectedByAnchorCount,
+    'warmStartRejectedByFeature': _lastWarmStartRejectedByFeatureCount,
+    'warmStartMatchedStates': _lastWarmStartMatchedStateCount,
+    'warmStartFeatureHistoryReused': _lastWarmStartFeatureHistoryReuseCount,
+    'warmStartResolvedFeatureSeeded': _lastWarmStartResolvedFeatureSeedCount,
+    'warmStartAngularPreloadCount': _lastWarmStartAngularPreloadCount,
+    'warmStartCacheSize': _contactWarmStartCache.values.fold<int>(
+      0,
+      (sum, list) => sum + list.length,
+    ),
+    'warmStartMaxCachedNormalImpulse': _lastWarmStartMaxCachedNormalImpulse,
+    'warmStartMaxCachedTangentImpulse': _lastWarmStartMaxCachedTangentImpulse,
     'deterministicHashEnabled': deterministicHashEnabled,
     'deterministicHashIntervalSteps': deterministicHashIntervalSteps,
     'deterministicHash': _lastDeterministicHash,

@@ -152,6 +152,8 @@ class PhysicsBody {
   /// Apply force
   void applyForce(Vector2 force) {
     if (mass > 0) {
+      isAwake = true;
+      sleepTimer = 0.0;
       acceleration.x += force.x * inverseMass;
       acceleration.y += force.y * inverseMass;
     }
@@ -160,12 +162,18 @@ class PhysicsBody {
   /// Apply torque
   void applyTorque(double applicationTorque) {
     if (inertia > 0) {
+      isAwake = true;
+      sleepTimer = 0.0;
       torque += applicationTorque;
     }
   }
 
   /// Apply impulse
   void applyImpulse(Vector2 impulse) {
+    if (mass > 0) {
+      isAwake = true;
+      sleepTimer = 0.0;
+    }
     velocity.x += impulse.x;
     velocity.y += impulse.y;
   }

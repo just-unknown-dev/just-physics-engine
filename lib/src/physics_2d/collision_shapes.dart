@@ -11,6 +11,8 @@ abstract class CollisionShape {
 
 /// A circular collision shape.
 class CircleShape extends CollisionShape {
+  static const int _featureCircleGeneric = 0;
+
   final double radius;
 
   CircleShape(this.radius);
@@ -29,10 +31,16 @@ class CircleShape extends CollisionShape {
       if (distance < totalRadius) {
         final penetration = totalRadius - distance;
         final normal = distance > 0 ? delta / distance : const Offset(1, 0);
+        final contactPoint = Offset(
+          posA.dx + normal.dx * radius,
+          posA.dy + normal.dy * radius,
+        );
         return CollisionManifold(
           isColliding: true,
           normal: normal,
           penetration: penetration,
+          contactPoint: contactPoint,
+          contactFeatureId: _featureCircleGeneric,
         );
       }
     } else if (other is PolygonShape ||
@@ -45,6 +53,9 @@ class CircleShape extends CollisionShape {
         isColliding: true,
         normal: -m.normal,
         penetration: m.penetration,
+        contactPoint: m.contactPoint,
+        contactFeatureId: m.contactFeatureId,
+        contactPoints: m.contactPoints,
       );
     }
     return CollisionManifold.empty();
@@ -58,6 +69,15 @@ class CircleShape extends CollisionShape {
 
 /// A convex polygonal collision shape using SAT (Separating Axis Theorem).
 class PolygonShape extends CollisionShape {
+  static const int _featureTypePolyAEdge = 1;
+  static const int _featureTypePolyBEdge = 2;
+  static const int _featureTypePolyVertex = 3;
+  static const int _featureTypePolyContactPair = 4;
+
+  int _encodeFeatureId(int featureType, int featureIndex) {
+    return (featureType << 24) ^ (featureIndex & 0x00ffffff);
+  }
+
   /// Vertices defined relative to the center of the body.
   List<Offset> vertices;
 
@@ -78,6 +98,9 @@ class PolygonShape extends CollisionShape {
         isColliding: manifold.isColliding,
         normal: -manifold.normal,
         penetration: manifold.penetration,
+        contactPoint: manifold.contactPoint,
+        contactFeatureId: manifold.contactFeatureId,
+        contactPoints: manifold.contactPoints,
       );
     } else if (other is CapsuleShape) {
       return _satPolygonVsCapsule(posA, this, posB, other);
@@ -120,6 +143,9 @@ class PolygonShape extends CollisionShape {
   ) {
     double minPenetration = double.infinity;
     double bestNx = 0, bestNy = 0;
+    int? bestFeatureId;
+    var bestFeatureType = -1;
+    var bestFeatureIndex = 0;
 
     // Test axes from polyA
     for (int i = 0; i < polyA.vertices.length; i++) {
@@ -138,6 +164,9 @@ class PolygonShape extends CollisionShape {
         minPenetration = overlap;
         bestNx = nx;
         bestNy = ny;
+        bestFeatureType = _featureTypePolyAEdge;
+        bestFeatureIndex = i;
+        bestFeatureId = _encodeFeatureId(_featureTypePolyAEdge, i);
       }
     }
 
@@ -157,6 +186,9 @@ class PolygonShape extends CollisionShape {
         minPenetration = overlap;
         bestNx = nx;
         bestNy = ny;
+        bestFeatureType = _featureTypePolyBEdge;
+        bestFeatureIndex = i;
+        bestFeatureId = _encodeFeatureId(_featureTypePolyBEdge, i);
       }
     }
 
@@ -168,10 +200,61 @@ class PolygonShape extends CollisionShape {
       bestNy = -bestNy;
     }
 
+    final clippedContacts = _buildPolygonPolygonContactsViaClipping(
+      polyA,
+      posA,
+      polyB,
+      posB,
+      bestNx,
+      bestNy,
+      minPenetration,
+      bestFeatureType,
+      bestFeatureIndex,
+      0.0,
+    );
+    final contacts = clippedContacts.isNotEmpty
+        ? clippedContacts
+        : () {
+            final fallback = _fallbackPolygonPolygonContactPoints(
+              polyA,
+              posA,
+              polyB,
+              posB,
+              bestNx,
+              bestNy,
+              bestFeatureId,
+            );
+            return fallback.secondaryPoint == null
+                ? <CollisionContactPoint>[
+                    CollisionContactPoint(
+                      point: fallback.primaryPoint,
+                      featureId: fallback.primaryFeatureId,
+                    ),
+                  ]
+                : <CollisionContactPoint>[
+                    CollisionContactPoint(
+                      point: fallback.primaryPoint,
+                      featureId: fallback.primaryFeatureId,
+                    ),
+                    CollisionContactPoint(
+                      point: fallback.secondaryPoint!,
+                      featureId: fallback.secondaryFeatureId,
+                    ),
+                  ];
+          }();
+
+    final primary = contacts.first;
+    final secondary = contacts.length > 1 ? contacts[1] : null;
+
     return CollisionManifold(
       isColliding: true,
       normal: Offset(bestNx, bestNy),
       penetration: minPenetration,
+      contactPoint: primary.point,
+      contactFeatureId: primary.featureId,
+      contactPoints: secondary == null
+          ? <CollisionContactPoint>[primary]
+          : <CollisionContactPoint>[primary, secondary],
     );
   }
 
@@ -184,21 +267,26 @@ class PolygonShape extends CollisionShape {
     if (poly.vertices.isEmpty) return CollisionManifold.empty();
     double minPenetration = double.infinity;
     double bestNx = 0, bestNy = 0;
+    int? bestFeatureId;
 
     // Find the polygon vertex closest to the circle center (world space).
+    var closestFeatureIndex = 0;
     double closestX = poly.vertices[0].dx + polyPos.dx;
     double closestY = poly.vertices[0].dy + polyPos.dy;
-    double minDistSq = (closestX - center.dx) * (closestX - center.dx) +
+    double minDistSq =
+        (closestX - center.dx) * (closestX - center.dx) +
         (closestY - center.dy) * (closestY - center.dy);
     for (int i = 1; i < poly.vertices.length; i++) {
       final vx = poly.vertices[i].dx + polyPos.dx;
       final vy = poly.vertices[i].dy + polyPos.dy;
-      final dSq = (vx - center.dx) * (vx - center.dx) +
+      final dSq =
+          (vx - center.dx) * (vx - center.dx) +
           (vy - center.dy) * (vy - center.dy);
       if (dSq < minDistSq) {
         minDistSq = dSq;
         closestX = vx;
         closestY = vy;
+        closestFeatureIndex = i;
       }
     }
 
@@ -207,12 +295,22 @@ class PolygonShape extends CollisionShape {
       final axLen = math.sqrt(minDistSq);
       final nx = (center.dx - closestX) / axLen;
       final ny = (center.dy - closestY) / axLen;
-      final overlap =
-          _overlapOnAxisCircle(poly, polyPos, center, circle.radius, nx, ny);
+      final overlap = _overlapOnAxisCircle(
+        poly,
+        polyPos,
+        center,
+        circle.radius,
+        nx,
+        ny,
+      );
       if (overlap == null) return CollisionManifold.empty();
       minPenetration = overlap;
       bestNx = nx;
       bestNy = ny;
+      bestFeatureId = _encodeFeatureId(
+        _featureTypePolyVertex,
+        closestFeatureIndex,
+      );
     }
 
     // Test polygon edge axes.
@@ -225,14 +323,21 @@ class PolygonShape extends CollisionShape {
       final nx = -ey / len;
       final ny = ex / len;
 
-      final overlap =
-          _overlapOnAxisCircle(poly, polyPos, center, circle.radius, nx, ny);
+      final overlap = _overlapOnAxisCircle(
+        poly,
+        polyPos,
+        center,
+        circle.radius,
+        nx,
+        ny,
+      );
       if (overlap == null) return CollisionManifold.empty();
 
       if (overlap < minPenetration) {
         minPenetration = overlap;
         bestNx = nx;
         bestNy = ny;
+        bestFeatureId = _encodeFeatureId(_featureTypePolyAEdge, i);
       }
     }
 
@@ -243,10 +348,17 @@ class PolygonShape extends CollisionShape {
       bestNy = -bestNy;
     }
 
+    final contactPoint = Offset(
+      center.dx + bestNx * circle.radius,
+      center.dy + bestNy * circle.radius,
+    );
+
     return CollisionManifold(
       isColliding: true,
       normal: Offset(bestNx, bestNy),
       penetration: minPenetration,
+      contactPoint: contactPoint,
+      contactFeatureId: bestFeatureId,
     );
   }
 
@@ -267,11 +379,15 @@ class PolygonShape extends CollisionShape {
     // inside each per-axis projection loop, reducing constant factor.
     final worldVerts = List<Offset>.generate(
       poly.vertices.length,
-      (i) => Offset(poly.vertices[i].dx + posA.dx, poly.vertices[i].dy + posA.dy),
+      (i) =>
+          Offset(poly.vertices[i].dx + posA.dx, poly.vertices[i].dy + posA.dy),
     );
 
     double minPen = double.infinity;
     double bestNx = 0, bestNy = 0;
+    int? bestFeatureId;
+    var bestFeatureType = -1;
+    var bestFeatureIndex = 0;
 
     // Test polygon edge normals (capsule projection expanded by radius).
     for (int i = 0; i < worldVerts.length; i++) {
@@ -301,11 +417,15 @@ class PolygonShape extends CollisionShape {
         minPen = overlap;
         bestNx = nx;
         bestNy = ny;
+        bestFeatureType = _featureTypePolyAEdge;
+        bestFeatureIndex = i;
+        bestFeatureId = _encodeFeatureId(_featureTypePolyAEdge, i);
       }
     }
 
     // Test axis from each polygon vertex to the closest point on capsule axis.
-    for (final w in worldVerts) {
+    for (var i = 0; i < worldVerts.length; i++) {
+      final w = worldVerts[i];
       final closest = CapsuleShape.closestPointOnSegment(w, p1, p2);
       final dx = w.dx - closest.dx;
       final dy = w.dy - closest.dy;
@@ -332,6 +452,9 @@ class PolygonShape extends CollisionShape {
         minPen = overlap;
         bestNx = nx;
         bestNy = ny;
+        bestFeatureType = _featureTypePolyVertex;
+        bestFeatureIndex = i;
+        bestFeatureId = _encodeFeatureId(_featureTypePolyVertex, i);
       }
     }
 
@@ -343,10 +466,373 @@ class PolygonShape extends CollisionShape {
       bestNy = -bestNy;
     }
 
+    final contactPoint = _estimatePolygonCapsuleContactPoint(
+      worldVerts,
+      p1,
+      p2,
+      cap.radius,
+      bestNx,
+      bestNy,
+    );
+
+    List<CollisionContactPoint> contactPoints;
+    int? primaryFeatureId;
+
+    if (bestFeatureType == _featureTypePolyAEdge && worldVerts.length >= 2) {
+      final i = bestFeatureIndex % worldVerts.length;
+      final j = (i + 1) % worldVerts.length;
+      final edgePoints = <Offset>[worldVerts[i], worldVerts[j]];
+      final generated = <CollisionContactPoint>[];
+      for (var k = 0; k < edgePoints.length; k++) {
+        final polyPoint = edgePoints[k];
+        final capsuleAxisPoint = CapsuleShape.closestPointOnSegment(
+          polyPoint,
+          p1,
+          p2,
+        );
+        final capsuleSurfacePoint = Offset(
+          capsuleAxisPoint.dx - bestNx * cap.radius,
+          capsuleAxisPoint.dy - bestNy * cap.radius,
+        );
+        final cp = Offset(
+          (polyPoint.dx + capsuleSurfacePoint.dx) * 0.5,
+          (polyPoint.dy + capsuleSurfacePoint.dy) * 0.5,
+        );
+        if (generated.any(
+          (existing) => (existing.point - cp).distance <= 1e-6,
+        )) {
+          continue;
+        }
+        generated.add(
+          CollisionContactPoint(
+            point: cp,
+            featureId: _encodePairedFeatureId(i, 0, k),
+          ),
+        );
+      }
+      contactPoints = generated.isNotEmpty
+          ? generated
+          : <CollisionContactPoint>[
+              CollisionContactPoint(
+                point: contactPoint,
+                featureId: bestFeatureId,
+              ),
+            ];
+      primaryFeatureId = contactPoints.first.featureId;
+    } else {
+      contactPoints = <CollisionContactPoint>[
+        CollisionContactPoint(point: contactPoint, featureId: bestFeatureId),
+      ];
+      primaryFeatureId = bestFeatureId;
+    }
+
     return CollisionManifold(
       isColliding: true,
       normal: Offset(bestNx, bestNy),
       penetration: minPen,
+      contactPoint: contactPoint,
+      contactFeatureId: primaryFeatureId,
+      contactPoints: contactPoints,
+    );
+  }
+
+  Offset _supportPoint(
+    List<Offset> worldVerts,
+    double nx,
+    double ny,
+    bool maximize,
+  ) {
+    var best = worldVerts[0];
+    var bestProj = best.dx * nx + best.dy * ny;
+    for (var i = 1; i < worldVerts.length; i++) {
+      final v = worldVerts[i];
+      final proj = v.dx * nx + v.dy * ny;
+      if ((maximize && proj > bestProj) || (!maximize && proj < bestProj)) {
+        best = v;
+        bestProj = proj;
+      }
+    }
+    return best;
+  }
+
+  int _decodeFeatureType(int featureId) => (featureId >> 24) & 0xff;
+
+  int _decodeFeatureIndex(int featureId) => featureId & 0x00ffffff;
+
+  int _encodePairedFeatureId(
+    int referenceEdge,
+    int incidentEdge,
+    int endpointMarker,
+  ) {
+    // Keep a compact deterministic key: ref edge, incident edge, and clip endpoint.
+    final packed =
+        ((referenceEdge & 0x3ff) << 11) |
+        ((incidentEdge & 0x3ff) << 2) |
+        (endpointMarker & 0x3);
+    return _encodeFeatureId(_featureTypePolyContactPair, packed);
+  }
+
+  double _dot(Offset a, Offset b) => a.dx * b.dx + a.dy * b.dy;
+
+  List<(Offset point, int endpointMarker)> _clipSegmentToPlane(
+    List<(Offset point, int endpointMarker)> inVerts,
+    Offset planeNormal,
+    double planeOffset,
+  ) {
+    if (inVerts.length < 2) return const <(Offset, int)>[];
+    final out = <(Offset point, int endpointMarker)>[];
+    final v1 = inVerts[0];
+    final v2 = inVerts[1];
+    final d1 = _dot(planeNormal, v1.$1) - planeOffset;
+    final d2 = _dot(planeNormal, v2.$1) - planeOffset;
+
+    if (d1 <= 0) out.add(v1);
+    if (d2 <= 0) out.add(v2);
+
+    if (d1 * d2 < 0) {
+      final t = d1 / (d1 - d2);
+      final ix = v1.$1.dx + t * (v2.$1.dx - v1.$1.dx);
+      final iy = v1.$1.dy + t * (v2.$1.dy - v1.$1.dy);
+      out.add((Offset(ix, iy), 2));
+    }
+
+    return out;
+  }
+
+  List<CollisionContactPoint> _buildPolygonPolygonContactsViaClipping(
+    PolygonShape polyA,
+    Offset posA,
+    PolygonShape polyB,
+    Offset posB,
+    double nx,
+    double ny,
+    double penetration,
+    int bestFeatureType,
+    int bestFeatureIndex,
+    double referenceFaceOffset,
+  ) {
+    final worldA = List<Offset>.generate(
+      polyA.vertices.length,
+      (i) => Offset(
+        polyA.vertices[i].dx + posA.dx,
+        polyA.vertices[i].dy + posA.dy,
+      ),
+    );
+    final worldB = List<Offset>.generate(
+      polyB.vertices.length,
+      (i) => Offset(
+        polyB.vertices[i].dx + posB.dx,
+        polyB.vertices[i].dy + posB.dy,
+      ),
+    );
+
+    if (worldA.length < 2 || worldB.length < 2) {
+      return const <CollisionContactPoint>[];
+    }
+
+    final referenceIsA = bestFeatureType == _featureTypePolyAEdge;
+    if (!referenceIsA && bestFeatureType != _featureTypePolyBEdge) {
+      return const <CollisionContactPoint>[];
+    }
+
+    final refVerts = referenceIsA ? worldA : worldB;
+    final incVerts = referenceIsA ? worldB : worldA;
+    final referenceEdge = bestFeatureIndex % refVerts.length;
+    final refI2 = (referenceEdge + 1) % refVerts.length;
+    final refV1 = refVerts[referenceEdge];
+    final refV2 = refVerts[refI2];
+
+    final refEdgeDirRaw = Offset(refV2.dx - refV1.dx, refV2.dy - refV1.dy);
+    final refLen = refEdgeDirRaw.distance;
+    if (refLen <= 1e-9) return const <CollisionContactPoint>[];
+
+    final tangent = Offset(
+      refEdgeDirRaw.dx / refLen,
+      refEdgeDirRaw.dy / refLen,
+    );
+    final manifoldNormal = Offset(nx, ny);
+    final referenceNormal = referenceIsA ? manifoldNormal : -manifoldNormal;
+
+    var incidentEdge = 0;
+    var minDot = double.infinity;
+    for (var i = 0; i < incVerts.length; i++) {
+      final j = (i + 1) % incVerts.length;
+      final ex = incVerts[j].dx - incVerts[i].dx;
+      final ey = incVerts[j].dy - incVerts[i].dy;
+      final len = math.sqrt(ex * ex + ey * ey);
+      if (len <= 1e-9) continue;
+      final edgeNormal = Offset(-ey / len, ex / len);
+      final d = _dot(edgeNormal, referenceNormal);
+      if (d < minDot) {
+        minDot = d;
+        incidentEdge = i;
+      }
+    }
+
+    final incI2 = (incidentEdge + 1) % incVerts.length;
+    var clipped = <(Offset point, int endpointMarker)>[
+      (incVerts[incidentEdge], 0),
+      (incVerts[incI2], 1),
+    ];
+
+    final planeN1 = Offset(-tangent.dx, -tangent.dy);
+    final planeO1 = _dot(planeN1, refV1);
+    clipped = _clipSegmentToPlane(clipped, planeN1, planeO1);
+    if (clipped.length < 2) return const <CollisionContactPoint>[];
+
+    final planeN2 = tangent;
+    final planeO2 = _dot(planeN2, refV2);
+    clipped = _clipSegmentToPlane(clipped, planeN2, planeO2);
+    if (clipped.isEmpty) return const <CollisionContactPoint>[];
+
+    final contacts = <CollisionContactPoint>[];
+    for (final v in clipped) {
+      final rawSeparation = _dot(
+        referenceNormal,
+        Offset(v.$1.dx - refV1.dx, v.$1.dy - refV1.dy),
+      );
+      final separation = rawSeparation - referenceFaceOffset;
+      if (separation <= penetration + 1e-6) {
+        // Midpoint between reference plane and incident point for continuity anchors.
+        final cx = v.$1.dx - referenceNormal.dx * separation * 0.5;
+        final cy = v.$1.dy - referenceNormal.dy * separation * 0.5;
+        contacts.add(
+          CollisionContactPoint(
+            point: Offset(cx, cy),
+            featureId: _encodePairedFeatureId(
+              referenceEdge,
+              incidentEdge,
+              v.$2,
+            ),
+          ),
+        );
+      }
+    }
+
+    if (contacts.length > 2) return contacts.sublist(0, 2);
+    return contacts;
+  }
+
+  ({
+    Offset primaryPoint,
+    int? primaryFeatureId,
+    Offset? secondaryPoint,
+    int? secondaryFeatureId,
+  })
+  _fallbackPolygonPolygonContactPoints(
+    PolygonShape polyA,
+    Offset posA,
+    PolygonShape polyB,
+    Offset posB,
+    double nx,
+    double ny,
+    int? bestFeatureId,
+  ) {
+    final worldA = List<Offset>.generate(
+      polyA.vertices.length,
+      (i) => Offset(
+        polyA.vertices[i].dx + posA.dx,
+        polyA.vertices[i].dy + posA.dy,
+      ),
+    );
+    final worldB = List<Offset>.generate(
+      polyB.vertices.length,
+      (i) => Offset(
+        polyB.vertices[i].dx + posB.dx,
+        polyB.vertices[i].dy + posB.dy,
+      ),
+    );
+    final aSupport = _supportPoint(worldA, nx, ny, true);
+    final bSupport = _supportPoint(worldB, nx, ny, false);
+
+    Offset midpoint(Offset p, Offset q) =>
+        Offset((p.dx + q.dx) * 0.5, (p.dy + q.dy) * 0.5);
+
+    final defaultPoint = midpoint(aSupport, bSupport);
+
+    if (bestFeatureId == null) {
+      return (
+        primaryPoint: defaultPoint,
+        primaryFeatureId: null,
+        secondaryPoint: null,
+        secondaryFeatureId: null,
+      );
+    }
+
+    final featureType = _decodeFeatureType(bestFeatureId);
+    final featureIndex = _decodeFeatureIndex(bestFeatureId);
+
+    if (featureType == _featureTypePolyAEdge && worldA.length >= 2) {
+      final i = featureIndex % worldA.length;
+      final j = (i + 1) % worldA.length;
+      final p1 = midpoint(worldA[i], bSupport);
+      final p2 = midpoint(worldA[j], bSupport);
+      if ((p1 - p2).distance <= 1e-6) {
+        return (
+          primaryPoint: p1,
+          primaryFeatureId: _encodeFeatureId(_featureTypePolyVertex, i),
+          secondaryPoint: null,
+          secondaryFeatureId: null,
+        );
+      }
+      return (
+        primaryPoint: p1,
+        primaryFeatureId: _encodeFeatureId(_featureTypePolyVertex, i),
+        secondaryPoint: p2,
+        secondaryFeatureId: _encodeFeatureId(_featureTypePolyVertex, j),
+      );
+    }
+
+    if (featureType == _featureTypePolyBEdge && worldB.length >= 2) {
+      final i = featureIndex % worldB.length;
+      final j = (i + 1) % worldB.length;
+      final p1 = midpoint(aSupport, worldB[i]);
+      final p2 = midpoint(aSupport, worldB[j]);
+      if ((p1 - p2).distance <= 1e-6) {
+        return (
+          primaryPoint: p1,
+          primaryFeatureId: _encodeFeatureId(_featureTypePolyVertex, i),
+          secondaryPoint: null,
+          secondaryFeatureId: null,
+        );
+      }
+      return (
+        primaryPoint: p1,
+        primaryFeatureId: _encodeFeatureId(_featureTypePolyVertex, i),
+        secondaryPoint: p2,
+        secondaryFeatureId: _encodeFeatureId(_featureTypePolyVertex, j),
+      );
+    }
+
+    return (
+      primaryPoint: defaultPoint,
+      primaryFeatureId: bestFeatureId,
+      secondaryPoint: null,
+      secondaryFeatureId: null,
+    );
+  }
+
+  Offset _estimatePolygonCapsuleContactPoint(
+    List<Offset> worldVerts,
+    Offset p1,
+    Offset p2,
+    double radius,
+    double nx,
+    double ny,
+  ) {
+    final polyPoint = _supportPoint(worldVerts, nx, ny, true);
+    final capsuleAxisPoint = CapsuleShape.closestPointOnSegment(
+      polyPoint,
+      p1,
+      p2,
+    );
+    final capsuleSurfacePoint = Offset(
+      capsuleAxisPoint.dx - nx * radius,
+      capsuleAxisPoint.dy - ny * radius,
+    );
+    return Offset(
+      (polyPoint.dx + capsuleSurfacePoint.dx) * 0.5,
+      (polyPoint.dy + capsuleSurfacePoint.dy) * 0.5,
     );
   }
 
@@ -481,6 +967,9 @@ class CapsuleShape extends CollisionShape {
         isColliding: true,
         normal: -m.normal,
         penetration: m.penetration,
+        contactPoint: m.contactPoint,
+        contactFeatureId: m.contactFeatureId,
+        contactPoints: m.contactPoints,
       );
     }
     return CollisionManifold.empty();
@@ -510,6 +999,8 @@ class CapsuleShape extends CollisionShape {
       isColliding: true,
       normal: Offset(nx, ny), // points from capsule axis toward circle (A→B)
       penetration: sumR - dist,
+      contactPoint: Offset(closest.dx + nx * radius, closest.dy + ny * radius),
+      contactFeatureId: CircleShape._featureCircleGeneric,
     );
   }
 
@@ -540,6 +1031,11 @@ class CapsuleShape extends CollisionShape {
       isColliding: true,
       normal: Offset(nx, ny),
       penetration: sumR - dist,
+      contactPoint: Offset(
+        (ptA.dx + nx * radius + ptB.dx - nx * other.radius) * 0.5,
+        (ptA.dy + ny * radius + ptB.dy - ny * other.radius) * 0.5,
+      ),
+      contactFeatureId: CircleShape._featureCircleGeneric,
     );
   }
 
@@ -727,15 +1223,12 @@ class RoundedPolygonShape extends PolygonShape {
     required double height,
     required double cornerRadius,
   }) {
-    return RoundedPolygonShape(
-      [
-        Offset(-width / 2, -height / 2),
-        Offset(width / 2, -height / 2),
-        Offset(width / 2, height / 2),
-        Offset(-width / 2, height / 2),
-      ],
-      cornerRadius,
-    );
+    return RoundedPolygonShape([
+      Offset(-width / 2, -height / 2),
+      Offset(width / 2, -height / 2),
+      Offset(width / 2, height / 2),
+      Offset(-width / 2, height / 2),
+    ], cornerRadius);
   }
 
   @override
@@ -773,13 +1266,21 @@ class RoundedPolygonShape extends PolygonShape {
   ) {
     // Inflate the SAT test by treating the circle radius as (circle.radius + cornerRadius).
     final inflatedRadius = circle.radius + cornerRadius;
-    final m = _satCircleVsPolygon(posB, CircleShape(inflatedRadius), posA, this);
+    final m = _satCircleVsPolygon(
+      posB,
+      CircleShape(inflatedRadius),
+      posA,
+      this,
+    );
     if (!m.isColliding) return CollisionManifold.empty();
     // The normal from _satCircleVsPolygon points circle→polygon; flip for A→B.
     return CollisionManifold(
       isColliding: true,
       normal: -m.normal,
       penetration: m.penetration,
+      contactPoint: m.contactPoint,
+      contactFeatureId: m.contactFeatureId,
+      contactPoints: m.contactPoints,
     );
   }
 
@@ -792,6 +1293,9 @@ class RoundedPolygonShape extends PolygonShape {
     final r = cornerRadius;
     double minPen = double.infinity;
     double bestNx = 0, bestNy = 0;
+    int? bestFeatureId;
+    var bestFeatureType = -1;
+    var bestFeatureIndex = 0;
     bool separated = false;
 
     // Pre-compute world-space positions once to avoid repeated addition per axis.
@@ -801,10 +1305,13 @@ class RoundedPolygonShape extends PolygonShape {
     );
     final worldB = List<Offset>.generate(
       other.vertices.length,
-      (i) => Offset(other.vertices[i].dx + posB.dx, other.vertices[i].dy + posB.dy),
+      (i) => Offset(
+        other.vertices[i].dx + posB.dx,
+        other.vertices[i].dy + posB.dy,
+      ),
     );
 
-    void testAxis(double nx, double ny) {
+    void testAxis(double nx, double ny, int featureType, int featureIndex) {
       if (separated) return;
       // Inflate rounded polygon projection by r on both sides.
       double minA = double.infinity, maxA = double.negativeInfinity;
@@ -832,6 +1339,9 @@ class RoundedPolygonShape extends PolygonShape {
         minPen = overlap;
         bestNx = nx;
         bestNy = ny;
+        bestFeatureType = featureType;
+        bestFeatureIndex = featureIndex;
+        bestFeatureId = _encodeFeatureId(featureType, featureIndex);
       }
     }
 
@@ -841,7 +1351,7 @@ class RoundedPolygonShape extends PolygonShape {
       final ey = worldA[j].dy - worldA[i].dy;
       final len = math.sqrt(ex * ex + ey * ey);
       if (len < 1e-8) continue;
-      testAxis(-ey / len, ex / len);
+      testAxis(-ey / len, ex / len, PolygonShape._featureTypePolyAEdge, i);
     }
 
     for (int i = 0; i < worldB.length; i++) {
@@ -850,7 +1360,7 @@ class RoundedPolygonShape extends PolygonShape {
       final ey = worldB[j].dy - worldB[i].dy;
       final len = math.sqrt(ex * ex + ey * ey);
       if (len < 1e-8) continue;
-      testAxis(-ey / len, ex / len);
+      testAxis(-ey / len, ex / len, PolygonShape._featureTypePolyBEdge, i);
     }
 
     if (separated) return CollisionManifold.empty();
@@ -862,10 +1372,64 @@ class RoundedPolygonShape extends PolygonShape {
       bestNy = -bestNy;
     }
 
+    final referenceFaceOffset =
+        bestFeatureType == PolygonShape._featureTypePolyAEdge ? r : 0.0;
+    final clippedContacts = _buildPolygonPolygonContactsViaClipping(
+      this,
+      posA,
+      other,
+      posB,
+      bestNx,
+      bestNy,
+      minPen,
+      bestFeatureType,
+      bestFeatureIndex,
+      referenceFaceOffset,
+    );
+
+    final contacts = clippedContacts.isNotEmpty
+        ? clippedContacts
+        : () {
+            final fallback = _fallbackPolygonPolygonContactPoints(
+              this,
+              posA,
+              other,
+              posB,
+              bestNx,
+              bestNy,
+              bestFeatureId,
+            );
+            return fallback.secondaryPoint == null
+                ? <CollisionContactPoint>[
+                    CollisionContactPoint(
+                      point: fallback.primaryPoint,
+                      featureId: fallback.primaryFeatureId,
+                    ),
+                  ]
+                : <CollisionContactPoint>[
+                    CollisionContactPoint(
+                      point: fallback.primaryPoint,
+                      featureId: fallback.primaryFeatureId,
+                    ),
+                    CollisionContactPoint(
+                      point: fallback.secondaryPoint!,
+                      featureId: fallback.secondaryFeatureId,
+                    ),
+                  ];
+          }();
+
+    final primary = contacts.first;
+    final secondary = contacts.length > 1 ? contacts[1] : null;
+
     return CollisionManifold(
       isColliding: true,
       normal: Offset(bestNx, bestNy),
       penetration: minPen,
+      contactPoint: primary.point,
+      contactFeatureId: primary.featureId,
+      contactPoints: secondary == null
+          ? <CollisionContactPoint>[primary]
+          : <CollisionContactPoint>[primary, secondary],
     );
   }
 }
