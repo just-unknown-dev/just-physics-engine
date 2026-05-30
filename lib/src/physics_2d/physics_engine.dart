@@ -360,9 +360,13 @@ class PhysicsEngine {
   int _lastBlockNormalHysteresisActivatedByThresholdCount = 0;
   int _lastBlockNormalHysteresisDeactivatedBelowDisableCount = 0;
   int _lastBlockNormalHysteresisDeactivatedNonTwoPointCount = 0;
+  int _lastBlockNormalHysteresisDeactivatedNonTwoPointContactCount = 0;
+  int _lastBlockNormalHysteresisDeactivatedPairDroppedCount = 0;
   int _lastBlockFrictionHysteresisActivatedByThresholdCount = 0;
   int _lastBlockFrictionHysteresisDeactivatedBelowDisableCount = 0;
   int _lastBlockFrictionHysteresisDeactivatedNonTwoPointCount = 0;
+  int _lastBlockFrictionHysteresisDeactivatedNonTwoPointContactCount = 0;
+  int _lastBlockFrictionHysteresisDeactivatedPairDroppedCount = 0;
   int _totalBlockNormalHysteresisActivationCount = 0;
   int _totalBlockNormalHysteresisDeactivationCount = 0;
   int _totalBlockFrictionHysteresisActivationCount = 0;
@@ -722,9 +726,13 @@ class PhysicsEngine {
     _lastBlockNormalHysteresisActivatedByThresholdCount = 0;
     _lastBlockNormalHysteresisDeactivatedBelowDisableCount = 0;
     _lastBlockNormalHysteresisDeactivatedNonTwoPointCount = 0;
+    _lastBlockNormalHysteresisDeactivatedNonTwoPointContactCount = 0;
+    _lastBlockNormalHysteresisDeactivatedPairDroppedCount = 0;
     _lastBlockFrictionHysteresisActivatedByThresholdCount = 0;
     _lastBlockFrictionHysteresisDeactivatedBelowDisableCount = 0;
     _lastBlockFrictionHysteresisDeactivatedNonTwoPointCount = 0;
+    _lastBlockFrictionHysteresisDeactivatedNonTwoPointContactCount = 0;
+    _lastBlockFrictionHysteresisDeactivatedPairDroppedCount = 0;
 
     // Reset sensor buffers for this step.
     _sensorBeginBuffer.clear();
@@ -836,6 +844,7 @@ class PhysicsEngine {
             _lastBlockNormalHysteresisDeactivatedBelowDisableCount++;
           } else {
             _lastBlockNormalHysteresisDeactivatedNonTwoPointCount++;
+            _lastBlockNormalHysteresisDeactivatedNonTwoPointContactCount++;
           }
         }
         if (!wasBlockFrictionSolveActive && blockFrictionSolveAllowed) {
@@ -847,6 +856,7 @@ class PhysicsEngine {
             _lastBlockFrictionHysteresisDeactivatedBelowDisableCount++;
           } else {
             _lastBlockFrictionHysteresisDeactivatedNonTwoPointCount++;
+            _lastBlockFrictionHysteresisDeactivatedNonTwoPointContactCount++;
           }
         }
 
@@ -968,10 +978,12 @@ class PhysicsEngine {
         if (state.normalActive) {
           _lastBlockNormalHysteresisDeactivationCount++;
           _lastBlockNormalHysteresisDeactivatedNonTwoPointCount++;
+          _lastBlockNormalHysteresisDeactivatedPairDroppedCount++;
         }
         if (state.frictionActive) {
           _lastBlockFrictionHysteresisDeactivationCount++;
           _lastBlockFrictionHysteresisDeactivatedNonTwoPointCount++;
+          _lastBlockFrictionHysteresisDeactivatedPairDroppedCount++;
         }
         stalePairs.add(pair);
       }
@@ -2307,9 +2319,13 @@ class PhysicsEngine {
     _lastBlockNormalHysteresisActivatedByThresholdCount = 0;
     _lastBlockNormalHysteresisDeactivatedBelowDisableCount = 0;
     _lastBlockNormalHysteresisDeactivatedNonTwoPointCount = 0;
+    _lastBlockNormalHysteresisDeactivatedNonTwoPointContactCount = 0;
+    _lastBlockNormalHysteresisDeactivatedPairDroppedCount = 0;
     _lastBlockFrictionHysteresisActivatedByThresholdCount = 0;
     _lastBlockFrictionHysteresisDeactivatedBelowDisableCount = 0;
     _lastBlockFrictionHysteresisDeactivatedNonTwoPointCount = 0;
+    _lastBlockFrictionHysteresisDeactivatedNonTwoPointContactCount = 0;
+    _lastBlockFrictionHysteresisDeactivatedPairDroppedCount = 0;
     _totalBlockNormalHysteresisActivationCount = 0;
     _totalBlockNormalHysteresisDeactivationCount = 0;
     _totalBlockFrictionHysteresisActivationCount = 0;
@@ -2807,6 +2823,10 @@ class PhysicsEngine {
         _lastBlockNormalHysteresisDeactivatedBelowDisableCount,
     'blockNormalHysteresisDeactivatedNonTwoPoint':
         _lastBlockNormalHysteresisDeactivatedNonTwoPointCount,
+    'blockNormalHysteresisDeactivatedNonTwoPointContact':
+        _lastBlockNormalHysteresisDeactivatedNonTwoPointContactCount,
+    'blockNormalHysteresisDeactivatedPairDropped':
+        _lastBlockNormalHysteresisDeactivatedPairDroppedCount,
     'blockFrictionHysteresisActivations':
         _lastBlockFrictionHysteresisActivationCount,
     'blockFrictionHysteresisDeactivations':
@@ -2817,6 +2837,10 @@ class PhysicsEngine {
         _lastBlockFrictionHysteresisDeactivatedBelowDisableCount,
     'blockFrictionHysteresisDeactivatedNonTwoPoint':
         _lastBlockFrictionHysteresisDeactivatedNonTwoPointCount,
+    'blockFrictionHysteresisDeactivatedNonTwoPointContact':
+        _lastBlockFrictionHysteresisDeactivatedNonTwoPointContactCount,
+    'blockFrictionHysteresisDeactivatedPairDropped':
+        _lastBlockFrictionHysteresisDeactivatedPairDroppedCount,
     'totalBlockNormalHysteresisActivations':
         _totalBlockNormalHysteresisActivationCount,
     'totalBlockNormalHysteresisDeactivations':

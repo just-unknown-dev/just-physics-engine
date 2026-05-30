@@ -1236,7 +1236,95 @@ void main() {
         equals(1),
       );
       expect(
+        engine.stats['blockNormalHysteresisDeactivatedNonTwoPointContact'],
+        equals(1),
+      );
+      expect(
+        engine.stats['blockNormalHysteresisDeactivatedPairDropped'],
+        equals(0),
+      );
+      expect(
         engine.stats['blockFrictionHysteresisDeactivatedNonTwoPoint'],
+        equals(1),
+      );
+      expect(
+        engine.stats['blockFrictionHysteresisDeactivatedNonTwoPointContact'],
+        equals(1),
+      );
+      expect(
+        engine.stats['blockFrictionHysteresisDeactivatedPairDropped'],
+        equals(0),
+      );
+
+      engine.dispose();
+    });
+
+    test('block solve hysteresis reports pair-dropped reset reason', () {
+      final engine = PhysicsEngine.pureDart(
+        experimentalContactTwoPointBlockNormalSolveEnabled: true,
+        experimentalContactTwoPointBlockFrictionSolveEnabled: true,
+        experimentalContactTwoPointBlockNormalSolveMinWarmStates: 2,
+        experimentalContactTwoPointBlockFrictionSolveMinWarmStates: 2,
+        experimentalContactTwoPointBlockNormalSolveDisableBelowWarmStates: 0,
+        experimentalContactTwoPointBlockFrictionSolveDisableBelowWarmStates: 0,
+        experimentalContactWarmStartManifoldSlots: 2,
+        experimentalContactVelocityIterations: 2,
+      )..initialize();
+      engine.setGravity(0, 0);
+
+      final a = PhysicsBody(
+        position: Vector2(0, 0),
+        shape: RectangleShape(40, 40),
+        velocity: Vector2(5, 3),
+        friction: 0.9,
+        useGravity: false,
+        drag: 0.0,
+      );
+      final b = PhysicsBody(
+        position: Vector2(30, 0),
+        shape: RectangleShape(40, 40),
+        velocity: Vector2(-5, -3),
+        friction: 0.9,
+        useGravity: false,
+        drag: 0.0,
+      );
+
+      engine.addBody(a);
+      engine.addBody(b);
+
+      engine.update(1.0 / 60.0);
+      a.velocity.setValues(5, 3);
+      b.velocity.setValues(-5, -3);
+      engine.update(1.0 / 60.0);
+      expect(engine.stats['resolvedBlockSolves'], greaterThan(0));
+      expect(engine.stats['resolvedBlockFrictionSolves'], greaterThan(0));
+
+      // Force pair removal after activation so stale-pair cleanup deactivates.
+      engine.removeBody(b);
+      engine.update(1.0 / 60.0);
+
+      expect(
+        engine.stats['blockNormalHysteresisDeactivatedNonTwoPoint'],
+        equals(1),
+      );
+      expect(
+        engine.stats['blockNormalHysteresisDeactivatedNonTwoPointContact'],
+        equals(0),
+      );
+      expect(
+        engine.stats['blockNormalHysteresisDeactivatedPairDropped'],
+        equals(1),
+      );
+      expect(
+        engine.stats['blockFrictionHysteresisDeactivatedNonTwoPoint'],
+        equals(1),
+      );
+      expect(
+        engine.stats['blockFrictionHysteresisDeactivatedNonTwoPointContact'],
+        equals(0),
+      );
+      expect(
+        engine.stats['blockFrictionHysteresisDeactivatedPairDropped'],
         equals(1),
       );
 
@@ -1510,6 +1598,12 @@ void main() {
           'blockNormalHysteresisDeactivatedNonTwoPoint':
               engine.stats['blockNormalHysteresisDeactivatedNonTwoPoint']
                   as int,
+          'blockNormalHysteresisDeactivatedNonTwoPointContact':
+              engine.stats['blockNormalHysteresisDeactivatedNonTwoPointContact']
+                  as int,
+          'blockNormalHysteresisDeactivatedPairDropped':
+              engine.stats['blockNormalHysteresisDeactivatedPairDropped']
+                  as int,
           'blockFrictionHysteresisActivations':
               engine.stats['blockFrictionHysteresisActivations'] as int,
           'blockFrictionHysteresisDeactivations':
@@ -1522,6 +1616,12 @@ void main() {
                   as int,
           'blockFrictionHysteresisDeactivatedNonTwoPoint':
               engine.stats['blockFrictionHysteresisDeactivatedNonTwoPoint']
+                  as int,
+          'blockFrictionHysteresisDeactivatedNonTwoPointContact':
+              engine.stats['blockFrictionHysteresisDeactivatedNonTwoPointContact']
+                  as int,
+          'blockFrictionHysteresisDeactivatedPairDropped':
+              engine.stats['blockFrictionHysteresisDeactivatedPairDropped']
                   as int,
           'totalBlockNormalHysteresisActivations':
               engine.stats['totalBlockNormalHysteresisActivations'] as int,

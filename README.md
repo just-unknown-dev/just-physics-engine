@@ -184,6 +184,7 @@ class PhysicsDebugPainter extends CustomPainter {
 - Runtime diagnostics include hysteresis-active contact counts: `blockNormalHysteresisActiveContacts` and `blockFrictionHysteresisActiveContacts`.
 - Runtime diagnostics also expose per-step hysteresis transitions: `blockNormalHysteresisActivations`, `blockNormalHysteresisDeactivations`, `blockFrictionHysteresisActivations`, and `blockFrictionHysteresisDeactivations`.
 - Reason-level transition diagnostics are also available: `blockNormalHysteresisActivatedByThreshold`, `blockNormalHysteresisDeactivatedBelowDisable`, `blockNormalHysteresisDeactivatedNonTwoPoint`, `blockFrictionHysteresisActivatedByThreshold`, `blockFrictionHysteresisDeactivatedBelowDisable`, and `blockFrictionHysteresisDeactivatedNonTwoPoint`.
+- Phase 3 observability splits non-two-point deactivation reasons into topology-change versus stale-pair cleanup: `blockNormalHysteresisDeactivatedNonTwoPointContact`, `blockNormalHysteresisDeactivatedPairDropped`, `blockFrictionHysteresisDeactivatedNonTwoPointContact`, and `blockFrictionHysteresisDeactivatedPairDropped`.
 - Run-level cumulative transition diagnostics are available as `totalBlockNormalHysteresisActivations`, `totalBlockNormalHysteresisDeactivations`, `totalBlockFrictionHysteresisActivations`, and `totalBlockFrictionHysteresisDeactivations`.
 - Optional rolling per-step transition rates (`rollingBlockNormalHysteresisActivationRate`, `rollingBlockNormalHysteresisDeactivationRate`, `rollingBlockFrictionHysteresisActivationRate`, `rollingBlockFrictionHysteresisDeactivationRate`) are computed over `experimentalContactBlockHysteresisTransitionRateWindowSteps`.
 - Warm-start pre-injection now replays per-point angular preload at cached anchors and reports `warmStartAngularPreloadCount` in stats for off-center contact continuity diagnostics.
@@ -244,6 +245,7 @@ The parity suite auto-skips strict backend comparison when Box2D is not active.
 
 - Architecture: [ARCHITECTURE.md](ARCHITECTURE.md)
 - API Reference: [API.md](API.md)
+- Phase Tracking: [PHASES.md](PHASES.md)
 - Changelog: [CHANGELOG.md](CHANGELOG.md)
 - Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
 - Code of Conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
