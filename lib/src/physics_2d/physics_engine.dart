@@ -8,8 +8,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:just_dart/just_dart.dart';
 import 'ray_2d.dart';
-import '../box2d/_box2d_engine_native.dart'
-    if (dart.library.html) '../box2d/_box2d_engine_stub.dart';
+import '../box2d/_box2d_engine_stub.dart'
+    if (dart.library.io) '../box2d/_box2d_engine_native.dart';
 
 part 'collision_manifold.dart';
 part 'collision_shapes.dart';
@@ -559,11 +559,7 @@ class PhysicsEngine {
     return j;
   }
 
-  JointConstraint addPrismaticJoint(
-    PhysicsBody a,
-    PhysicsBody b,
-    Offset axis,
-  ) {
+  JointConstraint addPrismaticJoint(PhysicsBody a, PhysicsBody b, Offset axis) {
     final j = PrismaticJoint(bodyA: a, bodyB: b, axis: axis);
     addJoint(j);
     return j;

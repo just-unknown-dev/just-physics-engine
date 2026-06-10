@@ -1,9 +1,23 @@
 name: just_physics_engine
 description: "Standalone 2D/3D physics engine for Flutter — pure-Dart fallback + native Box2D v3.0 FFI backend."
-version: 1.2.0
+version: 1.2.1
 homepage: https://github.com/just-unknown-dev/just-physics-engine
 repository: https://github.com/just-unknown-dev/just-physics-engine
 issue_tracker: https://github.com/just-unknown-dev/just-physics-engine/issues
+
+platforms:
+  android:
+  ios:
+  linux:
+  macos:
+  web:
+  windows:
+
+topics:
+  - physics
+  - game-engine
+  - flutter
+  - wasm
 
 environment:
   sdk: ^3.11.0
