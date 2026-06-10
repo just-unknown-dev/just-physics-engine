@@ -1,3 +1,22 @@
+## 1.2.1 - 2026-06-11
+
+Metadata and compatibility patch release focused on clearer pub.dev platform signaling and safer WebAssembly target behavior.
+
+### Added
+
+- Explicit pub.dev platform declarations in package metadata for Android, iOS, Linux, macOS, Web, and Windows.
+- Pub.dev topic tags to improve discoverability, including `wasm`.
+
+### Changed
+
+- Updated conditional backend import routing so only `dart.library.io` targets resolve to the native Box2D FFI path.
+- Non-IO targets (including WASM and Web) now consistently resolve to the pure-Dart/stub Box2D-compatible surface.
+- README compatibility section now reflects the current package/version constraints and platform/backend support matrix.
+
+### Notes
+
+- This release does not introduce physics behavior changes; it improves package metadata accuracy and cross-target compatibility guarantees.
+
 ## 1.2.0 - 2026-05-27
 
 Feature release focused on richer 2D authoring/query APIs, compound bodies, and broader Box2D parity for joints and sensors.

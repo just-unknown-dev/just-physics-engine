@@ -29,7 +29,7 @@ Use the package from pub.dev:
 
 ```yaml
 dependencies:
-	just_physics_engine: ^1.2.0
+	just_physics_engine: ^1.2.1
 ```
 
 Or add it with Flutter tooling:
@@ -171,9 +171,12 @@ class PhysicsDebugPainter extends CustomPainter {
 
 ## Compatibility
 
-- Version `0.1.0`
+- Version `1.2.1`
 - Dart SDK: `^3.11.0`
-- Flutter: `>=1.17.0`
+- Flutter: `>=3.27.0`
+- Platforms: Android, iOS, Linux, macOS, Web, Windows
+- Native platforms use the Box2D FFI backend when available.
+- Web and WASM targets use the pure-Dart backend.
 
 ## Development
 
