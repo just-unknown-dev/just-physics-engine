@@ -100,20 +100,65 @@ extern "C" void b2w_finalizer_body(void* token) {
 
 // ── World management ──────────────────────────────────────────────────────────
 
+// This package's gameplay units are centimetres (see box2d_wrapper.h header
+// comment and Box2DPhysicsEngine's default gravityY = 981, i.e. 9.81 m/s² at
+// 1 unit = 1 cm), but Box2D's tuning constants — b2DefaultWorldDef's
+// maximumLinearSpeed ("400 m/s, faster than the speed of sound"),
+// b2DefaultBodyDef's sleepThreshold, restitutionThreshold, contactSpeed, etc.
+// — are all derived from b2GetLengthUnitsPerMeter(), which defaults to 1.0
+// (i.e. "1 simulation unit = 1 meter"). Left unset, maximumLinearSpeed
+// resolves to 400 *centimetres*/s (4 m/s), a safety clamp meant to be
+// effectively unbounded that instead silently caps any reasonably fast body
+// (a falling object reaches it in well under a second). Scale it once, up
+// front, to match: 1 meter = 100 of our centimetre units.
+static std::once_flag g_lengthUnitsOnce;
+static void _ensureLengthUnitsConfigured() {
+    std::call_once(g_lengthUnitsOnce, [] { b2SetLengthUnitsPerMeter(100.0f); });
+}
+
+// Box2D's built-in default restitution mixing is max(restitutionA,
+// restitutionB) (see b2RestitutionCallback docs in box2d.h). The pure-Dart
+// fallback engine (PhysicsEngine._resolveCollision) mixes with
+// min(a.restitution, b.restitution) instead, and that's the behavior
+// documented to engine users (see the Bounciness demo's code sample:
+// "Resolution uses: min(a.restitution, b.restitution)"). Left on Box2D's
+// default, a perfectly-restitutive floor (restitution 1.0, used so "the
+// ball governs bounce" under min-mixing) instead forces every contact to
+// max(1.0, ball) == 1.0 — every ball bounces identically no matter what
+// restitution it was given. Install a matching min-mixing callback so both
+// backends agree.
+static float _minRestitutionCallback(float restitutionA, uint64_t,
+                                      float restitutionB, uint64_t) {
+    return restitutionA < restitutionB ? restitutionA : restitutionB;
+}
+
 extern "C" int64_t b2w_createWorld(float gx, float gy, int32_t numThreads) {
+    _ensureLengthUnitsConfigured();
+
     if (numThreads <= 0) {
+        // hardware_concurrency - 1 spins up one OS thread per core for every
+        // world (e.g. 23 on a 24-core machine). Each Box2DWorld gets its own
+        // dedicated ThreadPool (see b2w_destroyWorld), so on higher core-count
+        // devices this both wastes threads competing with rendering/audio for
+        // one physics world and, under rapid create/destroy churn (tests,
+        // hot-reload), risks exhausting OS thread/handle limits. Cap the
+        // auto-detected default; callers who want more can still pass an
+        // explicit numThreads.
         unsigned hw = std::thread::hardware_concurrency();
-        numThreads  = (int32_t)(hw > 1 ? hw - 1 : 1);
+        unsigned auto_ = hw > 1 ? hw - 1 : 1;
+        constexpr unsigned kMaxAutoThreads = 4;
+        numThreads = (int32_t)(auto_ < kMaxAutoThreads ? auto_ : kMaxAutoThreads);
     }
 
     ThreadPool* pool = new ThreadPool(numThreads);
 
-    b2WorldDef def      = b2DefaultWorldDef();
-    def.gravity         = {gx, gy};
-    def.workerCount     = pool->workerCount();
-    def.userTaskContext = pool;
-    def.enqueueTask     = s_enqueueTask;
-    def.finishTask      = s_finishTask;
+    b2WorldDef def          = b2DefaultWorldDef();
+    def.gravity             = {gx, gy};
+    def.workerCount         = pool->workerCount();
+    def.userTaskContext     = pool;
+    def.enqueueTask         = s_enqueueTask;
+    def.finishTask          = s_finishTask;
+    def.restitutionCallback = _minRestitutionCallback;
 
     b2WorldId id = b2CreateWorld(&def);
     int64_t   h  = packWorldId(id);
@@ -394,7 +439,7 @@ extern "C" void b2w_bulkExtractTransforms(const int64_t* handles,
         slot[2] = b2Rot_GetAngle(t.q);
         slot[3] = v.x;
         slot[4] = v.y;
-        slot[5] = 0.0f;
+        slot[5] = b2Body_IsAwake(bodyId) ? 1.0f : 0.0f;
     }
 }
 
@@ -416,8 +461,19 @@ extern "C" void b2w_getContactBeginEvent(int64_t wh, int32_t index,
     const b2ContactBeginTouchEvent& ev = it->second.lastContacts.beginEvents[index];
     *outBodyA = packBodyId(b2Shape_GetBody(ev.shapeIdA));
     *outBodyB = packBodyId(b2Shape_GetBody(ev.shapeIdB));
+
+    // Manifold normal points from shapeA to shapeB (world space). The contact
+    // may already be gone (e.g. a shape was destroyed this same step) — guard
+    // with b2Contact_IsValid per the box2d.h contract on b2ContactId.
     *outNx = 0.0f;
     *outNy = 0.0f;
+    if (b2Contact_IsValid(ev.contactId)) {
+        b2ContactData data = b2Contact_GetData(ev.contactId);
+        if (data.manifold.pointCount > 0) {
+            *outNx = data.manifold.normal.x;
+            *outNy = data.manifold.normal.y;
+        }
+    }
 }
 
 extern "C" int32_t b2w_getContactEndCount(int64_t wh) {
@@ -516,6 +572,26 @@ extern "C" void b2w_setBodyFilter(int64_t bh,
 
 extern "C" void b2w_setBodyBullet(int64_t bh, int32_t isBullet) {
     b2Body_SetBullet(unpackBodyId(bh), isBullet != 0);
+}
+
+extern "C" void b2w_setBodyGravityScale(int64_t bh, float gravityScale) {
+    b2Body_SetGravityScale(unpackBodyId(bh), gravityScale);
+}
+
+extern "C" void b2w_setBodyAwake(int64_t bh, int32_t awake) {
+    b2Body_SetAwake(unpackBodyId(bh), awake != 0);
+}
+
+extern "C" void b2w_setBodyMass(int64_t bh, float mass) {
+    b2BodyId id = unpackBodyId(bh);
+    b2MassData data = b2Body_GetMassData(id);
+    if (data.mass > 0.0f) {
+        // Keep the mass/inertia ratio (and therefore angular response)
+        // consistent with the shape-derived values Box2D just computed.
+        data.rotationalInertia *= mass / data.mass;
+    }
+    data.mass = mass;
+    b2Body_SetMassData(id, data);
 }
 
 // ── Body movement events ──────────────────────────────────────────────────────
@@ -674,6 +750,19 @@ extern "C" void b2w_destroyJoint(int64_t jh) {
 
 // ── Joint configuration ───────────────────────────────────────────────────────
 
+// Box2D's joint motor setters (b2*Joint_EnableMotor/SetMotor*) never wake the
+// jointed bodies themselves — they just write into the joint's solver state.
+// A body that's fallen asleep (Box2D's default ~0.5s time-to-sleep after
+// settling, e.g. a car at rest on its suspension) has its island skipped by
+// the solver entirely, so an asleep body silently never sees the motor
+// torque: SetMotorSpeed/EnableMotor "work" but produce no motion until
+// something else disturbs the body. Call this whenever a motor is (re-)
+// enabled so driving input reliably wakes a resting body.
+static void _wakeJointBodies(b2JointId id) {
+    b2Body_SetAwake(b2Joint_GetBodyA(id), true);
+    b2Body_SetAwake(b2Joint_GetBodyB(id), true);
+}
+
 extern "C" void b2w_setRevoluteLimits(int64_t jh,
                                        float lower, float upper, int32_t enable) {
     b2JointId id = unpackJointId(jh);
@@ -687,6 +776,7 @@ extern "C" void b2w_setRevoluteMotor(int64_t jh,
     b2RevoluteJoint_SetMotorSpeed(id, speed);
     b2RevoluteJoint_SetMaxMotorTorque(id, maxTorque);
     b2RevoluteJoint_EnableMotor(id, enable != 0);
+    if (enable != 0) _wakeJointBodies(id);
 }
 
 extern "C" void b2w_setPrismaticLimits(int64_t jh,
@@ -702,6 +792,7 @@ extern "C" void b2w_setPrismaticMotor(int64_t jh,
     b2PrismaticJoint_SetMotorSpeed(id, speed);
     b2PrismaticJoint_SetMaxMotorForce(id, maxForce);
     b2PrismaticJoint_EnableMotor(id, enable != 0);
+    if (enable != 0) _wakeJointBodies(id);
 }
 
 extern "C" void b2w_setDistanceLimits(int64_t jh, float minLen, float maxLen) {
@@ -733,6 +824,7 @@ extern "C" void b2w_setWheelMotor(int64_t jh,
     b2WheelJoint_SetMotorSpeed(id, speed);
     b2WheelJoint_SetMaxMotorTorque(id, maxTorque);
     b2WheelJoint_EnableMotor(id, enable != 0);
+    if (enable != 0) _wakeJointBodies(id);
 }
 
 // ── Joint queries ─────────────────────────────────────────────────────────────

@@ -37,7 +37,8 @@ class CircleShape extends CollisionShape {
       }
     } else if (other is PolygonShape ||
         other is CapsuleShape ||
-        other is SegmentShape) {
+        other is SegmentShape ||
+        other is ChainShape) {
       // Delegate to the other shape and flip the normal so it points A→B.
       final m = other.getManifold(posB, this, posA);
       if (!m.isColliding) return CollisionManifold.empty();
@@ -69,7 +70,19 @@ class PolygonShape extends CollisionShape {
     CollisionShape other,
     Offset posB,
   ) {
-    if (other is PolygonShape) {
+    if (other is RoundedPolygonShape) {
+      // Check this before the plain PolygonShape branch below — RoundedPolygonShape
+      // extends PolygonShape, so `other is PolygonShape` would otherwise match
+      // here first and silently ignore the other body's cornerRadius. Delegate
+      // to the rounded polygon's own logic and flip the normal so it points A→B.
+      final m = other.getManifold(posB, this, posA);
+      if (!m.isColliding) return CollisionManifold.empty();
+      return CollisionManifold(
+        isColliding: true,
+        normal: -m.normal,
+        penetration: m.penetration,
+      );
+    } else if (other is PolygonShape) {
       return _satPolygonVsPolygon(posA, this, posB, other);
     } else if (other is CircleShape) {
       // Invert the result so normal points A→B.
@@ -89,6 +102,16 @@ class PolygonShape extends CollisionShape {
         radius: other.thickness,
       );
       return _satPolygonVsCapsule(posA, this, posB, cap);
+    } else if (other is ChainShape) {
+      // Delegate to the chain (which degrades to per-segment capsule tests)
+      // and flip the normal so it points A→B.
+      final m = other.getManifold(posB, this, posA);
+      if (!m.isColliding) return CollisionManifold.empty();
+      return CollisionManifold(
+        isColliding: true,
+        normal: -m.normal,
+        penetration: m.penetration,
+      );
     }
     return CollisionManifold.empty();
   }
@@ -482,6 +505,16 @@ class CapsuleShape extends CollisionShape {
         normal: -m.normal,
         penetration: m.penetration,
       );
+    } else if (other is ChainShape) {
+      // Delegate to the chain (which degrades to per-segment capsule tests)
+      // and flip the normal so it points A→B.
+      final m = other.getManifold(posB, this, posA);
+      if (!m.isColliding) return CollisionManifold.empty();
+      return CollisionManifold(
+        isColliding: true,
+        normal: -m.normal,
+        penetration: m.penetration,
+      );
     }
     return CollisionManifold.empty();
   }
@@ -762,6 +795,16 @@ class RoundedPolygonShape extends PolygonShape {
         radius: other.thickness,
       );
       return _satPolygonVsCapsule(posA, this, posB, cap);
+    } else if (other is ChainShape) {
+      // Delegate to the chain (which degrades to per-segment capsule tests)
+      // and flip the normal so it points A→B.
+      final m = other.getManifold(posB, this, posA);
+      if (!m.isColliding) return CollisionManifold.empty();
+      return CollisionManifold(
+        isColliding: true,
+        normal: -m.normal,
+        penetration: m.penetration,
+      );
     }
     return CollisionManifold.empty();
   }

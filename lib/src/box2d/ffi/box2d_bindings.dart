@@ -810,6 +810,43 @@ class Box2DBindings {
   late final _b2w_setBodyBullet = _b2w_setBodyBulletPtr
       .asFunction<void Function(int, int)>();
 
+  /// Scale gravity's effect on a body. 1.0 = normal, 0.0 = unaffected.
+  void b2w_setBodyGravityScale(int bodyHandle, double gravityScale) {
+    return _b2w_setBodyGravityScale(bodyHandle, gravityScale);
+  }
+
+  late final _b2w_setBodyGravityScalePtr =
+      _lookup<
+        ffi.NativeFunction<ffi.Void Function(ffi.Int64, ffi.Float)>
+      >('b2w_setBodyGravityScale');
+  late final _b2w_setBodyGravityScale = _b2w_setBodyGravityScalePtr
+      .asFunction<void Function(int, double)>();
+
+  /// Force a body's awake/asleep state at creation time.
+  void b2w_setBodyAwake(int bodyHandle, int awake) {
+    return _b2w_setBodyAwake(bodyHandle, awake);
+  }
+
+  late final _b2w_setBodyAwakePtr =
+      _lookup<
+        ffi.NativeFunction<ffi.Void Function(ffi.Int64, ffi.Int32)>
+      >('b2w_setBodyAwake');
+  late final _b2w_setBodyAwake = _b2w_setBodyAwakePtr
+      .asFunction<void Function(int, int)>();
+
+  /// Override a body's simulated mass (replaces Box2D's density-derived
+  /// value). Call after all shape fixtures are attached.
+  void b2w_setBodyMass(int bodyHandle, double mass) {
+    return _b2w_setBodyMass(bodyHandle, mass);
+  }
+
+  late final _b2w_setBodyMassPtr =
+      _lookup<
+        ffi.NativeFunction<ffi.Void Function(ffi.Int64, ffi.Float)>
+      >('b2w_setBodyMass');
+  late final _b2w_setBodyMass = _b2w_setBodyMassPtr
+      .asFunction<void Function(int, double)>();
+
   // ── Joint creation ────────────────────────────────────────────────────────
 
   int b2w_createRevoluteJoint(

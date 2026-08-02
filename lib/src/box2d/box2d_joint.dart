@@ -1,6 +1,9 @@
 /// Box2D native joint handle wrapper.
 library;
 
+import 'dart:ffi';
+
+import 'package:ffi/ffi.dart';
 import 'package:flutter/material.dart' show Offset;
 
 import '../physics_2d/physics_engine.dart';
@@ -101,7 +104,16 @@ class Box2DJoint extends JointConstraint {
     if (_destroyed) return Offset.zero;
     // Dart doesn't support stack-allocated out-params; use a small allocation.
     // This is an infrequent query call — allocation cost is acceptable.
-    return Offset(0, 0); // placeholder; use calloc pattern if needed
+    final outFx = calloc<Float>();
+    final outFy = calloc<Float>();
+    try {
+      box2d.b2w_getJointReactionForce(_handle, outFx, outFy);
+      return Offset(outFx.value, outFy.value);
+    } finally {
+      calloc
+        ..free(outFx)
+        ..free(outFy);
+    }
   }
 
   double get reactionTorque {

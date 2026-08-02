@@ -56,20 +56,49 @@ class PhysicsBody {
   /// Check collisions
   bool checkCollision;
 
-  /// Object Sleeping: if true, physics integration happens
+  /// Object Sleeping: if true, physics integration happens.
+  ///
+  /// On the Box2D backend this reflects Box2D's own internal sleep state
+  /// (synced back every step) and can be set to start a body asleep, but
+  /// the two thresholds below cannot influence Box2D's sleep decision — see
+  /// their docs.
   bool isAwake;
 
-  /// Object Sleeping: how long this body has been below movement threshold
+  /// Object Sleeping: how long this body has been below movement threshold.
+  ///
+  /// Pure-Dart engine only; unused on the Box2D backend, which tracks its
+  /// own internal sleep timer.
   double sleepTimer;
 
-  /// Object Sleeping: max velocity squared to be considered for sleeping
+  /// Object Sleeping: max velocity squared to be considered for sleeping.
+  ///
+  /// Pure-Dart engine only. Box2D backend: not read from this field — Box2D
+  /// uses its own fixed per-body threshold (~5 units/s at this package's
+  /// centimetre scale) with no public per-body override.
   double sleepVelocityThreshold;
 
-  /// Object Sleeping: amount of time to stay below threshold before sleeping
+  /// Object Sleeping: amount of time to stay below threshold before sleeping.
+  ///
+  /// Pure-Dart engine only. Box2D backend: not read from this field — Box2D
+  /// uses a fixed internal 0.5s time-to-sleep (`B2_TIME_TO_SLEEP`) with no
+  /// public API to override it.
   double sleepTimeThreshold;
 
   /// Sensor mode: if true this body detects overlaps but does not resolve them.
   bool isSensor;
+
+  /// One-way / pass-through platform flag.
+  ///
+  /// When true, [PhysicsEngine] skips resolving contacts against this body
+  /// while the other (dynamic) side is moving upward (`velocity.y <= 0`) —
+  /// only resolves when landing on top from above.
+  ///
+  /// Pure-Dart engine only: no native hook exists yet on the Box2D FFI
+  /// backend (Box2D has no first-class one-way-platform primitive; it needs
+  /// a native PreSolve contact filter). [Box2DPhysicsEngine] ignores this
+  /// field — a documented gap, not a regression, since nothing using that
+  /// backend relied on one-way platforms before this field existed.
+  bool isOneWay;
 
   /// Bullet mode: enables Continuous Collision Detection (CCD) for fast-moving
   /// bodies so they don't tunnel through thin static geometry.
@@ -117,6 +146,7 @@ class PhysicsBody {
     this.sleepVelocityThreshold = 5.0,
     this.sleepTimeThreshold = 0.5,
     this.isSensor = false,
+    this.isOneWay = false,
     this.isBullet = false,
     List<CollisionShape>? additionalShapes,
     this.categoryBits = 0x0001,

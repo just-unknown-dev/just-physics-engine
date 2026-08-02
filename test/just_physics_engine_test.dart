@@ -133,9 +133,19 @@ void main() {
         sleepVelocityThreshold: 0.0,
       );
       engine.addBody(body);
-      body.applyForce(Vector2(100, 0));
-      engine.update(1.0);
-      // v = F/m × dt = 100/1 × 1 = 100; x ≈ 100 (semi-implicit euler)
+      // Apply the force every step and simulate 1 second in small steps —
+      // a single large update(1.0) call only fires a handful of fixed steps
+      // on the Box2D backend due to its spiral-of-death accumulator cap (see
+      // "falls under gravity" above), and Box2D clears applied forces after
+      // each internal step, so the force must be re-applied every frame just
+      // like a sustained force (thrust, wind) would be in a real game loop.
+      const steps = 60;
+      const dt = 1.0 / steps;
+      for (int i = 0; i < steps; i++) {
+        body.applyForce(Vector2(100, 0));
+        engine.update(dt);
+      }
+      // v = F/m × dt × steps = 100/1 × 1 = 100; x ≈ 100 (semi-implicit euler)
       expect(body.velocity.x, greaterThan(50));
       expect(body.position.x, greaterThan(50));
       engine.dispose();
@@ -156,8 +166,12 @@ void main() {
         sleepTimeThreshold: 0.1,
       );
       engine.addBody(body);
-      // Simulate until sleep triggers.
-      for (int i = 0; i < 20; i++) {
+      // Simulate until sleep triggers. sleepTimeThreshold is a pure-Dart-only
+      // concept — Box2D's own time-to-sleep is a fixed 0.5s internal
+      // constant (B2_TIME_TO_SLEEP) not exposed through its public API, so
+      // on the native backend this must simulate past 0.5s regardless of
+      // sleepTimeThreshold above.
+      for (int i = 0; i < 45; i++) {
         engine.update(0.016);
       }
       expect(body.isAwake, isFalse);

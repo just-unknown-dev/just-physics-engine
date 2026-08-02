@@ -288,6 +288,106 @@ class PrismaticJoint extends JointConstraint {
   }
 }
 
+// ── Wheel Joint ────────────────────────────────────────────────────────────
+
+/// Constrains bodyB to slide along a suspension axis relative to bodyA
+/// (like [PrismaticJoint]) with a soft spring instead of hard limits, plus an
+/// optional rotational motor that drives bodyB's spin — mirroring Box2D's
+/// wheel joint, which uses a translational spring for suspension and a
+/// rotational motor for wheel drive (not a linear motor along the axis).
+///
+/// This is a simplified position-constraint implementation; for high-accuracy
+/// wheel joints, use the Box2D FFI backend.
+class WheelJoint extends JointConstraint {
+  final PhysicsBody bodyA;
+  final PhysicsBody bodyB;
+
+  /// Unit vector (world-space) defining the suspension axis.
+  final double _axisX;
+  final double _axisY;
+
+  /// Suspension spring stiffness. 0 = no spring force (axis is unconstrained
+  /// beyond the perpendicular lock — matches Box2D's default disabled spring).
+  double springStiffness = 0.0;
+  double springDamping = 0.7;
+
+  bool motorEnabled = false;
+  double motorSpeed = 0.0;
+  double maxMotorTorque = 0.0;
+
+  WheelJoint({
+    required this.bodyA,
+    required this.bodyB,
+    required Offset axis,
+  })  : _axisX = axis.dx,
+        _axisY = axis.dy,
+        super(JointType.wheel);
+
+  /// Set the suspension spring (matches [Box2DJoint.setWheelSpring] for a
+  /// consistent API across backends).
+  void setWheelSpring(double stiffness, double damping) {
+    springStiffness = stiffness;
+    springDamping = damping;
+  }
+
+  /// Set the rotational drive motor (matches [Box2DJoint.setWheelMotor]).
+  void setWheelMotor(double speed, double maxTorque, {bool enable = true}) {
+    motorSpeed = speed;
+    maxMotorTorque = maxTorque;
+    motorEnabled = enable;
+  }
+
+  @override
+  void applyConstraint(double dt) {
+    final totalInvMass = bodyA.inverseMass + bodyB.inverseMass;
+    if (totalInvMass < 1e-10) return;
+
+    // Perpendicular axis: rigidly constrain off-axis relative displacement so
+    // bodyB stays on the suspension line through bodyA (like PrismaticJoint).
+    final perpX = -_axisY;
+    final perpY = _axisX;
+
+    final dx = bodyB.position.x - bodyA.position.x;
+    final dy = bodyB.position.y - bodyA.position.y;
+    final perpErr = dx * perpX + dy * perpY;
+
+    const baumgarte = 0.3;
+    final correction = perpErr * baumgarte / totalInvMass;
+    bodyA.position.x += perpX * correction * bodyA.inverseMass;
+    bodyA.position.y += perpY * correction * bodyA.inverseMass;
+    bodyB.position.x -= perpX * correction * bodyB.inverseMass;
+    bodyB.position.y -= perpY * correction * bodyB.inverseMass;
+
+    // Suspension spring along the axis — pulls bodyB back toward bodyA's
+    // anchor (zero axis displacement) with damping, like a shock absorber.
+    if (springStiffness > 0) {
+      final slide = dx * _axisX + dy * _axisY;
+      final relVel = (bodyB.velocity.x - bodyA.velocity.x) * _axisX +
+          (bodyB.velocity.y - bodyA.velocity.y) * _axisY;
+      final springForce = -springStiffness * slide;
+      final dampForce = -springDamping * relVel;
+      final impulse = (springForce + dampForce) * dt / totalInvMass;
+      bodyA.velocity.x -= _axisX * impulse * bodyA.inverseMass;
+      bodyA.velocity.y -= _axisY * impulse * bodyA.inverseMass;
+      bodyB.velocity.x += _axisX * impulse * bodyB.inverseMass;
+      bodyB.velocity.y += _axisY * impulse * bodyB.inverseMass;
+    }
+
+    // Rotational drive motor — spins bodyB (the wheel) relative to bodyA
+    // (the chassis), matching Box2D's wheel-joint motor semantics.
+    if (motorEnabled) {
+      final relAngVel = bodyB.angularVelocity - bodyA.angularVelocity;
+      var torque = maxMotorTorque * (motorSpeed - relAngVel).clamp(-1.0, 1.0);
+      final inertiaSum = bodyA.inverseInertia + bodyB.inverseInertia;
+      if (inertiaSum > 1e-10) {
+        torque = torque.clamp(-maxMotorTorque, maxMotorTorque);
+        bodyA.angularVelocity -= torque * bodyA.inverseInertia * dt;
+        bodyB.angularVelocity += torque * bodyB.inverseInertia * dt;
+      }
+    }
+  }
+}
+
 // ── Revolute Joint ─────────────────────────────────────────────────────────
 
 /// Constrains two bodies to rotate around a shared world-space anchor point.
@@ -349,6 +449,31 @@ class RevoluteJoint extends JointConstraint {
     bodyA.position.y -= corrY * bodyA.inverseMass;
     bodyB.position.x += corrX * bodyB.inverseMass;
     bodyB.position.y += corrY * bodyB.inverseMass;
+
+    // Limit: clamp the relative angle between bodyA and bodyB.
+    if (limitEnabled) {
+      final relAngle = bodyB.angle - bodyA.angle;
+      double angleErr = 0.0;
+      if (relAngle < lowerLimit) angleErr = relAngle - lowerLimit;
+      if (relAngle > upperLimit) angleErr = relAngle - upperLimit;
+      final inertiaSum = bodyA.inverseInertia + bodyB.inverseInertia;
+      if (angleErr.abs() > 1e-6 && inertiaSum > 1e-10) {
+        const baumgarteAngle = 0.3;
+        final angleCorr = angleErr * baumgarteAngle / inertiaSum;
+        bodyA.angle += angleCorr * bodyA.inverseInertia;
+        bodyB.angle -= angleCorr * bodyB.inverseInertia;
+
+        // Kill relative angular velocity driving further past the limit.
+        final relAngVel = bodyB.angularVelocity - bodyA.angularVelocity;
+        final pastLower = relAngle < lowerLimit && relAngVel < 0;
+        final pastUpper = relAngle > upperLimit && relAngVel > 0;
+        if (pastLower || pastUpper) {
+          final velImp = relAngVel / inertiaSum;
+          bodyA.angularVelocity += velImp * bodyA.inverseInertia;
+          bodyB.angularVelocity -= velImp * bodyB.inverseInertia;
+        }
+      }
+    }
 
     // Motor torque
     if (motorEnabled) {

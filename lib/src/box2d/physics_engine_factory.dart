@@ -1,6 +1,6 @@
 import '../physics_2d/physics_engine.dart';
-import '_box2d_engine_native.dart'
-    if (dart.library.html) '_box2d_engine_stub.dart';
+import '_box2d_engine_stub.dart'
+    if (dart.library.io) '_box2d_engine_native.dart';
 
 /// Platform-conditional factory for the physics engine backend.
 ///

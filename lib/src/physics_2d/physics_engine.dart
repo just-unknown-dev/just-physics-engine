@@ -56,6 +56,14 @@ class PhysicsEngine {
   final List<BodyPair> _sensorBeginBuffer = [];
   final List<BodyPair> _sensorEndBuffer = [];
 
+  // ── Solid-contact state ───────────────────────────────────────────────────
+  // Tracks which non-sensor pairs are currently resolved-colliding, mirroring
+  // the sensor tracking above so callers get a uniform begin/end poll API
+  // regardless of whether a pair is a sensor or a solid contact.
+  final Set<BodyPair> _activeContactPairs = {};
+  final List<(BodyPair pair, double nx, double ny)> _contactBeginBuffer = [];
+  final List<BodyPair> _contactEndBuffer = [];
+
   /// Initialize the physics engine
   void initialize() {
     debugPrint('Physics Engine initialized');
@@ -206,6 +214,12 @@ class PhysicsEngine {
     final previousSensorPairs = Set<BodyPair>.from(_activeSensorPairs);
     final currentSensorPairs = <BodyPair>{};
 
+    // Reset contact buffers for this step.
+    _contactBeginBuffer.clear();
+    _contactEndBuffer.clear();
+    final previousContactPairs = Set<BodyPair>.from(_activeContactPairs);
+    final currentContactPairs = <BodyPair>{};
+
     for (final pair in potentialPairs) {
       final bodyA = pair.a;
       final bodyB = pair.b;
@@ -238,10 +252,28 @@ class PhysicsEngine {
         if (!previousSensorPairs.contains(pair)) {
           _sensorBeginBuffer.add(pair);
         }
-      } else {
-        _lastResolvedCollisionCount++;
-        _resolveCollision(bodyA, bodyB, best);
+        continue;
       }
+
+      // One-way / pass-through platforms: skip resolution while the dynamic
+      // side of the pair is moving upward (velocity.y <= 0), so it can pass
+      // through from below and only lands when moving downward onto it.
+      // Mirrors the pure-Dart-only isOneWay semantics documented on
+      // PhysicsBodyComponent — matches the tie-break (prefer bodyA when it's
+      // the dynamic side) of the ECS PhysicsSystem this logic was ported
+      // from.
+      if (bodyA.isOneWay || bodyB.isOneWay) {
+        final dynBody = bodyA.mass > 0 ? bodyA : bodyB;
+        if (dynBody.velocity.y <= 0) continue;
+      }
+
+      currentContactPairs.add(pair);
+      if (!previousContactPairs.contains(pair)) {
+        _contactBeginBuffer.add((pair, best.normal.dx, best.normal.dy));
+      }
+
+      _lastResolvedCollisionCount++;
+      _resolveCollision(bodyA, bodyB, best);
     }
 
     // Any previously active sensor pair no longer overlapping → end event.
@@ -253,6 +285,16 @@ class PhysicsEngine {
     _activeSensorPairs
       ..clear()
       ..addAll(currentSensorPairs);
+
+    // Any previously active solid contact no longer overlapping → end event.
+    for (final old in previousContactPairs) {
+      if (!currentContactPairs.contains(old)) {
+        _contactEndBuffer.add(old);
+      }
+    }
+    _activeContactPairs
+      ..clear()
+      ..addAll(currentContactPairs);
   }
 
   /// Iterate sensor-enter events from the last step.
@@ -269,6 +311,30 @@ class PhysicsEngine {
   /// [fn] is called for each (bodyA, bodyB) pair that stopped overlapping.
   void pollSensorEndEvents(void Function(PhysicsBody a, PhysicsBody b) fn) {
     for (final pair in _sensorEndBuffer) {
+      fn(pair.a, pair.b);
+    }
+  }
+
+  /// Iterate solid-contact-begin events from the last step.
+  ///
+  /// [fn] receives the two colliding [PhysicsBody] objects and the contact
+  /// normal (nx, ny), matching [Box2DPhysicsEngine]'s native contact-begin
+  /// event shape so callers use one signature regardless of backend.
+  void pollContactBeginEvents(
+    void Function(PhysicsBody a, PhysicsBody b, double nx, double ny) fn,
+  ) {
+    for (final (pair, nx, ny) in _contactBeginBuffer) {
+      fn(pair.a, pair.b, nx, ny);
+    }
+  }
+
+  /// Iterate solid-contact-end events from the last step.
+  ///
+  /// [fn] is called for each non-sensor (bodyA, bodyB) pair that stopped
+  /// overlapping. [Box2DPhysicsEngine] overrides this with the native
+  /// contact-end event stream.
+  void pollContactEndEvents(void Function(PhysicsBody a, PhysicsBody b) fn) {
+    for (final pair in _contactEndBuffer) {
       fn(pair.a, pair.b);
     }
   }
@@ -561,6 +627,12 @@ class PhysicsEngine {
 
   JointConstraint addPrismaticJoint(PhysicsBody a, PhysicsBody b, Offset axis) {
     final j = PrismaticJoint(bodyA: a, bodyB: b, axis: axis);
+    addJoint(j);
+    return j;
+  }
+
+  JointConstraint addWheelJoint(PhysicsBody a, PhysicsBody b, Offset axis) {
+    final j = WheelJoint(bodyA: a, bodyB: b, axis: axis);
     addJoint(j);
     return j;
   }

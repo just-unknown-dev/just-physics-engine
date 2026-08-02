@@ -148,8 +148,44 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       ..reset()
       ..start();
 
-    for (final b2Body in _bodyMap.values) {
+    // Push this frame's ECS-set velocity into the native body before
+    // stepping. PhysicsBody.velocity is a plain Dart field — writing it
+    // (e.g. PhysicsSystem._syncIn's per-frame push from VelocityComponent)
+    // never reaches the native simulation on its own, since nothing else
+    // bridges Dart → native for velocity. Without this, the native body's
+    // velocity only ever changes via its own internal forces/collisions, so
+    // any ECS-driven movement (player input, knockback, etc.) is silently
+    // discarded and _syncTransformsFromNative below immediately overwrites
+    // the Dart-side value back to whatever native already had (unmoved).
+    // Static bodies (mass <= 0) have no meaningful velocity — skip them.
+    //
+    // PhysicsBody.applyForce()/applyTorque() only accumulate into the plain
+    // Dart fields `acceleration`/`torque` (see PhysicsBody) — nothing else
+    // reads them on this backend, so without pushing them here they would
+    // silently have zero effect on the native simulation. Convert
+    // acceleration back to a force (F = a × m, undoing applyForce's ÷ mass)
+    // and push both through b2w_applyForce/b2w_applyTorque, then reset —
+    // mirroring the pure-Dart engine's per-frame consumption of the same
+    // fields so gameplay code behaves identically on both backends.
+    for (final entry in _bodyMap.entries) {
+      final body = entry.key;
+      final b2Body = entry.value;
       b2Body.capturePrevious();
+      if (body.mass > 0) {
+        b2Body.setLinearVelocity(body.velocity.x, body.velocity.y);
+        if (body.acceleration.x != 0.0 || body.acceleration.y != 0.0) {
+          box2d.b2w_applyForce(
+            b2Body.handle,
+            body.acceleration.x * body.mass,
+            body.acceleration.y * body.mass,
+          );
+          body.acceleration.setZero();
+        }
+        if (body.torque != 0.0) {
+          box2d.b2w_applyTorque(b2Body.handle, body.torque);
+          body.torque = 0.0;
+        }
+      }
     }
 
     _lastStepCount = _loop!.advance(deltaTime);
@@ -238,6 +274,12 @@ class Box2DPhysicsEngine extends PhysicsEngine {
         posY: body.position.y,
         angle: body.angle,
       );
+      // Carry over any velocity already set on the Dart body at creation
+      // time (e.g. a projectile spawned with an initial launch velocity) —
+      // otherwise it silently starts at rest until the next update() push.
+      if (body.velocity.x != 0.0 || body.velocity.y != 0.0) {
+        b2Body.setLinearVelocity(body.velocity.x, body.velocity.y);
+      }
     }
 
     // Register sensor/bullet BEFORE adding shape fixtures so the C wrapper
@@ -248,8 +290,26 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     if (body.isBullet) {
       box2d.b2w_setBodyBullet(b2Body.handle, 1);
     }
+    if (!body.useGravity) {
+      // Native default gravityScale is already 1.0 — only call out when
+      // disabling, to avoid an unnecessary FFI round-trip per body.
+      box2d.b2w_setBodyGravityScale(b2Body.handle, 0.0);
+    }
+    if (!body.isAwake) {
+      // Native bodies default to awake — only call out when starting asleep.
+      // _syncTransformsFromNative() reads the resulting state back every
+      // step, so gameplay-driven wake-ups (collisions, forces) sync normally.
+      box2d.b2w_setBodyAwake(b2Body.handle, 0);
+    }
 
     _addShapeFixture(b2Body, body);
+
+    if (!isStatic) {
+      // Box2D derives mass from shape area × density (always 1.0/0.0 above),
+      // not from PhysicsBody.mass — override it so force/impulse magnitudes
+      // and collision response match what the caller configured.
+      box2d.b2w_setBodyMass(b2Body.handle, body.mass);
+    }
 
     // Collision filter can be applied post-creation.
     box2d.b2w_setBodyFilter(
@@ -403,10 +463,14 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   ///
   /// [fn] receives the two colliding [PhysicsBody] objects and the contact
   /// normal (nx, ny). Calls [fn] only for pairs where both bodies are tracked.
+  @override
   void pollContactBeginEvents(
     void Function(PhysicsBody a, PhysicsBody b, double nx, double ny) fn,
   ) {
-    if (!_nativeReady) return;
+    if (!_nativeReady) {
+      super.pollContactBeginEvents(fn);
+      return;
+    }
     final count = box2d.b2w_getContactBeginCount(_world!.handle);
     if (count == 0) return;
 
@@ -436,6 +500,37 @@ class Box2DPhysicsEngine extends PhysicsEngine {
         ..free(outB)
         ..free(outNx)
         ..free(outNy);
+    }
+  }
+
+  /// Iterate all end-touch (separation) contact events from the last step.
+  ///
+  /// Unlike [pollContactBeginEvents] this has no contact normal — Box2D's
+  /// end-touch event only reports which bodies stopped touching.
+  @override
+  void pollContactEndEvents(void Function(PhysicsBody a, PhysicsBody b) fn) {
+    if (!_nativeReady) {
+      super.pollContactEndEvents(fn);
+      return;
+    }
+    final count = box2d.b2w_getContactEndCount(_world!.handle);
+    if (count == 0) return;
+
+    final outA = calloc<Int64>();
+    final outB = calloc<Int64>();
+    try {
+      for (int i = 0; i < count; i++) {
+        box2d.b2w_getContactEndEvent(_world!.handle, i, outA, outB);
+        final pA = _handleToBody[outA.value];
+        final pB = _handleToBody[outB.value];
+        if (pA != null && pB != null) {
+          fn(pA, pB);
+        }
+      }
+    } finally {
+      calloc
+        ..free(outA)
+        ..free(outB);
     }
   }
 
@@ -672,6 +767,16 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     return native ?? super.addMouseJoint(b, target);
   }
 
+  @override
+  JointConstraint addWheelJoint(PhysicsBody a, PhysicsBody b, Offset axis) {
+    final anchor = Offset(
+      (a.position.x + b.position.x) / 2,
+      (a.position.y + b.position.y) / 2,
+    );
+    final native = createWheelJoint(a, b, anchor, axis);
+    return native ?? super.addWheelJoint(a, b, axis);
+  }
+
   /// Destroy a Box2D joint and remove it from the engine's joint list.
   void destroyJoint(Box2DJoint joint) {
     joint.destroy();
@@ -717,6 +822,14 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   void dispose() {
     _impactCallable?.close();
     _impactCallable = null;
+
+    // Destroy native joints before bodies/world. Box2DJoint.destroy() is
+    // documented as "must be called before the world is disposed" — the base
+    // class's dispose() only clears the joint list without destroying
+    // anything, so this must happen explicitly here.
+    for (final joint in joints) {
+      if (joint is Box2DJoint) joint.destroy();
+    }
 
     // Destroy Box2D bodies before the world (order matters in Box2D 3.0).
     for (final b2Body in _bodyMap.values) {
@@ -935,6 +1048,12 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       dartBody.angle = b2Body.currentAngle;
       dartBody.velocity.x = b2Body.velocityX;
       dartBody.velocity.y = b2Body.velocityY;
+      // Sleep is a dynamic-body concept — static bodies always report
+      // "not awake" natively and would otherwise flip PhysicsBody.isAwake
+      // to false even though the user never asked for that.
+      if (dartBody.mass > 0) {
+        dartBody.isAwake = trs[base + 5] != 0.0;
+      }
 
       i++;
     }

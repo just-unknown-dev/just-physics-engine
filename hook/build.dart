@@ -9,7 +9,7 @@ void main(List<String> args) async {
     if (!input.config.buildCodeAssets) return;
 
     final nativeDir = input.packageRoot.resolve('src/native/');
-    final box2dSrcDir = nativeDir.resolve('third_party/box2d/src/');
+    final box2dSrcDir = nativeDir.resolve('third_party/just_box_2d/src/');
 
     // Skip gracefully when the Box2D git submodule has not been initialized.
     // Box2DPhysicsEngine.initialize() will catch the missing library and fall
@@ -29,7 +29,7 @@ void main(List<String> args) async {
 
     final includes = [
       nativeDir.toFilePath(),
-      nativeDir.resolve('third_party/box2d/include/').toFilePath(),
+      nativeDir.resolve('third_party/just_box_2d/include/').toFilePath(),
     ];
     final sharedFlags = [
       '-O2',
