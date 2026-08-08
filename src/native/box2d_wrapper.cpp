@@ -582,6 +582,16 @@ extern "C" void b2w_setBodyAwake(int64_t bh, int32_t awake) {
     b2Body_SetAwake(unpackBodyId(bh), awake != 0);
 }
 
+extern "C" void b2w_setBodyFixedRotation(int64_t bh, int32_t fixed) {
+    // Box2D v3.1 replaced the old bool `fixedRotation` with per-axis
+    // b2MotionLocks; only the angular lock is touched here, translation
+    // stays free.
+    b2BodyId id = unpackBodyId(bh);
+    b2MotionLocks locks = b2Body_GetMotionLocks(id);
+    locks.angularZ = fixed != 0;
+    b2Body_SetMotionLocks(id, locks);
+}
+
 extern "C" void b2w_setBodyMass(int64_t bh, float mass) {
     b2BodyId id = unpackBodyId(bh);
     b2MassData data = b2Body_GetMassData(id);

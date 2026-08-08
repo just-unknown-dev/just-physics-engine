@@ -127,8 +127,10 @@ class PhysicsEngine {
             // Semi-Implicit Euler Integration — all in-place Vec2 ops
             // 1. Update velocity: v += accel * dt
             body.velocity.addScaled(_accel, deltaTime);
-            body.angularVelocity +=
-                (body.torque * body.inverseInertia) * deltaTime;
+            if (!body.fixedRotation) {
+              body.angularVelocity +=
+                  (body.torque * body.inverseInertia) * deltaTime;
+            }
 
             // Apply drag (simple linear drag)
             final dragFactor = 1.0 - body.drag * deltaTime;
@@ -137,7 +139,9 @@ class PhysicsEngine {
 
             // 2. Update position: x += v * dt
             body.position.addScaled(body.velocity, deltaTime);
-            body.angle += body.angularVelocity * deltaTime;
+            if (!body.fixedRotation) {
+              body.angle += body.angularVelocity * deltaTime;
+            }
 
             // Reset acceleration for the next frame
             body.acceleration.setZero();

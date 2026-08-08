@@ -201,6 +201,13 @@ B2W_EXPORT void b2w_setBodyGravityScale(int64_t bodyHandle, float gravityScale);
 /// state back every step.
 B2W_EXPORT void b2w_setBodyAwake(int64_t bodyHandle, int32_t awake);
 
+/// Lock or unlock a body's rotation. fixed != 0 → the body's angle never
+/// changes, regardless of torque/angular impulses from collisions (e.g.
+/// friction against a static obstacle) — the standard fix for top-down
+/// characters that should slide, not tumble, when they clip scenery.
+/// Only meaningful for dynamic bodies.
+B2W_EXPORT void b2w_setBodyFixedRotation(int64_t bodyHandle, int32_t fixed);
+
 /// Override a body's simulated mass, replacing Box2D's density-derived value.
 ///
 /// Box2D computes mass from shape area × density (b2ShapeDef.density, always

@@ -290,6 +290,9 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     if (body.isBullet) {
       box2d.b2w_setBodyBullet(b2Body.handle, 1);
     }
+    if (body.fixedRotation) {
+      box2d.b2w_setBodyFixedRotation(b2Body.handle, 1);
+    }
     if (!body.useGravity) {
       // Native default gravityScale is already 1.0 — only call out when
       // disabling, to avoid an unnecessary FFI round-trip per body.

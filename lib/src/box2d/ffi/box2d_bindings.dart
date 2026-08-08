@@ -834,6 +834,20 @@ class Box2DBindings {
   late final _b2w_setBodyAwake = _b2w_setBodyAwakePtr
       .asFunction<void Function(int, int)>();
 
+  /// Lock or unlock a body's rotation. fixed != 0 → the body's angle never
+  /// changes from torque/angular impulses (e.g. friction against a static
+  /// obstacle) — keeps top-down characters sliding instead of tumbling.
+  void b2w_setBodyFixedRotation(int bodyHandle, int fixed) {
+    return _b2w_setBodyFixedRotation(bodyHandle, fixed);
+  }
+
+  late final _b2w_setBodyFixedRotationPtr =
+      _lookup<
+        ffi.NativeFunction<ffi.Void Function(ffi.Int64, ffi.Int32)>
+      >('b2w_setBodyFixedRotation');
+  late final _b2w_setBodyFixedRotation = _b2w_setBodyFixedRotationPtr
+      .asFunction<void Function(int, int)>();
+
   /// Override a body's simulated mass (replaces Box2D's density-derived
   /// value). Call after all shape fixtures are attached.
   void b2w_setBodyMass(int bodyHandle, double mass) {

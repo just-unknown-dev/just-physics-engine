@@ -105,6 +105,12 @@ class PhysicsBody {
   /// Only effective on the Box2D FFI backend; the Dart fallback ignores it.
   bool isBullet;
 
+  /// Locks rotation: the body's [angle] never changes from torque/angular
+  /// impulses (e.g. friction against a static obstacle), only from explicit
+  /// external writes. The standard fix for top-down characters that should
+  /// slide along scenery instead of visibly spinning on contact.
+  bool fixedRotation;
+
   /// Additional collision shapes attached to this body (compound body support).
   ///
   /// All shapes share the same position as [position]. The [shape] field is
@@ -148,6 +154,7 @@ class PhysicsBody {
     this.isSensor = false,
     this.isOneWay = false,
     this.isBullet = false,
+    this.fixedRotation = false,
     List<CollisionShape>? additionalShapes,
     this.categoryBits = 0x0001,
     this.maskBits = 0xFFFF,
