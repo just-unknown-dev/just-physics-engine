@@ -337,6 +337,137 @@ B2W_EXPORT void b2w_getJointReactionForce(int64_t jointHandle,
 B2W_EXPORT float b2w_getJointReactionTorque(int64_t jointHandle);
 
 // ── NativeFinalizer-compatible destructors ────────────────────────────────────
+// ── Platformer parity extensions ─────────────────────────────────────────────
+//
+// Everything below closes a gap where the native backend silently behaved
+// differently from the pure-Dart one. Added together because a 2D platformer
+// needs all of them; see CHANGELOG for the per-feature rationale.
+
+/// Body type values — numerically identical to b2BodyType, so Dart can pass
+/// an enum index straight through with no translation table.
+#define B2W_BODY_STATIC    0
+#define B2W_BODY_KINEMATIC 1
+#define B2W_BODY_DYNAMIC   2
+
+/// Create a body of any type. b2w_createDynamicBody / b2w_createStaticBody
+/// remain as thin forwarders so existing bindings keep working unchanged.
+B2W_EXPORT int64_t b2w_createBody(int64_t worldHandle, int32_t bodyType,
+                                  float posX, float posY, float angle);
+
+/// Teleport a body to a world transform.
+///
+/// Box2D documents SetTransform as "fairly expensive" — it rebuilds broad-phase
+/// proxies and discards the solver's warm-start for this body. Call it for
+/// respawns, checkpoints, level loads and warps; drive ordinary motion with
+/// velocity instead.
+///
+/// wake != 0 also forces the body awake. b2Body_SetTransform on its own does
+/// NOT wake it, so a teleported sleeping body would otherwise sit inert at the
+/// new location until something else disturbed it.
+B2W_EXPORT void b2w_setBodyTransform(int64_t bodyHandle,
+                                     float x, float y, float angle,
+                                     int32_t wake);
+
+/// Set angular velocity directly (companion to b2w_setLinearVelocity).
+B2W_EXPORT void b2w_setAngularVelocity(int64_t bodyHandle, float omega);
+
+/// Change a body's type at runtime.
+///
+/// EXPENSIVE, and it RESETS the mass override — re-apply b2w_setBodyMass after
+/// any real change. Callers should skip the call entirely when the type
+/// already matches (see b2w_getBodyType).
+B2W_EXPORT void    b2w_setBodyType(int64_t bodyHandle, int32_t bodyType);
+B2W_EXPORT int32_t b2w_getBodyType(int64_t bodyHandle);
+
+/// Drive a kinematic body toward a target transform over one timeStep by
+/// setting the velocity that gets there.
+///
+/// Preferred over teleporting moving platforms: it preserves correct contact
+/// velocity, so a body standing on the platform is carried along instead of
+/// being left behind.
+B2W_EXPORT void b2w_setBodyTargetTransform(int64_t bodyHandle,
+                                           float x, float y, float angle,
+                                           float timeStep, int32_t wake);
+
+// ── One-way platforms ────────────────────────────────────────────────────────
+//
+// Implemented as a world pre-solve contact filter. Per-shape state is packed
+// into the b2Shape userData pointer, which is NEVER dereferenced — it is used
+// purely as an integer box. See the thread-safety note in the .cpp.
+
+#define B2W_SHAPE_FLAG_ONE_WAY  0x1u
+#define B2W_ONEWAY_DIR_SHIFT    1
+#define B2W_ONEWAY_FROM_ABOVE   0
+#define B2W_ONEWAY_FROM_BELOW   1
+#define B2W_ONEWAY_FROM_LEFT    2
+#define B2W_ONEWAY_FROM_RIGHT   3
+
+/// Mark every shape on a body as a one-way / pass-through platform, solid only
+/// when approached from solidFromDirection (a B2W_ONEWAY_FROM_* value).
+/// enabled == 0 clears the flag and disables pre-solve events on the shapes.
+B2W_EXPORT void b2w_setBodyOneWay(int64_t bodyHandle,
+                                  int32_t enabled,
+                                  int32_t solidFromDirection);
+
+// ── Spatial queries ──────────────────────────────────────────────────────────
+
+/// Cast a ray, returning only the closest hit.
+/// translation is the FULL ray vector (direction * maxDistance), not a unit
+/// vector. Pass categoryBits = maskBits = ~0ull to hit everything.
+/// Returns 1 on hit (out-params written), 0 on miss.
+///
+/// NOTE: this ignores initial overlap — a ray starting inside a body does not
+/// report that body. Use b2w_castRayAll when that matters.
+B2W_EXPORT int32_t b2w_castRayClosest(int64_t worldHandle,
+                                      float originX, float originY,
+                                      float translationX, float translationY,
+                                      uint64_t categoryBits, uint64_t maskBits,
+                                      int64_t* outBody,
+                                      float* outPointX, float* outPointY,
+                                      float* outNormalX, float* outNormalY,
+                                      float* outFraction);
+
+/// Cast a ray, collecting up to maxHits hits, unsorted and one per SHAPE — a
+/// compound body can appear more than once, so de-duplicate on the Dart side.
+/// outBodies: caller-allocated int64[maxHits].
+/// outBuffer: caller-allocated float[maxHits*5], per hit:
+///            [pointX, pointY, normalX, normalY, fraction]
+/// Returns the number of hits written.
+B2W_EXPORT int32_t b2w_castRayAll(int64_t worldHandle,
+                                  float originX, float originY,
+                                  float translationX, float translationY,
+                                  uint64_t categoryBits, uint64_t maskBits,
+                                  int64_t* outBodies, float* outBuffer,
+                                  int32_t maxHits);
+
+/// Broad-phase AABB overlap. Reports bodies whose shapes' FAT AABBs overlap the
+/// box — a conservative superset. Narrow-test on the Dart side if exactness
+/// matters. Returns the number of body handles written to outBodies.
+B2W_EXPORT int32_t b2w_queryAABB(int64_t worldHandle,
+                                 float minX, float minY, float maxX, float maxY,
+                                 uint64_t categoryBits, uint64_t maskBits,
+                                 int64_t* outBodies, int32_t maxBodies);
+
+// ── Runtime material / damping mutation ──────────────────────────────────────
+
+/// Velocity decay. Box2D's model is 1/(1 + dt*damping), which is not identical
+/// to the pure-Dart engine's (1 - drag*dt) but behaves equivalently.
+B2W_EXPORT void b2w_setBodyLinearDamping(int64_t bodyHandle, float damping);
+B2W_EXPORT void b2w_setBodyAngularDamping(int64_t bodyHandle, float damping);
+
+/// Set friction / restitution on every shape of a body. Takes effect on the
+/// next step — Box2D re-reads shape material each step. Use for ice, mud, and
+/// bounce pads that change state.
+B2W_EXPORT void b2w_setBodyFriction(int64_t bodyHandle, float friction);
+B2W_EXPORT void b2w_setBodyRestitution(int64_t bodyHandle, float restitution);
+
+/// 64-bit collision filter. b2Filter.categoryBits/maskBits are uint64_t in this
+/// Box2D; the 32-bit b2w_setBodyFilter above is kept unchanged so existing
+/// bindings stay ABI-correct.
+B2W_EXPORT void b2w_setBodyFilter64(int64_t bodyHandle,
+                                    uint64_t categoryBits, uint64_t maskBits,
+                                    int32_t groupIndex);
+
 //
 // NativeFinalizer requires a native function with signature void(void*).
 // These wrappers receive the packed int64 handle reinterpreted as a void*

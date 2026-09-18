@@ -87,6 +87,295 @@ static void s_finishTask(void* userTask, void* userCtx) {
     pool->finishTask(static_cast<TaskGroup*>(userTask));
 }
 
+// ── Platformer parity extensions ─────────────────────────────────────────────
+
+static inline b2BodyType _toBodyType(int32_t t) {
+    return (t == B2W_BODY_STATIC)    ? b2_staticBody
+         : (t == B2W_BODY_KINEMATIC) ? b2_kinematicBody
+                                     : b2_dynamicBody;
+}
+
+extern "C" int64_t b2w_createBody(int64_t wh, int32_t bodyType,
+                                   float x, float y, float angle) {
+    b2BodyDef def = b2DefaultBodyDef();
+    def.type      = _toBodyType(bodyType);
+    def.position  = b2ToPos({x, y});
+    def.rotation  = b2MakeRot(angle);
+    return packBodyId(b2CreateBody(unpackWorldId(wh), &def));
+}
+
+extern "C" void b2w_setBodyTransform(int64_t bh, float x, float y,
+                                      float angle, int32_t wake) {
+    b2BodyId id = unpackBodyId(bh);
+    b2Body_SetTransform(id, b2ToPos({x, y}), b2MakeRot(angle));
+    // SetTransform does not wake the body on its own; a teleported sleeping
+    // body would stay inert at its new location.
+    if (wake != 0) b2Body_SetAwake(id, true);
+}
+
+extern "C" void b2w_setAngularVelocity(int64_t bh, float omega) {
+    b2Body_SetAngularVelocity(unpackBodyId(bh), omega);
+}
+
+extern "C" void b2w_setBodyType(int64_t bh, int32_t bodyType) {
+    b2Body_SetType(unpackBodyId(bh), _toBodyType(bodyType));
+}
+
+extern "C" int32_t b2w_getBodyType(int64_t bh) {
+    return (int32_t)b2Body_GetType(unpackBodyId(bh));
+}
+
+extern "C" void b2w_setBodyTargetTransform(int64_t bh, float x, float y,
+                                            float angle, float timeStep,
+                                            int32_t wake) {
+    b2WorldTransform t;
+    t.p = b2ToPos({x, y});
+    t.q = b2MakeRot(angle);
+    b2Body_SetTargetTransform(unpackBodyId(bh), t, timeStep, wake != 0);
+}
+
+// ── One-way platforms ────────────────────────────────────────────────────────
+//
+// THREAD SAFETY — read this before touching s_preSolveOneWay.
+//
+// The callback runs on Box2D WORKER THREADS, once per touching contact per
+// step, from inside b2UpdateContact. It must therefore be a pure function of
+// its arguments plus immutable per-shape state. Specifically it must NEVER:
+//   * take a lock — a global mutex here serialises the entire narrow phase,
+//     turning the parallel collide stage back into a single-threaded one;
+//   * read body velocity — b2Body_GetLinearVelocity reads b2BodyState, which
+//     solver threads write during the same step. That is a data race, and it
+//     is tempting precisely because it would match the pure-Dart engine's
+//     velocity test exactly;
+//   * mutate the world in any way (Box2D documents this explicitly);
+//   * allocate, or call back into Dart.
+//
+// Per-shape state therefore lives in the shape's userData pointer, used purely
+// as an integer box and never dereferenced. That is safe because there is
+// exactly one writer and it can never run concurrently with a reader: every
+// b2w_* entry point is a synchronous FFI call from the Dart main isolate, and
+// b2w_step blocks that isolate until b2World_Step has joined every worker
+// task. So b2w_setBodyOneWay can only run BETWEEN steps, and the thread pool's
+// mutex/condvar wake-up provides the release/acquire edge that publishes the
+// write to the workers.
+
+/// Cosine threshold, ~60 degrees of tolerance. Kept identical to the pure-Dart
+/// engine's _oneWaySolidCos so both backends agree.
+///
+/// Tighter values drop a player who lands on the very edge of a platform;
+/// looser values let a player rising steeply from below catch on it.
+static constexpr float kOneWaySolidCos = 0.5f;
+
+static bool s_preSolveOneWay(b2ShapeId a, b2ShapeId b,
+                              b2Pos point, b2Vec2 normal, void* ctx) {
+    (void)point;
+    (void)ctx;
+
+    const uint32_t fa = (uint32_t)(uintptr_t)b2Shape_GetUserData(a);
+    const uint32_t fb = (uint32_t)(uintptr_t)b2Shape_GetUserData(b);
+    const bool oneA = (fa & B2W_SHAPE_FLAG_ONE_WAY) != 0;
+    const bool oneB = (fb & B2W_SHAPE_FLAG_ONE_WAY) != 0;
+
+    // Neither is one-way, or both are: an ordinary solid contact. Two one-way
+    // bodies have no claim to pass through each other.
+    if (oneA == oneB) return true;
+
+    // The manifold normal points from shape A to shape B. Flip it so it always
+    // reads platform -> mover.
+    const uint32_t flags = oneA ? fa : fb;
+    const float    sign  = oneA ? 1.0f : -1.0f;
+    const float    px    = sign * normal.x;
+    const float    py    = sign * normal.y;
+
+    // Screen-space convention: +Y is DOWN (default gravity is +981), so the
+    // mover being *above* the platform means py < 0.
+    switch ((flags >> B2W_ONEWAY_DIR_SHIFT) & 0x3u) {
+        case B2W_ONEWAY_FROM_ABOVE: return py < -kOneWaySolidCos;
+        case B2W_ONEWAY_FROM_BELOW: return py >  kOneWaySolidCos;
+        case B2W_ONEWAY_FROM_LEFT:  return px < -kOneWaySolidCos;
+        default:                    return px >  kOneWaySolidCos;
+    }
+}
+
+extern "C" void b2w_setBodyOneWay(int64_t bh, int32_t enabled, int32_t dir) {
+    const bool on = enabled != 0;
+    const uint32_t flags =
+        on ? (B2W_SHAPE_FLAG_ONE_WAY |
+              ((uint32_t)(dir & 0x3) << B2W_ONEWAY_DIR_SHIFT))
+           : 0u;
+
+    b2BodyId bodyId = unpackBodyId(bh);
+    static constexpr int kMaxShapes = 64;
+    b2ShapeId shapes[kMaxShapes];
+    int count = b2Body_GetShapes(bodyId, shapes, kMaxShapes);
+    assert(count < kMaxShapes && "body has >= 64 shapes — raise kMaxShapes");
+    for (int i = 0; i < count; ++i) {
+        b2Shape_SetUserData(shapes[i], (void*)(uintptr_t)flags);
+        // Enable pre-solve ONLY on one-way shapes. Box2D flags a contact for
+        // pre-solve if EITHER shape opts in, so this is sufficient — and it
+        // keeps the callback off every other contact in the world.
+        b2Shape_EnablePreSolveEvents(shapes[i], on);
+    }
+}
+
+// ── Spatial queries ──────────────────────────────────────────────────────────
+//
+// Unlike the pre-solve callback, these all run on the Dart main isolate
+// between steps, single-threaded, so a plain stack-local context is safe.
+
+extern "C" int32_t b2w_castRayClosest(int64_t wh, float ox, float oy,
+                                       float tx, float ty,
+                                       uint64_t cat, uint64_t mask,
+                                       int64_t* outBody,
+                                       float* opx, float* opy,
+                                       float* onx, float* ony,
+                                       float* ofrac) {
+    b2QueryFilter filter;
+    filter.categoryBits = cat;
+    filter.maskBits     = mask;
+
+    b2RayResult r = b2World_CastRayClosest(unpackWorldId(wh),
+                                           b2ToPos({ox, oy}), {tx, ty},
+                                           filter);
+    if (!r.hit) return 0;
+
+    b2Vec2 p = b2ToVec2(r.point);
+    *outBody = packBodyId(b2Shape_GetBody(r.shapeId));
+    *opx = p.x;
+    *opy = p.y;
+    *onx = r.normal.x;
+    *ony = r.normal.y;
+    *ofrac = r.fraction;
+    return 1;
+}
+
+struct RayAllCtx {
+    int64_t* bodies;
+    float*   buf;
+    int32_t  max;
+    int32_t  count;
+};
+
+static float s_rayAllCallback(b2ShapeId shapeId, b2Pos point,
+                               b2Vec2 normal, float fraction, void* ctx) {
+    RayAllCtx* c = static_cast<RayAllCtx*>(ctx);
+    if (c->count >= c->max) return 0.0f;  // budget spent — terminate the cast
+
+    b2Vec2 p = b2ToVec2(point);
+    float* slot = c->buf + (ptrdiff_t)c->count * 5;
+    slot[0] = p.x;
+    slot[1] = p.y;
+    slot[2] = normal.x;
+    slot[3] = normal.y;
+    slot[4] = fraction;
+    c->bodies[c->count++] = packBodyId(b2Shape_GetBody(shapeId));
+
+    return 1.0f;  // 1 = do not clip the ray, keep collecting
+}
+
+extern "C" int32_t b2w_castRayAll(int64_t wh, float ox, float oy,
+                                   float tx, float ty,
+                                   uint64_t cat, uint64_t mask,
+                                   int64_t* outBodies, float* outBuffer,
+                                   int32_t maxHits) {
+    b2QueryFilter filter;
+    filter.categoryBits = cat;
+    filter.maskBits     = mask;
+
+    RayAllCtx c{outBodies, outBuffer, maxHits, 0};
+    b2World_CastRay(unpackWorldId(wh), b2ToPos({ox, oy}), {tx, ty},
+                    filter, s_rayAllCallback, &c);
+    return c.count;
+}
+
+struct QueryCtx {
+    int64_t* bodies;
+    int32_t  max;
+    int32_t  count;
+};
+
+static bool s_overlapCallback(b2ShapeId shapeId, void* ctx) {
+    QueryCtx* c = static_cast<QueryCtx*>(ctx);
+    if (c->count >= c->max) return false;  // stop the query
+
+    const int64_t bh = packBodyId(b2Shape_GetBody(shapeId));
+    // One body can own several shapes; report each body once.
+    for (int32_t i = 0; i < c->count; ++i) {
+        if (c->bodies[i] == bh) return true;
+    }
+    c->bodies[c->count++] = bh;
+    return true;
+}
+
+extern "C" int32_t b2w_queryAABB(int64_t wh,
+                                  float minX, float minY,
+                                  float maxX, float maxY,
+                                  uint64_t cat, uint64_t mask,
+                                  int64_t* outBodies, int32_t maxBodies) {
+    b2QueryFilter filter;
+    filter.categoryBits = cat;
+    filter.maskBits     = mask;
+
+    b2AABB aabb;
+    aabb.lowerBound = {minX, minY};
+    aabb.upperBound = {maxX, maxY};
+
+    QueryCtx c{outBodies, maxBodies, 0};
+    // Box2D's own docs: near the origin, pass b2Pos_zero and a world AABB.
+    b2World_OverlapAABB(unpackWorldId(wh), b2Pos_zero, aabb, filter,
+                        s_overlapCallback, &c);
+    return c.count;
+}
+
+// ── Runtime material / damping mutation ──────────────────────────────────────
+
+extern "C" void b2w_setBodyLinearDamping(int64_t bh, float damping) {
+    b2Body_SetLinearDamping(unpackBodyId(bh), damping);
+}
+
+extern "C" void b2w_setBodyAngularDamping(int64_t bh, float damping) {
+    b2Body_SetAngularDamping(unpackBodyId(bh), damping);
+}
+
+extern "C" void b2w_setBodyFriction(int64_t bh, float friction) {
+    b2BodyId bodyId = unpackBodyId(bh);
+    static constexpr int kMaxShapes = 64;
+    b2ShapeId shapes[kMaxShapes];
+    int count = b2Body_GetShapes(bodyId, shapes, kMaxShapes);
+    assert(count < kMaxShapes && "body has >= 64 shapes — raise kMaxShapes");
+    for (int i = 0; i < count; ++i) {
+        b2Shape_SetFriction(shapes[i], friction);
+    }
+}
+
+extern "C" void b2w_setBodyRestitution(int64_t bh, float restitution) {
+    b2BodyId bodyId = unpackBodyId(bh);
+    static constexpr int kMaxShapes = 64;
+    b2ShapeId shapes[kMaxShapes];
+    int count = b2Body_GetShapes(bodyId, shapes, kMaxShapes);
+    assert(count < kMaxShapes && "body has >= 64 shapes — raise kMaxShapes");
+    for (int i = 0; i < count; ++i) {
+        b2Shape_SetRestitution(shapes[i], restitution);
+    }
+}
+
+extern "C" void b2w_setBodyFilter64(int64_t bh,
+                                     uint64_t categoryBits, uint64_t maskBits,
+                                     int32_t groupIndex) {
+    b2BodyId bodyId = unpackBodyId(bh);
+    static constexpr int kMaxShapes = 64;
+    b2ShapeId shapes[kMaxShapes];
+    int count = b2Body_GetShapes(bodyId, shapes, kMaxShapes);
+    assert(count < kMaxShapes && "body has >= 64 shapes — raise kMaxShapes");
+    b2Filter filter;
+    filter.categoryBits = categoryBits;
+    filter.maskBits     = maskBits;
+    filter.groupIndex   = groupIndex;
+    for (int i = 0; i < count; ++i) {
+        b2Shape_SetFilter(shapes[i], filter);
+    }
+}
+
 // ── NativeFinalizer-compatible destructors ────────────────────────────────────
 
 extern "C" void b2w_finalizer_world(void* token) {
@@ -163,6 +452,17 @@ extern "C" int64_t b2w_createWorld(float gx, float gy, int32_t numThreads) {
     b2WorldId id = b2CreateWorld(&def);
     int64_t   h  = packWorldId(id);
 
+    // Installed unconditionally at creation rather than lazily on the first
+    // b2w_setBodyOneWay call: registration is just a pointer store, and doing
+    // it here removes any window where a step could race it. The nullptr
+    // context keeps the callback world-agnostic, so there is nothing to tear
+    // down and nothing to get wrong with multiple worlds.
+    //
+    // This costs nothing when no one-way bodies exist — Box2D only invokes the
+    // callback for contacts whose shapes opted in via
+    // b2Shape_EnablePreSolveEvents.
+    b2World_SetPreSolveCallback(id, s_preSolveOneWay, nullptr);
+
     {
         std::lock_guard<std::mutex> lk(g_worldsMutex);
         g_worlds[h] = {pool, nullptr, 0.0f, {}};
@@ -225,20 +525,12 @@ extern "C" void b2w_setGravity(int64_t h, float gx, float gy) {
 
 extern "C" int64_t b2w_createDynamicBody(int64_t wh,
                                           float x, float y, float angle) {
-    b2BodyDef def = b2DefaultBodyDef();
-    def.type      = b2_dynamicBody;
-    def.position  = {x, y};
-    def.rotation  = b2MakeRot(angle);
-    return packBodyId(b2CreateBody(unpackWorldId(wh), &def));
+    return b2w_createBody(wh, B2W_BODY_DYNAMIC, x, y, angle);
 }
 
 extern "C" int64_t b2w_createStaticBody(int64_t wh,
                                          float x, float y, float angle) {
-    b2BodyDef def = b2DefaultBodyDef();
-    def.type      = b2_staticBody;
-    def.position  = {x, y};
-    def.rotation  = b2MakeRot(angle);
-    return packBodyId(b2CreateBody(unpackWorldId(wh), &def));
+    return b2w_createBody(wh, B2W_BODY_STATIC, x, y, angle);
 }
 
 extern "C" void b2w_destroyBody(int64_t bh) {
@@ -252,6 +544,13 @@ extern "C" void b2w_addCircleShape(int64_t bh, float radius,
                                     float restitution) {
     bool sensor = _isSensorBody(bh);
     b2ShapeDef sd        = b2DefaultShapeDef();
+    // b2DefaultShapeDef zero-initialises, so enableContactEvents is FALSE and
+    // Box2D reports no begin/end touch events at all for the shape. That made
+    // PhysicsEngine.pollContactBeginEvents permanently silent on this backend
+    // while the pure-Dart one generated events normally — so anything built on
+    // contacts (PhysicsBodyComponent.isGrounded, and therefore every jump)
+    // worked on web and silently did nothing on desktop and mobile.
+    sd.enableContactEvents = true;
     sd.density           = density;
     sd.material.friction    = friction;
     sd.material.restitution = restitution;
@@ -267,6 +566,13 @@ extern "C" void b2w_addBoxShape(int64_t bh, float halfW, float halfH,
                                  float restitution) {
     bool sensor = _isSensorBody(bh);
     b2ShapeDef sd        = b2DefaultShapeDef();
+    // b2DefaultShapeDef zero-initialises, so enableContactEvents is FALSE and
+    // Box2D reports no begin/end touch events at all for the shape. That made
+    // PhysicsEngine.pollContactBeginEvents permanently silent on this backend
+    // while the pure-Dart one generated events normally — so anything built on
+    // contacts (PhysicsBodyComponent.isGrounded, and therefore every jump)
+    // worked on web and silently did nothing on desktop and mobile.
+    sd.enableContactEvents = true;
     sd.density           = density;
     sd.material.friction    = friction;
     sd.material.restitution = restitution;
@@ -283,6 +589,13 @@ extern "C" void b2w_addPolygonShape(int64_t bh,
                                      float restitution) {
     bool sensor = _isSensorBody(bh);
     b2ShapeDef sd        = b2DefaultShapeDef();
+    // b2DefaultShapeDef zero-initialises, so enableContactEvents is FALSE and
+    // Box2D reports no begin/end touch events at all for the shape. That made
+    // PhysicsEngine.pollContactBeginEvents permanently silent on this backend
+    // while the pure-Dart one generated events normally — so anything built on
+    // contacts (PhysicsBodyComponent.isGrounded, and therefore every jump)
+    // worked on web and silently did nothing on desktop and mobile.
+    sd.enableContactEvents = true;
     sd.density           = density;
     sd.material.friction    = friction;
     sd.material.restitution = restitution;
@@ -307,6 +620,13 @@ extern "C" void b2w_addRoundedPolygonShape(int64_t bh,
                                             float restitution) {
     bool sensor = _isSensorBody(bh);
     b2ShapeDef sd        = b2DefaultShapeDef();
+    // b2DefaultShapeDef zero-initialises, so enableContactEvents is FALSE and
+    // Box2D reports no begin/end touch events at all for the shape. That made
+    // PhysicsEngine.pollContactBeginEvents permanently silent on this backend
+    // while the pure-Dart one generated events normally — so anything built on
+    // contacts (PhysicsBodyComponent.isGrounded, and therefore every jump)
+    // worked on web and silently did nothing on desktop and mobile.
+    sd.enableContactEvents = true;
     sd.density           = density;
     sd.material.friction    = friction;
     sd.material.restitution = restitution;
@@ -331,6 +651,13 @@ extern "C" void b2w_addCapsuleShape(int64_t bh,
                                      float restitution) {
     bool sensor = _isSensorBody(bh);
     b2ShapeDef sd        = b2DefaultShapeDef();
+    // b2DefaultShapeDef zero-initialises, so enableContactEvents is FALSE and
+    // Box2D reports no begin/end touch events at all for the shape. That made
+    // PhysicsEngine.pollContactBeginEvents permanently silent on this backend
+    // while the pure-Dart one generated events normally — so anything built on
+    // contacts (PhysicsBodyComponent.isGrounded, and therefore every jump)
+    // worked on web and silently did nothing on desktop and mobile.
+    sd.enableContactEvents = true;
     sd.density           = density;
     sd.material.friction    = friction;
     sd.material.restitution = restitution;
@@ -350,6 +677,13 @@ extern "C" void b2w_addSegmentShape(int64_t bh,
                                      float restitution) {
     bool sensor = _isSensorBody(bh);
     b2ShapeDef sd        = b2DefaultShapeDef();
+    // b2DefaultShapeDef zero-initialises, so enableContactEvents is FALSE and
+    // Box2D reports no begin/end touch events at all for the shape. That made
+    // PhysicsEngine.pollContactBeginEvents permanently silent on this backend
+    // while the pure-Dart one generated events normally — so anything built on
+    // contacts (PhysicsBodyComponent.isGrounded, and therefore every jump)
+    // worked on web and silently did nothing on desktop and mobile.
+    sd.enableContactEvents = true;
     sd.density           = density;
     sd.material.friction    = friction;
     sd.material.restitution = restitution;

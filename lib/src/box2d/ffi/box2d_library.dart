@@ -7,6 +7,26 @@ Box2DBindings? _box2dInstance;
 Pointer<NativeFunction<Void Function(Pointer<Void>)>>? _finWorldPtr;
 Pointer<NativeFunction<Void Function(Pointer<Void>)>>? _finBodyPtr;
 
+/// Symbols that must exist for the native backend to be considered usable.
+///
+/// Deliberately only the ones added after the bindings were first generated —
+/// the original surface is covered by the finalizer lookups above, and listing
+/// all ~70 would make this a maintenance chore with no extra safety.
+const List<String> _requiredSymbols = <String>[
+  'b2w_createBody',
+  'b2w_setBodyTransform',
+  'b2w_setBodyType',
+  'b2w_getBodyType',
+  'b2w_setBodyOneWay',
+  'b2w_castRayClosest',
+  'b2w_castRayAll',
+  'b2w_queryAABB',
+  'b2w_setBodyFilter64',
+  'b2w_setBodyFriction',
+  'b2w_setBodyRestitution',
+  'b2w_setBodyLinearDamping',
+];
+
 /// Opens 'box2d_flutter' and initialises all FFI singletons.
 ///
 /// Safe to call multiple times — subsequent calls are no-ops.
@@ -22,6 +42,24 @@ void loadBox2DLibrary() {
       lib.lookup<NativeFunction<Void Function(Pointer<Void>)>>('b2w_finalizer_world');
   final finBody =
       lib.lookup<NativeFunction<Void Function(Pointer<Void>)>>('b2w_finalizer_body');
+
+  // Eagerly resolve the symbols added for cross-platform platformer parity.
+  //
+  // Box2DBindings resolves every function through a `late final` lookup, so a
+  // missing symbol normally throws the first time that *specific* function is
+  // called. With a stale box2d_flutter.dll that means the library opens fine,
+  // _nativeReady is true, stats['backend'] proudly reports 'box2d_v3', and the
+  // app dies with "Failed to lookup symbol 'b2w_setBodyTransform'" the first
+  // time a player respawns — mid-game, with no fallback.
+  //
+  // Touching them here turns that into a clean throw inside
+  // Box2DPhysicsEngine.initialize()'s try/catch, which falls back to the
+  // pure-Dart engine and reports an honest 'dart_fallback'. Cheap insurance
+  // against the .dll and the bindings drifting apart.
+  for (final symbol in _requiredSymbols) {
+    lib.lookup<NativeFunction<Void Function()>>(symbol);
+  }
+
   // Assign atomically — all-or-nothing so callers never see partial state.
   _box2dInstance = bindings;
   _finWorldPtr = finWorld;

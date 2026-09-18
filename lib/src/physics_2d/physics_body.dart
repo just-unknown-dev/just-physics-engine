@@ -1,5 +1,47 @@
 part of 'physics_engine.dart';
 
+/// How a body participates in the simulation.
+///
+/// Ordinals match Box2D v3's `b2BodyType` exactly (static=0, kinematic=1,
+/// dynamic=2) so the value can cross the FFI boundary as `index` with no
+/// translation table.
+///
+/// [PhysicsBody.mass] `<= 0` still forces [BodyType.static] via
+/// [PhysicsBody.effectiveBodyType] — that inference predates this enum and
+/// several call sites depend on it, so [BodyType.kinematic] is purely opt-in.
+enum BodyType {
+  /// Never moves, infinite mass. Level geometry.
+  static,
+
+  /// Moved only by explicit velocity writes; unaffected by gravity, forces or
+  /// collisions, and immovable by dynamic bodies that push against it.
+  /// Moving platforms, elevators, crushers.
+  kinematic,
+
+  /// Fully simulated. Characters, crates, debris.
+  dynamic,
+}
+
+/// Which side a one-way platform is solid from.
+///
+/// Compared against the contact normal, so it is independent of how fast the
+/// other body is travelling. This package is screen-space (+Y is *down*;
+/// default gravity is `+981`), so [fromAbove] — the platformer default — means
+/// the mover must be at a smaller Y than the platform.
+enum OneWayDirection {
+  /// Solid only when approached from above. Standard jump-through platform.
+  fromAbove,
+
+  /// Solid only when approached from below. Ceiling-mounted pass-through.
+  fromBelow,
+
+  /// Solid only when approached from the left.
+  fromLeft,
+
+  /// Solid only when approached from the right.
+  fromRight,
+}
+
 /// Physics body — the core simulation object in the physics engine.
 ///
 /// Uses [Vector2] for position/velocity/acceleration to avoid per-frame
@@ -47,8 +89,23 @@ class PhysicsBody {
   /// Drag
   double drag;
 
-  /// Use gravity
+  /// Coarse gravity switch. When false this body ignores world gravity
+  /// entirely, regardless of [gravityScale].
+  ///
+  /// Kept as a separate flag rather than folded into [gravityScale] because
+  /// `PhysicsSystem._syncIn` writes `body.useGravity = !comp.isStatic` on
+  /// *every* frame — a computed view would clobber any gameplay-set
+  /// [gravityScale] on the next tick. Read [effectiveGravityScale] instead of
+  /// either field directly.
   bool useGravity;
+
+  /// Per-body multiplier on world gravity. 1.0 is normal, 0.5 floaty,
+  /// 2.0 heavy, 0.0 weightless.
+  ///
+  /// This is what variable jump height is built from: hold-to-jump lowers it
+  /// while the button is down and raises it on release, giving a short hop or
+  /// a full jump from one impulse.
+  double gravityScale;
 
   /// Is active
   bool isActive;
@@ -89,16 +146,21 @@ class PhysicsBody {
 
   /// One-way / pass-through platform flag.
   ///
-  /// When true, [PhysicsEngine] skips resolving contacts against this body
-  /// while the other (dynamic) side is moving upward (`velocity.y <= 0`) —
-  /// only resolves when landing on top from above.
+  /// When true, a contact against this body is only resolved if the other
+  /// side approached from [oneWayDirection]; otherwise it passes straight
+  /// through. The decision is made from the contact normal, not from the
+  /// mover's velocity, so a body that stalls at the apex of a jump inside the
+  /// platform still passes through.
   ///
-  /// Pure-Dart engine only: no native hook exists yet on the Box2D FFI
-  /// backend (Box2D has no first-class one-way-platform primitive; it needs
-  /// a native PreSolve contact filter). [Box2DPhysicsEngine] ignores this
-  /// field — a documented gap, not a regression, since nothing using that
-  /// backend relied on one-way platforms before this field existed.
+  /// Honoured on both backends: the pure-Dart engine tests the normal during
+  /// narrow-phase resolution, and the Box2D backend installs a native
+  /// pre-solve contact filter that applies the same test. Two one-way bodies
+  /// touching each other collide normally.
   bool isOneWay;
+
+  /// Which side [isOneWay] makes this body solid from. Ignored when
+  /// [isOneWay] is false.
+  OneWayDirection oneWayDirection;
 
   /// Bullet mode: enables Continuous Collision Detection (CCD) for fast-moving
   /// bodies so they don't tunnel through thin static geometry.
@@ -110,6 +172,10 @@ class PhysicsBody {
   /// external writes. The standard fix for top-down characters that should
   /// slide along scenery instead of visibly spinning on contact.
   bool fixedRotation;
+
+  /// How this body participates in the simulation. Defaults to
+  /// [BodyType.dynamic]; see [effectiveBodyType] for the `mass <= 0` override.
+  BodyType bodyType;
 
   /// Additional collision shapes attached to this body (compound body support).
   ///
@@ -145,6 +211,7 @@ class PhysicsBody {
     this.inertia = 1.0,
     this.drag = 0.1,
     this.useGravity = true,
+    this.gravityScale = 1.0,
     this.isActive = true,
     this.checkCollision = true,
     this.isAwake = true,
@@ -153,8 +220,10 @@ class PhysicsBody {
     this.sleepTimeThreshold = 0.5,
     this.isSensor = false,
     this.isOneWay = false,
+    this.oneWayDirection = OneWayDirection.fromAbove,
     this.isBullet = false,
     this.fixedRotation = false,
+    this.bodyType = BodyType.dynamic,
     List<CollisionShape>? additionalShapes,
     this.categoryBits = 0x0001,
     this.maskBits = 0xFFFF,
@@ -167,6 +236,34 @@ class PhysicsBody {
        acceleration = acceleration != null
            ? Vector2(acceleration.x, acceleration.y)
            : Vector2.zero();
+
+  /// The gravity multiplier actually applied this step: [gravityScale] when
+  /// [useGravity], otherwise zero. Always read this, never the raw fields.
+  double get effectiveGravityScale => useGravity ? gravityScale : 0.0;
+
+  /// The body type actually simulated.
+  ///
+  /// `mass <= 0` has meant "static" since before [bodyType] existed, and
+  /// `PhysicsSystem` still expresses staticness that way, so that inference
+  /// wins over an explicitly-set [bodyType].
+  BodyType get effectiveBodyType =>
+      mass <= 0 ? BodyType.static : bodyType;
+
+  /// True when this body is fully simulated (moved by gravity and forces, and
+  /// pushed by collisions).
+  bool get isDynamic => effectiveBodyType == BodyType.dynamic;
+
+  /// True when this body moves only by explicit velocity writes and cannot be
+  /// pushed by anything.
+  bool get isKinematic => effectiveBodyType == BodyType.kinematic;
+
+  /// True when this body never moves.
+  bool get isStatic => effectiveBodyType == BodyType.static;
+
+  /// Inverse mass as the solver should use it: zero for anything that is not
+  /// [BodyType.dynamic], so static *and* kinematic bodies are immovable while
+  /// the dynamic side is still pushed out of them.
+  double get solverInverseMass => isDynamic ? inverseMass : 0.0;
 
   /// True when this body has more than one collision shape.
   bool get isCompound => additionalShapes.isNotEmpty;

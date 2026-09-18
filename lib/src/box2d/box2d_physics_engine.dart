@@ -12,6 +12,7 @@ import 'package:just_dart/just_dart.dart' show Vector2;
 // PhysicsBody, CollisionShape, CircleShape, RectangleShape, PolygonShape are
 // all part-files of physics_engine.dart — import the library, not the parts.
 import '../physics_2d/physics_engine.dart';
+import '../physics_2d/ray_2d.dart';
 import 'box2d_body.dart';
 import 'box2d_world.dart';
 import 'ffi/box2d_bindings.dart' show ImpactCallbackFnFunction;
@@ -54,6 +55,10 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
   /// Packed handle → PhysicsBody: reverse lookup for contact event callbacks.
   final Map<int, PhysicsBody> _handleToBody = {};
+
+  /// Every collision category — the filter value meaning "hit anything".
+  /// b2QueryFilter uses 64-bit category/mask bits.
+  static const int _allCategories = -1; // all 64 bits set
 
   // ── Zero-copy transform buffers (calloc-allocated, persist for world life) ──
 
@@ -171,7 +176,17 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       final body = entry.key;
       final b2Body = entry.value;
       b2Body.capturePrevious();
-      if (body.mass > 0) {
+      // Sleeping bodies are skipped entirely. b2Body_SetLinearVelocity wakes
+      // the body it is called on, so an unconditional push means a body can
+      // never stay asleep on this backend — it would wake on the very next
+      // frame and start integrating, while the pure-Dart backend (which gates
+      // its whole integration loop on isAwake) left it alone. Two backends,
+      // two behaviours, from the same code.
+      //
+      // Gameplay is unaffected: PhysicsSystem force-wakes every body it syncs,
+      // and applyLinearImpulse wakes explicitly. Only a body something has
+      // deliberately put to sleep is held here, which is what asleep means.
+      if (body.mass > 0 && body.isAwake) {
         b2Body.setLinearVelocity(body.velocity.x, body.velocity.y);
         if (body.acceleration.x != 0.0 || body.acceleration.y != 0.0) {
           box2d.b2w_applyForce(
@@ -257,26 +272,29 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     }
     if (_bodyMap.containsKey(body)) return;
 
-    final isStatic = body.mass <= 0.0;
-    final Box2DBody b2Body;
+    // effectiveBodyType folds in the long-standing `mass <= 0 means static`
+    // rule, so kinematic is opt-in and nothing that predates BodyType shifts.
+    final type = body.effectiveBodyType;
+    final isStatic = type == BodyType.static;
 
-    if (isStatic) {
-      b2Body = Box2DBody.static(
-        worldHandle: _world!.handle,
-        posX: body.position.x,
-        posY: body.position.y,
-        angle: body.angle,
-      );
-    } else {
-      b2Body = Box2DBody.dynamic(
-        worldHandle: _world!.handle,
-        posX: body.position.x,
-        posY: body.position.y,
-        angle: body.angle,
-      );
+    final b2Body = Box2DBody.ofType(
+      worldHandle: _world!.handle,
+      bodyTypeIndex: type.index,
+      posX: body.position.x,
+      posY: body.position.y,
+      angle: body.angle,
+    );
+
+    if (!isStatic && body.isAwake) {
       // Carry over any velocity already set on the Dart body at creation
-      // time (e.g. a projectile spawned with an initial launch velocity) —
-      // otherwise it silently starts at rest until the next update() push.
+      // time (e.g. a projectile spawned with an initial launch velocity, or a
+      // moving platform authored with its patrol speed) — otherwise it
+      // silently starts at rest until the next update() push.
+      //
+      // Skipped for a body created asleep: b2Body_SetLinearVelocity wakes the
+      // body, so pushing here would immediately undo the isAwake = false the
+      // caller asked for. The velocity is still carried, just applied by
+      // update() once something wakes the body.
       if (body.velocity.x != 0.0 || body.velocity.y != 0.0) {
         b2Body.setLinearVelocity(body.velocity.x, body.velocity.y);
       }
@@ -293,10 +311,12 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     if (body.fixedRotation) {
       box2d.b2w_setBodyFixedRotation(b2Body.handle, 1);
     }
-    if (!body.useGravity) {
-      // Native default gravityScale is already 1.0 — only call out when
-      // disabling, to avoid an unnecessary FFI round-trip per body.
-      box2d.b2w_setBodyGravityScale(b2Body.handle, 0.0);
+    if (body.effectiveGravityScale != 1.0) {
+      // Native default is already 1.0 — only call out when it differs, to
+      // avoid an unnecessary FFI round-trip per body. effectiveGravityScale
+      // folds together the useGravity switch and the per-body multiplier that
+      // variable jump height is built on.
+      box2d.b2w_setBodyGravityScale(b2Body.handle, body.effectiveGravityScale);
     }
     if (!body.isAwake) {
       // Native bodies default to awake — only call out when starting asleep.
@@ -307,10 +327,16 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
     _addShapeFixture(b2Body, body);
 
-    if (!isStatic) {
+    if (type == BodyType.dynamic) {
       // Box2D derives mass from shape area × density (always 1.0/0.0 above),
       // not from PhysicsBody.mass — override it so force/impulse magnitudes
       // and collision response match what the caller configured.
+      //
+      // DYNAMIC ONLY. Box2D gates gravity on inverse mass, not on body type
+      // (solver.c: `gravityScale = sim->invMass > 0 ? sim->gravityScale : 0`),
+      // so forcing a positive mass onto a kinematic body gives it a non-zero
+      // inverse mass and it starts free-falling — silently turning every
+      // moving platform into a falling one.
       box2d.b2w_setBodyMass(b2Body.handle, body.mass);
     }
 
@@ -322,9 +348,351 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       body.groupIndex,
     );
 
+    // Must come after _addShapeFixture: the one-way flag is stored per shape,
+    // so there have to be shapes to store it on.
+    if (body.isOneWay) {
+      box2d.b2w_setBodyOneWay(
+        b2Body.handle,
+        1,
+        body.oneWayDirection.index,
+      );
+    }
+
+    // Box2D's per-body linear damping is a different curve from the pure-Dart
+    // engine's, but leaving it unset entirely meant air drag simply did not
+    // exist on native while it did on web.
+    if (body.drag != 0.0) {
+      box2d.b2w_setBodyLinearDamping(b2Body.handle, body.drag);
+    }
+
     _bodyMap[body] = b2Body;
     _handleToBody[b2Body.handle] = body;
     _ensureBufferCapacity(_bodyMap.length);
+  }
+
+  // ── Runtime body mutation (native) ────────────────────────────────────────
+  //
+  // Each override writes the shared Dart state via super, then pushes the
+  // change into the native simulation. Without the native half these were
+  // silent no-ops on desktop and mobile while working correctly on web —
+  // respawn, moving platforms and one-way platforms all depend on them.
+
+  @override
+  void setBodyTransform(
+    PhysicsBody body,
+    double x,
+    double y, {
+    double? angle,
+  }) {
+    super.setBodyTransform(body, x, y, angle: angle);
+    if (!_nativeReady) return;
+    final b2Body = _bodyMap[body];
+    if (b2Body == null) return;
+    // Writes prev and current together, so the interpolator does not draw a
+    // streak from the old position to the new one on the next frame.
+    b2Body.setTransform(x, y, body.angle);
+  }
+
+  @override
+  void setBodyType(PhysicsBody body, BodyType type) {
+    super.setBodyType(body, type);
+    if (!_nativeReady) return;
+    final b2Body = _bodyMap[body];
+    if (b2Body == null) return;
+
+    final target = body.effectiveBodyType;
+    // b2Body_SetType rebuilds contacts and recomputes mass properties, so it
+    // is far too expensive to call every frame — and PhysicsSystem re-pushes
+    // every other body field on every frame, which makes an unguarded setter
+    // exactly that. Skip when nothing actually changed.
+    if (b2Body.typeIndex == target.index) return;
+
+    b2Body.setType(target.index);
+    // Changing type RESETS the mass override back to shape area x density,
+    // so the configured mass has to be re-applied or the body silently gets
+    // a different weight than the caller asked for.
+    if (target == BodyType.dynamic) {
+      box2d.b2w_setBodyMass(b2Body.handle, body.mass);
+    }
+  }
+
+  @override
+  void setBodyGravityScale(PhysicsBody body, double scale) {
+    super.setBodyGravityScale(body, scale);
+    if (!_nativeReady) return;
+    final b2Body = _bodyMap[body];
+    if (b2Body == null) return;
+    box2d.b2w_setBodyGravityScale(b2Body.handle, body.effectiveGravityScale);
+  }
+
+  @override
+  void setBodyFilter(
+    PhysicsBody body, {
+    int? categoryBits,
+    int? maskBits,
+    int? groupIndex,
+  }) {
+    super.setBodyFilter(
+      body,
+      categoryBits: categoryBits,
+      maskBits: maskBits,
+      groupIndex: groupIndex,
+    );
+    if (!_nativeReady) return;
+    final b2Body = _bodyMap[body];
+    if (b2Body == null) return;
+    box2d.b2w_setBodyFilter(
+      b2Body.handle,
+      body.categoryBits,
+      body.maskBits,
+      body.groupIndex,
+    );
+  }
+
+  @override
+  void setBodyOneWay(
+    PhysicsBody body,
+    bool enabled, {
+    OneWayDirection direction = OneWayDirection.fromAbove,
+  }) {
+    super.setBodyOneWay(body, enabled, direction: direction);
+    if (!_nativeReady) return;
+    final b2Body = _bodyMap[body];
+    if (b2Body == null) return;
+    box2d.b2w_setBodyOneWay(
+      b2Body.handle,
+      enabled ? 1 : 0,
+      direction.index,
+    );
+  }
+
+  @override
+  void applyLinearImpulse(PhysicsBody body, double ix, double iy) {
+    if (!_nativeReady) {
+      super.applyLinearImpulse(body, ix, iy);
+      return;
+    }
+    final b2Body = _bodyMap[body];
+    if (b2Body == null || !body.isDynamic) return;
+
+    b2Body.applyLinearImpulse(ix, iy);
+    // Mirror the resulting velocity change into the Dart body as well.
+    //
+    // update() pushes body.velocity into native at the top of EVERY frame, so
+    // an impulse applied between frames would be integrated by Box2D and then
+    // immediately overwritten by the stale Dart value on the next push. The
+    // impulse would appear to work for exactly one step and then vanish.
+    body.velocity.x += ix * body.inverseMass;
+    body.velocity.y += iy * body.inverseMass;
+    body.isAwake = true;
+    body.sleepTimer = 0.0;
+  }
+
+  @override
+  void setBodyDamping(PhysicsBody body, double damping) {
+    super.setBodyDamping(body, damping);
+    if (!_nativeReady) return;
+    final b2Body = _bodyMap[body];
+    if (b2Body == null) return;
+    box2d.b2w_setBodyLinearDamping(b2Body.handle, damping);
+  }
+
+  @override
+  void setBodyFriction(PhysicsBody body, double friction) {
+    super.setBodyFriction(body, friction);
+    if (!_nativeReady) return;
+    final b2Body = _bodyMap[body];
+    if (b2Body == null) return;
+    box2d.b2w_setBodyFriction(b2Body.handle, friction);
+  }
+
+  @override
+  void setBodyRestitution(PhysicsBody body, double restitution) {
+    super.setBodyRestitution(body, restitution);
+    if (!_nativeReady) return;
+    final b2Body = _bodyMap[body];
+    if (b2Body == null) return;
+    box2d.b2w_setBodyRestitution(b2Body.handle, restitution);
+  }
+
+  @override
+  void setBodySensor(PhysicsBody body, bool isSensor) {
+    super.setBodySensor(body, isSensor);
+    if (!_nativeReady) return;
+    if (_bodyMap[body] == null) return;
+    // Box2D forbids converting a shape between sensor and solid at runtime:
+    // it would break the begin/end sensor event contract. Say so rather than
+    // pretending the call worked — the Dart flag now disagrees with native,
+    // and silently diverging is exactly the class of bug this work exists to
+    // remove. Create the body as a sensor and gate it with isActive or the
+    // collision filter instead.
+    debugPrint(
+      'Box2DPhysicsEngine: setBodySensor is create-time only on the native '
+      'backend (Box2D limitation) — the native shape is unchanged. Use a '
+      'collision filter or isActive to toggle a trigger at runtime.',
+    );
+  }
+
+  // ── Spatial queries (native) ──────────────────────────────────────────────
+  //
+  // The inherited pure-Dart implementations are a brute-force scan over every
+  // body that also ignores body rotation and compound shapes. These route to
+  // Box2D's broad-phase BVH instead, which matters because a platformer casts
+  // several rays per character per frame (ground probe, ledge probe, wall
+  // probe) and does it forever.
+  //
+  // Out-parameter buffers are allocated once per engine rather than per cast —
+  // a calloc/free pair on every ground probe is real cost at 60 Hz.
+
+  /// Maximum hits one [castRayAll]/[queryAABB] call can report.
+  ///
+  /// Box2D reports one hit per *shape*, so a compound body can occupy several
+  /// slots. Beyond this the cast is terminated early rather than growing the
+  /// buffer mid-query.
+  static const int _maxQueryHits = 32;
+
+  Pointer<Int64>? _queryBodyBuffer; // _maxQueryHits handles
+  Pointer<Float>? _queryDataBuffer; // _maxQueryHits * 5 floats
+  Pointer<Int64>? _rayBodyOut; // single-hit out-params
+  Pointer<Float>? _rayFloatOut; // [px, py, nx, ny, fraction]
+
+  void _ensureQueryBuffers() {
+    _queryBodyBuffer ??= calloc<Int64>(_maxQueryHits);
+    _queryDataBuffer ??= calloc<Float>(_maxQueryHits * 5);
+    _rayBodyOut ??= calloc<Int64>();
+    _rayFloatOut ??= calloc<Float>(5);
+  }
+
+  void _freeQueryBuffers() {
+    final qb = _queryBodyBuffer;
+    final qd = _queryDataBuffer;
+    final rb = _rayBodyOut;
+    final rf = _rayFloatOut;
+    _queryBodyBuffer = null;
+    _queryDataBuffer = null;
+    _rayBodyOut = null;
+    _rayFloatOut = null;
+    if (qb != null) calloc.free(qb);
+    if (qd != null) calloc.free(qd);
+    if (rb != null) calloc.free(rb);
+    if (rf != null) calloc.free(rf);
+  }
+
+  /// Box2D's query filter cannot express "skip these specific bodies", only
+  /// category/mask. So when [exclude] is non-empty we have to collect all hits
+  /// and filter in Dart; otherwise the cheaper closest-hit call is enough.
+  @override
+  RayBodyHit? castRay(Ray ray, {Set<PhysicsBody>? exclude}) {
+    if (!_nativeReady) return super.castRay(ray, exclude: exclude);
+
+    if (exclude != null && exclude.isNotEmpty) {
+      final all = castRayAll(ray, exclude: exclude);
+      return all.isEmpty ? null : all.first;
+    }
+
+    _ensureQueryBuffers();
+    final origin = ray.origin;
+    final translation = ray.direction * ray.maxDistance;
+
+    final hit = box2d.b2w_castRayClosest(
+      _world!.handle,
+      origin.dx,
+      origin.dy,
+      translation.dx,
+      translation.dy,
+      _allCategories,
+      _allCategories,
+      _rayBodyOut!,
+      (_rayFloatOut! + 0),
+      (_rayFloatOut! + 1),
+      (_rayFloatOut! + 2),
+      (_rayFloatOut! + 3),
+      (_rayFloatOut! + 4),
+    );
+    if (hit == 0) return null;
+
+    final body = _handleToBody[_rayBodyOut!.value];
+    if (body == null) return null;
+
+    final f = _rayFloatOut!;
+    return RayBodyHit(
+      body: body,
+      point: Offset(f[0], f[1]),
+      normal: Offset(f[2], f[3]),
+      distance: f[4] * ray.maxDistance,
+    );
+  }
+
+  @override
+  List<RayBodyHit> castRayAll(Ray ray, {Set<PhysicsBody>? exclude}) {
+    if (!_nativeReady) return super.castRayAll(ray, exclude: exclude);
+
+    _ensureQueryBuffers();
+    final origin = ray.origin;
+    final translation = ray.direction * ray.maxDistance;
+
+    final count = box2d.b2w_castRayAll(
+      _world!.handle,
+      origin.dx,
+      origin.dy,
+      translation.dx,
+      translation.dy,
+      _allCategories,
+      _allCategories,
+      _queryBodyBuffer!,
+      _queryDataBuffer!,
+      _maxQueryHits,
+    );
+
+    final data = _queryDataBuffer!;
+    final hits = <RayBodyHit>[];
+    // Box2D reports one hit per shape, so a compound body appears once per
+    // fixture — keep only its nearest hit.
+    final seen = <PhysicsBody>{};
+    for (var i = 0; i < count; i++) {
+      final body = _handleToBody[_queryBodyBuffer![i]];
+      if (body == null) continue;
+      if (exclude != null && exclude.contains(body)) continue;
+      if (!seen.add(body)) continue;
+      final base = i * 5;
+      hits.add(
+        RayBodyHit(
+          body: body,
+          point: Offset(data[base], data[base + 1]),
+          normal: Offset(data[base + 2], data[base + 3]),
+          distance: data[base + 4] * ray.maxDistance,
+        ),
+      );
+    }
+
+    // Native order is BVH traversal order, not distance order.
+    hits.sort((a, b) => a.distance.compareTo(b.distance));
+    return hits;
+  }
+
+  @override
+  List<PhysicsBody> queryAABB(Rect rect) {
+    if (!_nativeReady) return super.queryAABB(rect);
+
+    _ensureQueryBuffers();
+    final count = box2d.b2w_queryAABB(
+      _world!.handle,
+      rect.left,
+      rect.top,
+      rect.right,
+      rect.bottom,
+      _allCategories,
+      _allCategories,
+      _queryBodyBuffer!,
+      _maxQueryHits,
+    );
+
+    final result = <PhysicsBody>[];
+    for (var i = 0; i < count; i++) {
+      final body = _handleToBody[_queryBodyBuffer![i]];
+      if (body != null) result.add(body);
+    }
+    return result;
   }
 
   @override
@@ -848,6 +1216,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     _transformBuffer = null;
     if (hb != null) calloc.free(hb);
     if (tb != null) calloc.free(tb);
+    _freeQueryBuffers();
     _bufferCapacity = 0; // MUST reset — dispose() nulls the buffers; without
     // this, _ensureBufferCapacity() sees the old non-zero capacity on the next
     // initialize() cycle and skips re-allocation, leaving _handleBuffer null.
@@ -868,7 +1237,10 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   // ── Private helpers ───────────────────────────────────────────────────────
 
   void _addShapeFixture(Box2DBody b2Body, PhysicsBody body) {
-    final density = (body.mass > 0) ? 1.0 : 0.0;
+    // Zero density for static and kinematic bodies: Box2D would otherwise
+    // derive a positive mass from shape area, and a positive inverse mass is
+    // what makes it apply gravity (see the note in addBody).
+    final density = body.effectiveBodyType == BodyType.dynamic ? 1.0 : 0.0;
     _addSingleShape(
       b2Body.handle,
       body.shape,

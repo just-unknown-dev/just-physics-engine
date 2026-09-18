@@ -1,3 +1,109 @@
+## 1.3.0 - 2026-09-17
+
+Cross-platform parity release. Closes the gaps where the native Box2D backend
+silently behaved differently from the pure-Dart one — all of which a 2D
+platformer runs straight into.
+
+### Added
+
+- **`PhysicsEngine.setBodyTransform`** — teleport a body. Previously writing
+  `PhysicsBody.position` worked on web but was silently discarded on native
+  (there was no `b2w_setTransform`), so respawns, checkpoints, level-load
+  placement and warps did nothing on desktop and mobile.
+- **`BodyType { static, kinematic, dynamic }`** and `PhysicsBody.bodyType`.
+  Kinematic bodies are moved only by explicit velocity writes and cannot be
+  pushed — moving platforms, elevators and crushers. `mass <= 0` still forces
+  static via `effectiveBodyType`, so nothing that predates this shifts.
+- **`PhysicsBody.gravityScale`** — a real per-body float, where only the
+  boolean `useGravity` existed before. Read `effectiveGravityScale`, which
+  folds both together. This is what variable jump height is built from.
+- **One-way platforms on the native backend.** `isOneWay` was honoured only by
+  the pure-Dart resolver. There is now a Box2D pre-solve contact filter with
+  matching semantics, plus `PhysicsBody.oneWayDirection` to pick which side is
+  solid.
+- **Native ray casting and AABB queries.** `castRay`, `castRayAll` and
+  `queryAABB` now route to Box2D's BVH instead of the inherited brute-force
+  Dart scan, which also ignored body rotation and compound shapes. Out-param
+  buffers are allocated once per engine, not per cast.
+- **Runtime body mutation**: `setBodyType`, `setBodyGravityScale`,
+  `setBodyFilter`, `setBodyOneWay`, `applyLinearImpulse`, `setBodyDamping`,
+  `setBodyFriction`, `setBodyRestitution`. Several of the underlying native
+  symbols already existed but were only ever called at body-creation time.
+- New C wrapper symbols: `b2w_createBody`, `b2w_setBodyTransform`,
+  `b2w_setBodyType`, `b2w_getBodyType`, `b2w_setBodyTargetTransform`,
+  `b2w_setAngularVelocity`, `b2w_setBodyOneWay`, `b2w_castRayClosest`,
+  `b2w_castRayAll`, `b2w_queryAABB`, `b2w_setBodyLinearDamping`,
+  `b2w_setBodyAngularDamping`, `b2w_setBodyFriction`,
+  `b2w_setBodyRestitution`, `b2w_setBodyFilter64`.
+
+### Changed
+
+- **The pure-Dart backend now runs a fixed 1/60 s timestep** with a real
+  `alpha` remainder, matching what the Box2D backend always did. Web physics
+  was previously framerate-dependent: the same jump reached a different height
+  at 60 Hz and 144 Hz. Opt out with `PhysicsEngine.pureDart(fixedTimestep:
+  false)`.
+  This changes existing pure-Dart behaviour — drag compounds at a fixed rate
+  and sleep timers tick differently.
+- One-way platforms are now decided from the **contact normal** rather than the
+  mover's velocity, so a body that stalls at the apex of a jump inside a
+  platform still passes through. A pass-through latch holds until the bodies
+  separate, so a body rising through a platform is no longer caught on the way
+  out when the normal flips.
+- `loadBox2DLibrary()` eagerly resolves the newly added symbols. Bindings are
+  looked up lazily, so a stale `box2d_flutter.dll` used to report a healthy
+  `'box2d_v3'` backend and then throw "Failed to lookup symbol" mid-game, on
+  the first respawn. It now fails during `initialize()` and falls back cleanly
+  to pure Dart with an honest `'dart_fallback'`.
+- `b2w_createDynamicBody` / `b2w_createStaticBody` now forward to
+  `b2w_createBody`; their signatures are unchanged.
+
+### Fixed
+
+- **Contact events never fired on the native backend.** `b2DefaultShapeDef()`
+  zero-initialises, so `enableContactEvents` defaulted to false and the wrapper
+  never set it. Collisions resolved correctly — bodies landed and stacked as
+  expected — but `pollContactBeginEvents` and `pollContactEndEvents` stayed
+  permanently silent, while the pure-Dart backend generated events normally.
+  Anything built on contacts, including `PhysicsBodyComponent.isGrounded` and
+  therefore every jump in a platformer, worked on web and silently did nothing
+  on desktop and mobile.
+- Kinematic bodies no longer free-fall. Box2D gates gravity on inverse mass
+  rather than body type (`gravityScale = invMass > 0 ? gravityScale : 0`), so
+  the existing unconditional mass override gave kinematic bodies a non-zero
+  inverse mass and gravity applied. Mass and shape density are now overridden
+  for dynamic bodies only.
+- `applyLinearImpulse` on the native backend mirrors the resulting velocity
+  back into the Dart body. `update()` pushes `body.velocity` into native every
+  frame, so an impulse applied between frames was integrated by Box2D and then
+  overwritten by the stale Dart value on the very next push.
+- `setBodyTransform` writes both the previous and current interpolation
+  snapshots, so a teleport no longer renders as a streak from the old position
+  to the new one.
+- Per-body linear damping now reaches the native backend; `PhysicsBody.drag`
+  was pure-Dart only, so air drag existed on web and not on device.
+
+### Known limitations
+
+- `setBodySensor` remains create-time-only on the native backend. Box2D forbids
+  converting a shape between sensor and solid at runtime because it breaks the
+  sensor begin/end event contract; the call now logs a warning instead of
+  silently doing nothing. Gate a trigger with `isActive` or a collision filter.
+- The pure-Dart narrow phase still ignores body rotation entirely, so on web a
+  rotated body collides as its unrotated shape. Use `fixedRotation: true` for
+  characters.
+- One-way platforms can differ slightly between backends on sloped geometry:
+  this Box2D fork's pre-solve callback receives only `(point, normal)`, with no
+  contact separation, so the normal threshold is the only signal available.
+
+### Tests
+
+- New `test/platformer_parity_test.dart`: fixed-timestep frame-rate
+  independence, `gravityScale`, kinematic bodies, one-way platforms, runtime
+  mutation, ray casting, and contact/sensor events — asserted against the pure-Dart backend and
+  replayed against the native one, skipping rather than failing when the Box2D
+  submodule has not been built.
+
 ## 1.2.2 - 2026-08-02
 
 Correctness and WASM-compatibility patch release.

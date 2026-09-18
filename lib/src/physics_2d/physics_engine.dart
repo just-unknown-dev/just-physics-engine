@@ -29,7 +29,29 @@ class PhysicsEngine {
   ///
   /// Use this when you intentionally want the Dart implementation regardless
   /// of platform selection.
-  PhysicsEngine.pureDart();
+  ///
+  /// [fixedTimestep] runs the simulation in fixed 1/60 s increments with a
+  /// leftover accumulator exposed as [alpha], mirroring what the Box2D
+  /// backend has always done. Without it the integrator consumes the raw
+  /// frame delta, so results depend on refresh rate — the same jump reaches a
+  /// different height at 60 Hz and 144 Hz. Pass `false` only to restore the
+  /// pre-1.3 behaviour.
+  PhysicsEngine.pureDart({this.fixedTimestep = true});
+
+  /// Whether [update] sub-steps at a fixed 1/60 s. See [PhysicsEngine.pureDart].
+  final bool fixedTimestep;
+
+  /// The fixed simulation increment used when [fixedTimestep] is set.
+  /// Matches `Box2DWorld._fixedDt` so both backends integrate identically.
+  static const double fixedDeltaTime = 1.0 / 60.0;
+
+  /// Upper bound on accumulated time carried into one [update], expressed in
+  /// sub-steps. Without it a long stall (a breakpoint, a backgrounded tab)
+  /// hands the next frame a huge delta, which runs hundreds of sub-steps,
+  /// which stalls again — the spiral of death. Matches the Box2D backend.
+  static const int maxSubSteps = 5;
+
+  double _accumulator = 0.0;
 
   /// All physics bodies — list preserves insertion order for deterministic iteration.
   final List<PhysicsBody> _bodies = [];
@@ -46,9 +68,12 @@ class PhysicsEngine {
 
   /// Sub-frame interpolation alpha in [0, 1) for render-smooth positioning.
   ///
-  /// Always 0.0 on the pure-Dart backend (no fixed-step accumulator).
-  /// [Box2DPhysicsEngine] overrides this with the native accumulator remainder.
-  double get alpha => 0.0;
+  /// The fraction of a fixed step left unconsumed by the last [update]. Zero
+  /// when [fixedTimestep] is off, since there is then no leftover to
+  /// interpolate across. [Box2DPhysicsEngine] overrides this with the native
+  /// accumulator remainder.
+  double get alpha =>
+      fixedTimestep ? (_accumulator / fixedDeltaTime).clamp(0.0, 1.0) : 0.0;
 
   // ── Sensor state ──────────────────────────────────────────────────────────
   // Tracks which sensor pairs are currently overlapping (uses identity keys).
@@ -63,6 +88,17 @@ class PhysicsEngine {
   final Set<BodyPair> _activeContactPairs = {};
   final List<(BodyPair pair, double nx, double ny)> _contactBeginBuffer = [];
   final List<BodyPair> _contactEndBuffer = [];
+
+  // ── One-way pass-through latch ────────────────────────────────────────────
+  // Pairs currently mid-pass-through. Once a one-way contact is allowed to
+  // pass, it keeps passing until the two bodies separate completely.
+  //
+  // Without this, a body rising through a platform is caught on the way *out*:
+  // the contact normal is derived from the overlap, so the moment the body's
+  // centre crosses the platform the normal flips and the contact reads as a
+  // legitimate landing-from-above. The latch is what makes "jump up through a
+  // platform" work rather than snagging halfway.
+  final Set<BodyPair> _oneWayPassThroughPairs = {};
 
   /// Initialize the physics engine
   void initialize() {
@@ -88,67 +124,136 @@ class PhysicsEngine {
   // Persistent Stopwatch instance — reused every frame to avoid heap allocation.
   final Stopwatch _stepStopwatch = Stopwatch();
 
-  /// Update physics simulation
+  /// Advance the simulation by [deltaTime] seconds.
+  ///
+  /// When [fixedTimestep] is set this drains an accumulator in fixed
+  /// [fixedDeltaTime] increments, so a frame may run zero, one or several
+  /// sub-steps. Event buffers are cleared *here* rather than per sub-step so
+  /// that events raised by an early sub-step survive until the caller polls
+  /// them — the poll API is once-per-frame, not once-per-step.
   void update(double deltaTime) {
     _stepStopwatch
       ..reset()
       ..start();
-    var awakeBodyCount = 0;
+
     _lastResolvedCollisionCount = 0;
+    _lastAwakeBodyCount = 0;
 
-    // Update all bodies
-    for (final body in _bodies) {
-      if (body.isActive) {
-        if (body.isAwake) {
-          awakeBodyCount++;
-          // Calculate total acceleration for this frame (in-place)
-          _accel.setFrom(body.acceleration);
-          if (body.useGravity) {
-            _accel.add(gravity);
-          }
+    // Cleared once per frame, not once per sub-step: _detectCollisions()
+    // appends to these, and clearing inside it would discard everything the
+    // first sub-step found the moment a second one ran.
+    _sensorBeginBuffer.clear();
+    _sensorEndBuffer.clear();
+    _contactBeginBuffer.clear();
+    _contactEndBuffer.clear();
 
-          // Check for sleeping
-          if (body.velocity.lengthSquared <
-                  body.sleepVelocityThreshold * body.sleepVelocityThreshold &&
-              _accel.lengthSquared < 0.1) {
-            body.sleepTimer += deltaTime;
-            if (body.sleepTimer >= body.sleepTimeThreshold) {
-              body.isAwake = false;
-              body.velocity.setZero();
-              body.acceleration.setZero();
-            }
-          } else {
-            body.sleepTimer = 0.0;
-          }
-
-          if (body.isAwake) {
-            if (body.mass <= 0) continue; // static — never integrate
-
-            // Semi-Implicit Euler Integration — all in-place Vec2 ops
-            // 1. Update velocity: v += accel * dt
-            body.velocity.addScaled(_accel, deltaTime);
-            if (!body.fixedRotation) {
-              body.angularVelocity +=
-                  (body.torque * body.inverseInertia) * deltaTime;
-            }
-
-            // Apply drag (simple linear drag)
-            final dragFactor = 1.0 - body.drag * deltaTime;
-            body.velocity.scale(dragFactor);
-            body.angularVelocity *= dragFactor;
-
-            // 2. Update position: x += v * dt
-            body.position.addScaled(body.velocity, deltaTime);
-            if (!body.fixedRotation) {
-              body.angle += body.angularVelocity * deltaTime;
-            }
-
-            // Reset acceleration for the next frame
-            body.acceleration.setZero();
-            body.torque = 0.0;
-          }
-        }
+    if (fixedTimestep) {
+      _accumulator += deltaTime;
+      final maxAccumulated = fixedDeltaTime * maxSubSteps;
+      if (_accumulator > maxAccumulated) _accumulator = maxAccumulated;
+      while (_accumulator >= fixedDeltaTime) {
+        _stepFixed(fixedDeltaTime);
+        _accumulator -= fixedDeltaTime;
       }
+    } else {
+      _accumulator = 0.0;
+      _stepFixed(deltaTime);
+    }
+
+    // Body move events (Dart fallback: track awake transitions).
+    _moveEventBuffer.clear();
+    for (final body in _bodies) {
+      if (body.isStatic) continue; // static bodies don't move
+      final wasAwake = _prevAwake[body] ?? true;
+      final fellAsleep = wasAwake && !body.isAwake;
+      if (body.isAwake || fellAsleep) {
+        _moveEventBuffer.add((body: body, fellAsleep: fellAsleep));
+      }
+      _prevAwake[body] = body.isAwake;
+    }
+
+    _stepStopwatch.stop();
+    _lastStepMs = _stepStopwatch.elapsedMicroseconds / 1000.0;
+  }
+
+  /// One simulation sub-step: integrate, collide, then satisfy joints.
+  ///
+  /// [deltaTime] is [fixedDeltaTime] under [fixedTimestep], otherwise the raw
+  /// frame delta. Frame-scoped bookkeeping (buffer clearing, move events,
+  /// timing) belongs in [update], not here — this runs more than once a frame.
+  void _stepFixed(double deltaTime) {
+    var awakeBodyCount = 0;
+
+    for (final body in _bodies) {
+      if (!body.isActive || !body.isAwake) continue;
+      awakeBodyCount++;
+
+      switch (body.effectiveBodyType) {
+        case BodyType.static:
+          // Never integrates and is never moved by the solver.
+          continue;
+
+        case BodyType.kinematic:
+          // Driven purely by whatever wrote `velocity` — no gravity, no
+          // accumulated force, no drag. Deliberately exempt from the sleep
+          // heuristic below: a moving platform creeping along under the
+          // velocity threshold would otherwise be put to sleep and stop dead,
+          // and nothing would ever wake it because no force acts on it.
+          body.position.addScaled(body.velocity, deltaTime);
+          if (!body.fixedRotation) {
+            body.angle += body.angularVelocity * deltaTime;
+          }
+          body.acceleration.setZero();
+          body.torque = 0.0;
+          continue;
+
+        case BodyType.dynamic:
+          break;
+      }
+
+      // Total acceleration for this sub-step (in-place).
+      _accel.setFrom(body.acceleration);
+      // effectiveGravityScale folds in both the useGravity switch and the
+      // per-body multiplier that variable jump height is built on.
+      _accel.addScaled(gravity, body.effectiveGravityScale);
+
+      // Check for sleeping
+      if (body.velocity.lengthSquared <
+              body.sleepVelocityThreshold * body.sleepVelocityThreshold &&
+          _accel.lengthSquared < 0.1) {
+        body.sleepTimer += deltaTime;
+        if (body.sleepTimer >= body.sleepTimeThreshold) {
+          body.isAwake = false;
+          body.velocity.setZero();
+          body.acceleration.setZero();
+        }
+      } else {
+        body.sleepTimer = 0.0;
+      }
+
+      if (!body.isAwake) continue;
+
+      // Semi-Implicit Euler Integration — all in-place Vec2 ops
+      // 1. Update velocity: v += accel * dt
+      body.velocity.addScaled(_accel, deltaTime);
+      if (!body.fixedRotation) {
+        body.angularVelocity += (body.torque * body.inverseInertia) * deltaTime;
+      }
+
+      // Apply drag (simple linear drag)
+      final dragFactor = 1.0 - body.drag * deltaTime;
+      body.velocity.scale(dragFactor);
+      body.angularVelocity *= dragFactor;
+
+      // 2. Update position: x += v * dt
+      body.position.addScaled(body.velocity, deltaTime);
+      if (!body.fixedRotation) {
+        body.angle += body.angularVelocity * deltaTime;
+      }
+
+      // Reset acceleration for the next sub-step
+      body.acceleration.setZero();
+      body.torque = 0.0;
     }
 
     // Simple collision detection
@@ -159,21 +264,9 @@ class PhysicsEngine {
       joint.applyConstraint(deltaTime);
     }
 
-    // Body move events (Dart fallback: track awake transitions).
-    _moveEventBuffer.clear();
-    for (final body in _bodies) {
-      if (body.mass <= 0) continue; // static bodies don't move
-      final wasAwake = _prevAwake[body] ?? true;
-      final fellAsleep = wasAwake && !body.isAwake;
-      if (body.isAwake || fellAsleep) {
-        _moveEventBuffer.add((body: body, fellAsleep: fellAsleep));
-      }
-      _prevAwake[body] = body.isAwake;
+    if (awakeBodyCount > _lastAwakeBodyCount) {
+      _lastAwakeBodyCount = awakeBodyCount;
     }
-
-    _stepStopwatch.stop();
-    _lastAwakeBodyCount = awakeBodyCount;
-    _lastStepMs = _stepStopwatch.elapsedMicroseconds / 1000.0;
   }
 
   /// Add a physics body
@@ -194,6 +287,114 @@ class PhysicsEngine {
   /// Broad-phase grid
   final SpatialGrid _grid = SpatialGrid(100.0);
 
+  // ── Runtime body mutation ─────────────────────────────────────────────────
+  //
+  // Everything below is overridden by Box2DPhysicsEngine to also push the
+  // change into the native simulation. The implementations here are the real
+  // ones for the pure-Dart backend (which is also the web backend), so a
+  // subclass override that forgets to call super must reproduce the state
+  // write itself.
+
+  /// Teleport [body] to ([x], [y]), optionally also setting [angle].
+  ///
+  /// This is a discontinuous move: it breaks contacts and discards any solver
+  /// warm-start for the body, so it is meant for respawns, checkpoints, level
+  /// loads and warps — not for per-frame movement. Drive continuous motion
+  /// with `velocity` instead.
+  ///
+  /// The body is woken, since a teleported sleeping body would otherwise sit
+  /// inert at its new location until something else disturbed it.
+  void setBodyTransform(
+    PhysicsBody body,
+    double x,
+    double y, {
+    double? angle,
+  }) {
+    body.position.setValues(x, y);
+    if (angle != null) body.angle = angle;
+    body.isAwake = true;
+    body.sleepTimer = 0.0;
+    // Force the broad-phase to re-bin the body from scratch: its cached cell
+    // range is for the old position and a large jump would otherwise leave it
+    // registered in cells it no longer occupies until the next sync.
+    _grid.removeBody(body);
+  }
+
+  /// Change how [body] participates in the simulation.
+  void setBodyType(PhysicsBody body, BodyType type) {
+    body.bodyType = type;
+  }
+
+  /// Set the per-body gravity multiplier. See [PhysicsBody.gravityScale].
+  void setBodyGravityScale(PhysicsBody body, double scale) {
+    body.gravityScale = scale;
+  }
+
+  /// Change [body]'s collision filter at runtime.
+  ///
+  /// Omitted arguments keep their current value, so flipping a single layer
+  /// does not require restating the others.
+  void setBodyFilter(
+    PhysicsBody body, {
+    int? categoryBits,
+    int? maskBits,
+    int? groupIndex,
+  }) {
+    if (categoryBits != null) body.categoryBits = categoryBits;
+    if (maskBits != null) body.maskBits = maskBits;
+    if (groupIndex != null) body.groupIndex = groupIndex;
+  }
+
+  /// Turn [body] into a one-way / pass-through platform, solid only when
+  /// approached from [direction].
+  void setBodyOneWay(
+    PhysicsBody body,
+    bool enabled, {
+    OneWayDirection direction = OneWayDirection.fromAbove,
+  }) {
+    body.isOneWay = enabled;
+    body.oneWayDirection = direction;
+  }
+
+  /// Apply an instantaneous change in momentum to [body].
+  ///
+  /// Unlike writing `velocity` directly this preserves existing motion, which
+  /// is what knockback, bounce pads and explosions want.
+  void applyLinearImpulse(PhysicsBody body, double ix, double iy) {
+    if (!body.isDynamic) return;
+    body.velocity.x += ix * body.inverseMass;
+    body.velocity.y += iy * body.inverseMass;
+    body.isAwake = true;
+    body.sleepTimer = 0.0;
+  }
+
+  /// Set [body]'s linear damping (velocity decay per second).
+  void setBodyDamping(PhysicsBody body, double damping) {
+    body.drag = damping;
+  }
+
+  /// Set [body]'s surface friction. Swap this to make a platform icy or sticky.
+  void setBodyFriction(PhysicsBody body, double friction) {
+    body.friction = friction;
+  }
+
+  /// Set [body]'s bounciness.
+  void setBodyRestitution(PhysicsBody body, double restitution) {
+    body.restitution = restitution;
+  }
+
+  /// Toggle sensor mode on [body].
+  ///
+  /// Honoured fully here, but **not** on the Box2D backend: Box2D forbids
+  /// converting a shape between sensor and solid at runtime because it breaks
+  /// the begin/end sensor event contract. [Box2DPhysicsEngine] warns and
+  /// leaves the native shape alone, so code that must work on every platform
+  /// should create the body as a sensor and toggle `isActive` or the collision
+  /// filter instead.
+  void setBodySensor(PhysicsBody body, bool isSensor) {
+    body.isSensor = isSensor;
+  }
+
   /// Returns true if two bodies should interact (collision filter + group index).
   bool _shouldBodiesCollide(PhysicsBody a, PhysicsBody b) {
     if (a.groupIndex != 0 && a.groupIndex == b.groupIndex) {
@@ -212,17 +413,18 @@ class PhysicsEngine {
     final potentialPairs = _grid.getPotentialCollisions();
     _lastPotentialPairCount = potentialPairs.length;
 
-    // Reset sensor buffers for this step.
-    _sensorBeginBuffer.clear();
-    _sensorEndBuffer.clear();
+    // NOTE: the four event buffers are cleared once per frame by update(),
+    // not here — this method runs once per sub-step, and clearing per sub-step
+    // would silently drop every event raised before the final one.
     final previousSensorPairs = Set<BodyPair>.from(_activeSensorPairs);
     final currentSensorPairs = <BodyPair>{};
 
-    // Reset contact buffers for this step.
-    _contactBeginBuffer.clear();
-    _contactEndBuffer.clear();
     final previousContactPairs = Set<BodyPair>.from(_activeContactPairs);
     final currentContactPairs = <BodyPair>{};
+
+    // Latched one-way pairs seen overlapping this step; anything latched but
+    // absent has separated and is released below.
+    final currentOneWayPairs = <BodyPair>{};
 
     for (final pair in potentialPairs) {
       final bodyA = pair.a;
@@ -259,16 +461,25 @@ class PhysicsEngine {
         continue;
       }
 
-      // One-way / pass-through platforms: skip resolution while the dynamic
-      // side of the pair is moving upward (velocity.y <= 0), so it can pass
-      // through from below and only lands when moving downward onto it.
-      // Mirrors the pure-Dart-only isOneWay semantics documented on
-      // PhysicsBodyComponent — matches the tie-break (prefer bodyA when it's
-      // the dynamic side) of the ECS PhysicsSystem this logic was ported
-      // from.
-      if (bodyA.isOneWay || bodyB.isOneWay) {
-        final dynBody = bodyA.mass > 0 ? bodyA : bodyB;
-        if (dynBody.velocity.y <= 0) continue;
+      // One-way / pass-through platforms.
+      //
+      // Decided from the contact normal rather than the mover's velocity so
+      // this agrees with the native Box2D pre-solve filter, which is only
+      // handed (point, normal) and cannot read velocity safely from a worker
+      // thread. A body that jumps up through a platform and stalls at the apex
+      // still passes through, which the old velocity test got wrong.
+      //
+      // Two one-way bodies meeting each other resolve normally — neither has a
+      // claim to pass through the other.
+      if (bodyA.isOneWay != bodyB.isOneWay) {
+        if (_oneWayPassThroughPairs.contains(pair) ||
+            !_oneWayContactIsSolid(bodyA, bodyB, best.normal)) {
+          // Latch it so the rest of the traversal keeps passing through even
+          // once the normal flips.
+          _oneWayPassThroughPairs.add(pair);
+          currentOneWayPairs.add(pair);
+          continue;
+        }
       }
 
       currentContactPairs.add(pair);
@@ -296,6 +507,10 @@ class PhysicsEngine {
         _contactEndBuffer.add(old);
       }
     }
+    // Release any latch whose bodies are no longer overlapping at all, so the
+    // next approach is judged fresh.
+    _oneWayPassThroughPairs.removeWhere((p) => !currentOneWayPairs.contains(p));
+
     _activeContactPairs
       ..clear()
       ..addAll(currentContactPairs);
@@ -344,6 +559,33 @@ class PhysicsEngine {
   }
 
   /// Resolve collision
+  /// Cosine threshold for a one-way contact, ~60 degrees of tolerance.
+  ///
+  /// Tighter values drop a player who lands on the very edge of a platform;
+  /// looser values let a player rising steeply from below catch on it. Kept
+  /// identical to the native pre-solve filter so both backends agree.
+  static const double _oneWaySolidCos = 0.5;
+
+  /// Whether a contact involving exactly one one-way body should be resolved.
+  ///
+  /// [normal] points from [a] to [b]; it is flipped as needed so the test
+  /// always reads "which way does the mover lie relative to the platform".
+  /// Screen-space convention: +Y is down, so "above" is negative Y.
+  bool _oneWayContactIsSolid(PhysicsBody a, PhysicsBody b, Offset normal) {
+    final platformIsA = a.isOneWay;
+    final platform = platformIsA ? a : b;
+    final sign = platformIsA ? 1.0 : -1.0;
+    final nx = sign * normal.dx;
+    final ny = sign * normal.dy;
+
+    return switch (platform.oneWayDirection) {
+      OneWayDirection.fromAbove => ny < -_oneWaySolidCos,
+      OneWayDirection.fromBelow => ny > _oneWaySolidCos,
+      OneWayDirection.fromLeft => nx < -_oneWaySolidCos,
+      OneWayDirection.fromRight => nx > _oneWaySolidCos,
+    };
+  }
+
   void _resolveCollision(
     PhysicsBody a,
     PhysicsBody b,
@@ -365,7 +607,13 @@ class PhysicsEngine {
     }
 
     // ── Positional correction (mass-proportional) ─────────────────────────
-    final inverseMassSum = a.inverseMass + b.inverseMass;
+    // solverInverseMass, not inverseMass: a kinematic body has a real mass but
+    // must be immovable, so it contributes zero here while still pushing the
+    // dynamic side out. When both sides are immovable the sum is zero and
+    // there is nothing to resolve.
+    final invMassA = a.solverInverseMass;
+    final invMassB = b.solverInverseMass;
+    final inverseMassSum = invMassA + invMassB;
 
     if (inverseMassSum == 0) return; // both immovable
 
@@ -373,10 +621,10 @@ class PhysicsEngine {
     const slop = 0.05;
     final correctionMag =
         math.max(penetration - slop, 0.0) / inverseMassSum * correctionPercent;
-    a.position.x -= normal.dx * correctionMag * a.inverseMass;
-    a.position.y -= normal.dy * correctionMag * a.inverseMass;
-    b.position.x += normal.dx * correctionMag * b.inverseMass;
-    b.position.y += normal.dy * correctionMag * b.inverseMass;
+    a.position.x -= normal.dx * correctionMag * invMassA;
+    a.position.y -= normal.dy * correctionMag * invMassA;
+    b.position.x += normal.dx * correctionMag * invMassB;
+    b.position.y += normal.dy * correctionMag * invMassB;
 
     // ── Impulse resolution ────────────────────────────────────────────────
     final rvx = b.velocity.x - a.velocity.x;
@@ -390,10 +638,10 @@ class PhysicsEngine {
 
     final jnx = normal.dx * j;
     final jny = normal.dy * j;
-    a.velocity.x -= jnx * a.inverseMass;
-    a.velocity.y -= jny * a.inverseMass;
-    b.velocity.x += jnx * b.inverseMass;
-    b.velocity.y += jny * b.inverseMass;
+    a.velocity.x -= jnx * invMassA;
+    a.velocity.y -= jny * invMassA;
+    b.velocity.x += jnx * invMassB;
+    b.velocity.y += jny * invMassB;
 
     // ── Friction (Tangent Impulse) ──────────────────────────────────────────
     final rvx2 = b.velocity.x - a.velocity.x;
@@ -416,10 +664,10 @@ class PhysicsEngine {
         fScalar = (fScalar > 0 ? 1.0 : -1.0) * j * mu;
       }
 
-      a.velocity.x -= tx * fScalar * a.inverseMass;
-      a.velocity.y -= ty * fScalar * a.inverseMass;
-      b.velocity.x += tx * fScalar * b.inverseMass;
-      b.velocity.y += ty * fScalar * b.inverseMass;
+      a.velocity.x -= tx * fScalar * invMassA;
+      a.velocity.y -= ty * fScalar * invMassA;
+      b.velocity.x += tx * fScalar * invMassB;
+      b.velocity.y += ty * fScalar * invMassB;
     }
   }
 

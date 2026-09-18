@@ -65,7 +65,69 @@ class Box2DBody implements Finalizable {
       ..prevAngle = angle;
   }
 
+  /// Create a body of any [BodyType].
+  ///
+  /// [bodyTypeIndex] is `BodyType.index`, which matches Box2D's `b2BodyType`
+  /// ordinals exactly (static=0, kinematic=1, dynamic=2), so no translation
+  /// table is needed. The `.dynamic`/`.static` factories above remain for
+  /// existing callers.
+  factory Box2DBody.ofType({
+    required int worldHandle,
+    required int bodyTypeIndex,
+    required double posX,
+    required double posY,
+    double angle = 0.0,
+  }) {
+    final h = box2d.b2w_createBody(
+      worldHandle,
+      bodyTypeIndex,
+      posX,
+      posY,
+      angle,
+    );
+    return Box2DBody._(handle: h)
+      ..currentX = posX
+      ..currentY = posY
+      ..currentAngle = angle
+      ..prevX = posX
+      ..prevY = posY
+      ..prevAngle = angle;
+  }
+
   int get handle => _handle;
+
+  /// Teleport the native body, keeping the interpolation state consistent.
+  ///
+  /// Writes *both* the current and previous snapshots. Setting only `current`
+  /// would leave `prev` at the old location, and TransformInterpolator would
+  /// render the body streaking across the level over the following frame —
+  /// every respawn would draw a line from the death point to the checkpoint.
+  void setTransform(double x, double y, double angle, {bool wake = true}) {
+    _throwIfDestroyed();
+    box2d.b2w_setBodyTransform(_handle, x, y, angle, wake ? 1 : 0);
+    currentX = x;
+    currentY = y;
+    currentAngle = angle;
+    prevX = x;
+    prevY = y;
+    prevAngle = angle;
+  }
+
+  /// This body's current [BodyType] index, as Box2D reports it.
+  int get typeIndex {
+    _throwIfDestroyed();
+    return box2d.b2w_getBodyType(_handle);
+  }
+
+  /// Change the body type.
+  ///
+  /// Box2D recomputes mass properties and rebuilds contacts, and it **resets
+  /// any mass override** — callers must re-apply the configured mass after
+  /// a real change. [Box2DPhysicsEngine.setBodyType] handles both.
+  void setType(int bodyTypeIndex) {
+    _throwIfDestroyed();
+    box2d.b2w_setBodyType(_handle, bodyTypeIndex);
+  }
 
   /// Snapshot current → previous before each physics step.
   /// Must be called once per frame, before [Box2DWorld.step].
