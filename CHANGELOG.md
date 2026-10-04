@@ -1,58 +1,5 @@
 ## 1.3.0 - 2026-10-04
 
-### Added
-
-- **`CircleShape(radius, center: ...)`** — a circle off its body's centre:
-  a character's feet, a wheel hung below a cart. Both backends collide,
-  cast rays and draw it there; the native one also turns it with the body
-  (the pure-Dart backend does not turn shapes).
-- **`PhysicsBody.angularDamping`** — spin decay per second, as `drag` is
-  for velocity; 0 by default. `PhysicsEngine.setBodyAngularDamping`.
-- **`PhysicsBody.canSleep`** — false keeps a body awake at rest.
-  `PhysicsEngine.setBodyCanSleep`, which wakes the body when it forbids
-  sleep.
-- **`PhysicsEngine.setBodyBullet`** — continuous collision switched at
-  runtime; before, only at creation.
-
-### Fixed
-
-- **Spin on the native backend.** `PhysicsBody.angularVelocity` was never
-  read back from Box2D nor written to it: a body spun by a collision read
-  0, and one given a spin started still. Both directions now sync, the
-  write only when something changed the value.
-- **A solid body could come out a sensor on the native backend.** The
-  wrapper keeps each body's sensor flag by handle, handles come back (a new
-  world, or a reused slot), and `addBody` wrote the flag only for sensors.
-  A solid body given a dead sensor's handle let everything through.
-  `addBody` now writes the flag for every body, and destroying a body
-  forgets its flag.
-- **Heavy damping reversed a body on the pure-Dart backend.** Each step
-  scaled velocity by `1 - drag * dt`, which goes negative once
-  `drag * dt > 1` (a drag of 100 at 60 fps): the body flipped direction
-  instead of stopping. The factor, and the new spin one, now stop at 0.
-
-### Changed
-
-- **The pure-Dart backend's `drag` no longer slows spin**; `angularDamping`
-  does, as on Box2D. A body that relied on drag to stop spinning on the web
-  sets `angularDamping` instead.
-- **The pure-Dart backend skips pairs of static bodies**, as Box2D does.
-  They cannot move, so they can neither push each other nor start or stop
-  touching; a level built from hundreds of static pieces (a tile map's
-  collision) no longer tests every neighbouring pair each step, and pieces
-  of the same floor no longer report contacts or sensor events between
-  themselves.
-- Native ABI (only this package's own bindings call it):
-  `b2w_addCircleShape` takes the centre after the body handle;
-  `b2w_bulkExtractTransforms` writes 7 floats per body (the 7th the
-  angular velocity); new `b2w_setBodySleepEnabled`.
-
-### Dependencies
-
-- `just_dart: ^0.2.0` (was `^0.1.0`).
-
-## 1.3.0 - 2026-09-17
-
 Cross-platform parity release. Closes the gaps where the native Box2D backend
 silently behaved differently from the pure-Dart one — all of which a 2D
 platformer runs straight into.
@@ -82,12 +29,24 @@ platformer runs straight into.
   `setBodyFilter`, `setBodyOneWay`, `applyLinearImpulse`, `setBodyDamping`,
   `setBodyFriction`, `setBodyRestitution`. Several of the underlying native
   symbols already existed but were only ever called at body-creation time.
+- **`CircleShape(radius, center: ...)`** — a circle off its body's centre:
+  a character's feet, a wheel hung below a cart. Both backends collide,
+  cast rays and draw it there; the native one also turns it with the body
+  (the pure-Dart backend does not turn shapes).
+- **`PhysicsBody.angularDamping`** — spin decay per second, as `drag` is
+  for velocity; 0 by default. `PhysicsEngine.setBodyAngularDamping`.
+- **`PhysicsBody.canSleep`** — false keeps a body awake at rest.
+  `PhysicsEngine.setBodyCanSleep`, which wakes the body when it forbids
+  sleep.
+- **`PhysicsEngine.setBodyBullet`** — continuous collision switched at
+  runtime; before, only at creation.
 - New C wrapper symbols: `b2w_createBody`, `b2w_setBodyTransform`,
   `b2w_setBodyType`, `b2w_getBodyType`, `b2w_setBodyTargetTransform`,
   `b2w_setAngularVelocity`, `b2w_setBodyOneWay`, `b2w_castRayClosest`,
   `b2w_castRayAll`, `b2w_queryAABB`, `b2w_setBodyLinearDamping`,
   `b2w_setBodyAngularDamping`, `b2w_setBodyFriction`,
-  `b2w_setBodyRestitution`, `b2w_setBodyFilter64`.
+  `b2w_setBodyRestitution`, `b2w_setBodyFilter64`,
+  `b2w_setBodySleepEnabled`.
 
 ### Changed
 
@@ -110,6 +69,19 @@ platformer runs straight into.
   to pure Dart with an honest `'dart_fallback'`.
 - `b2w_createDynamicBody` / `b2w_createStaticBody` now forward to
   `b2w_createBody`; their signatures are unchanged.
+- **The pure-Dart backend's `drag` no longer slows spin**; `angularDamping`
+  does, as on Box2D. A body that relied on drag to stop spinning on the web
+  sets `angularDamping` instead.
+- **The pure-Dart backend skips pairs of static bodies**, as Box2D does.
+  They cannot move, so they can neither push each other nor start or stop
+  touching; a level built from hundreds of static pieces (a tile map's
+  collision) no longer tests every neighbouring pair each step, and pieces
+  of the same floor no longer report contacts or sensor events between
+  themselves.
+- Native ABI (only this package's own bindings call it):
+  `b2w_addCircleShape` takes the centre after the body handle;
+  `b2w_bulkExtractTransforms` writes 7 floats per body (the 7th the
+  angular velocity).
 
 ### Fixed
 
@@ -135,6 +107,20 @@ platformer runs straight into.
   to the new one.
 - Per-body linear damping now reaches the native backend; `PhysicsBody.drag`
   was pure-Dart only, so air drag existed on web and not on device.
+- **Spin on the native backend.** `PhysicsBody.angularVelocity` was never
+  read back from Box2D nor written to it: a body spun by a collision read
+  0, and one given a spin started still. Both directions now sync, the
+  write only when something changed the value.
+- **A solid body could come out a sensor on the native backend.** The
+  wrapper keeps each body's sensor flag by handle, handles come back (a new
+  world, or a reused slot), and `addBody` wrote the flag only for sensors.
+  A solid body given a dead sensor's handle let everything through.
+  `addBody` now writes the flag for every body, and destroying a body
+  forgets its flag.
+- **Heavy damping reversed a body on the pure-Dart backend.** Each step
+  scaled velocity by `1 - drag * dt`, which goes negative once
+  `drag * dt > 1` (a drag of 100 at 60 fps): the body flipped direction
+  instead of stopping. The factor, and the new spin one, now stop at 0.
 
 ### Known limitations
 
@@ -149,6 +135,10 @@ platformer runs straight into.
   this Box2D fork's pre-solve callback receives only `(point, normal)`, with no
   contact separation, so the normal threshold is the only signal available.
 
+### Dependencies
+
+- `just_dart: ^0.2.0` (was `^0.1.0`).
+
 ### Tests
 
 - New `test/platformer_parity_test.dart`: fixed-timestep frame-rate
@@ -156,6 +146,10 @@ platformer runs straight into.
   mutation, ray casting, and contact/sensor events — asserted against the pure-Dart backend and
   replayed against the native one, skipping rather than failing when the Box2D
   submodule has not been built.
+- New `test/static_pairs_test.dart`: overlapping static bodies raise no
+  contacts or sensor events, and a moving body still lands on them.
+- New `test/body_settings_test.dart`: an off-centre circle, angular damping
+  against drag, `canSleep`, and continuous collision switched at runtime.
 
 ## 1.2.2 - 2026-08-02
 
