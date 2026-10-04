@@ -19,6 +19,10 @@ class Box2DBody implements Finalizable {
   double velocityX = 0.0;
   double velocityY = 0.0;
 
+  /// The spin native reported after the last step, so a different value on
+  /// the Dart body is known to be a write to push.
+  double angularVelocity = 0.0;
+
   // ~1 KB per body (b2BodySim + b2BodyState in Box2D 3.0 internals).
   static final _finalizer = NativeFinalizer(box2dFinalizerBody);
 

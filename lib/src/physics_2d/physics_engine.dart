@@ -218,7 +218,8 @@ class PhysicsEngine {
       _accel.addScaled(gravity, body.effectiveGravityScale);
 
       // Check for sleeping
-      if (body.velocity.lengthSquared <
+      if (body.canSleep &&
+          body.velocity.lengthSquared <
               body.sleepVelocityThreshold * body.sleepVelocityThreshold &&
           _accel.lengthSquared < 0.1) {
         body.sleepTimer += deltaTime;
@@ -240,10 +241,14 @@ class PhysicsEngine {
         body.angularVelocity += (body.torque * body.inverseInertia) * deltaTime;
       }
 
-      // Apply drag (simple linear drag)
+      // Damping: drag slows the velocity and angular damping the spin, each
+      // on its own, as on the native backend.
       final dragFactor = 1.0 - body.drag * deltaTime;
-      body.velocity.scale(dragFactor);
-      body.angularVelocity *= dragFactor;
+      body.velocity.scale(dragFactor < 0 ? 0 : dragFactor);
+      if (body.angularDamping != 0.0) {
+        final spinFactor = 1.0 - body.angularDamping * deltaTime;
+        body.angularVelocity *= spinFactor < 0 ? 0 : spinFactor;
+      }
 
       // 2. Update position: x += v * dt
       body.position.addScaled(body.velocity, deltaTime);
@@ -371,6 +376,26 @@ class PhysicsEngine {
   /// Set [body]'s linear damping (velocity decay per second).
   void setBodyDamping(PhysicsBody body, double damping) {
     body.drag = damping;
+  }
+
+  /// Set [body]'s angular damping (spin decay per second).
+  void setBodyAngularDamping(PhysicsBody body, double damping) {
+    body.angularDamping = damping;
+  }
+
+  /// Allow or forbid [body] to fall asleep. Forbidding it wakes the body.
+  void setBodyCanSleep(PhysicsBody body, bool canSleep) {
+    body.canSleep = canSleep;
+    if (!canSleep) {
+      body.isAwake = true;
+      body.sleepTimer = 0.0;
+    }
+  }
+
+  /// Turn continuous collision ([PhysicsBody.isBullet]) on or off for
+  /// [body]. Only the native backend has it; here it is just the flag.
+  void setBodyBullet(PhysicsBody body, bool isBullet) {
+    body.isBullet = isBullet;
   }
 
   /// Set [body]'s surface friction. Swap this to make a platform icy or sticky.
@@ -727,7 +752,11 @@ class PhysicsEngine {
     Paint paint,
   ) {
     if (shape is CircleShape) {
-      canvas.drawCircle(body.position.toOffset(), shape.radius, paint);
+      canvas.drawCircle(
+        shape.centerAt(body.position.toOffset()),
+        shape.radius,
+        paint,
+      );
     } else if (shape is CapsuleShape) {
       final wa1 = Offset(
         body.position.x + shape.center1.dx,
@@ -960,7 +989,7 @@ class PhysicsEngine {
     } else if (shape is SegmentShape) {
       return _rayHitSegmentShape(ray, pos, shape, body);
     } else if (shape is CircleShape) {
-      return _rayHitCircle(ray, pos, shape.radius, body);
+      return _rayHitCircle(ray, shape.centerAt(pos), shape.radius, body);
     } else if (shape is PolygonShape) {
       return _rayHitPolygonVerts(ray, shape.vertices, pos, body);
     }
@@ -1224,7 +1253,12 @@ class PhysicsEngine {
 
       RayBodyHit? hit;
       if (shape is CircleShape) {
-        hit = _rayHitCircle(ray, pos, shape.radius + radius, body);
+        hit = _rayHitCircle(
+          ray,
+          shape.centerAt(pos),
+          shape.radius + radius,
+          body,
+        );
       } else if (shape is PolygonShape) {
         // Expand polygon outward by radius (approximate: use SAT-inflated bounds)
         hit = _rayHitPolygonVerts(ray, shape.vertices, pos, body);

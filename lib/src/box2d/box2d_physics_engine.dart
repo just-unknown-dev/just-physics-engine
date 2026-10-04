@@ -63,7 +63,8 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   // ── Zero-copy transform buffers (calloc-allocated, persist for world life) ──
 
   Pointer<Int64>? _handleBuffer; // one int64 per tracked body
-  Pointer<Float>? _transformBuffer; // 6 floats per body: x,y,angle,vx,vy,pad
+  /// 7 floats per body: x, y, angle, vx, vy, awake, angular velocity.
+  Pointer<Float>? _transformBuffer;
   int _bufferCapacity = 0;
 
   // ── Dart-side sensor event accumulators ──────────────────────────────────
@@ -188,6 +189,12 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       // deliberately put to sleep is held here, which is what asleep means.
       if (body.mass > 0 && body.isAwake) {
         b2Body.setLinearVelocity(body.velocity.x, body.velocity.y);
+        // Spin only when something wrote it: native reported the value the
+        // Dart body holds after the last step, so a difference is a write.
+        if (body.angularVelocity != b2Body.angularVelocity) {
+          box2d.b2w_setAngularVelocity(b2Body.handle, body.angularVelocity);
+          b2Body.angularVelocity = body.angularVelocity;
+        }
         if (body.acceleration.x != 0.0 || body.acceleration.y != 0.0) {
           box2d.b2w_applyForce(
             b2Body.handle,
@@ -298,6 +305,10 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       if (body.velocity.x != 0.0 || body.velocity.y != 0.0) {
         b2Body.setLinearVelocity(body.velocity.x, body.velocity.y);
       }
+      if (body.angularVelocity != 0.0) {
+        box2d.b2w_setAngularVelocity(b2Body.handle, body.angularVelocity);
+        b2Body.angularVelocity = body.angularVelocity;
+      }
     }
 
     // Register sensor/bullet BEFORE adding shape fixtures so the C wrapper
@@ -365,6 +376,12 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     // exist on native while it did on web.
     if (body.drag != 0.0) {
       box2d.b2w_setBodyLinearDamping(b2Body.handle, body.drag);
+    }
+    if (body.angularDamping != 0.0) {
+      box2d.b2w_setBodyAngularDamping(b2Body.handle, body.angularDamping);
+    }
+    if (!body.canSleep) {
+      box2d.b2w_setBodySleepEnabled(b2Body.handle, 0);
     }
 
     _bodyMap[body] = b2Body;
@@ -497,6 +514,34 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     final b2Body = _bodyMap[body];
     if (b2Body == null) return;
     box2d.b2w_setBodyLinearDamping(b2Body.handle, damping);
+  }
+
+  @override
+  void setBodyAngularDamping(PhysicsBody body, double damping) {
+    super.setBodyAngularDamping(body, damping);
+    if (!_nativeReady) return;
+    final b2Body = _bodyMap[body];
+    if (b2Body == null) return;
+    box2d.b2w_setBodyAngularDamping(b2Body.handle, damping);
+  }
+
+  @override
+  void setBodyCanSleep(PhysicsBody body, bool canSleep) {
+    super.setBodyCanSleep(body, canSleep);
+    if (!_nativeReady) return;
+    final b2Body = _bodyMap[body];
+    if (b2Body == null) return;
+    box2d.b2w_setBodySleepEnabled(b2Body.handle, canSleep ? 1 : 0);
+    if (!canSleep) box2d.b2w_setBodyAwake(b2Body.handle, 1);
+  }
+
+  @override
+  void setBodyBullet(PhysicsBody body, bool isBullet) {
+    super.setBodyBullet(body, isBullet);
+    if (!_nativeReady) return;
+    final b2Body = _bodyMap[body];
+    if (b2Body == null) return;
+    box2d.b2w_setBodyBullet(b2Body.handle, isBullet ? 1 : 0);
   }
 
   @override
@@ -748,8 +793,9 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
   void _drawShape(Canvas canvas, CollisionShape shape, Paint paint) {
     if (shape is CircleShape) {
-      canvas.drawCircle(Offset.zero, shape.radius, paint);
-      canvas.drawLine(Offset.zero, Offset(shape.radius, 0), paint);
+      final c = shape.center;
+      canvas.drawCircle(c, shape.radius, paint);
+      canvas.drawLine(c, c + Offset(shape.radius, 0), paint);
     } else if (shape is CapsuleShape) {
       canvas.drawCircle(shape.center1, shape.radius, paint);
       canvas.drawCircle(shape.center2, shape.radius, paint);
@@ -1271,6 +1317,8 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     if (shape is CircleShape) {
       box2d.b2w_addCircleShape(
         handle,
+        shape.center.dx,
+        shape.center.dy,
         shape.radius,
         density,
         friction,
@@ -1381,7 +1429,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     if (oldH != null) calloc.free(oldH);
     if (oldT != null) calloc.free(oldT);
     _handleBuffer = calloc<Int64>(cap);
-    _transformBuffer = calloc<Float>(cap * 6);
+    _transformBuffer = calloc<Float>(cap * 7);
     _bufferCapacity = cap;
   }
 
@@ -1400,24 +1448,25 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       handles[i++] = b2Body.handle;
     }
 
-    // One FFI call writes x,y,angle,vx,vy,pad for every body.
+    // One FFI call writes x, y, angle, vx, vy, awake, spin for every body.
     box2d.b2w_bulkExtractTransforms(_handleBuffer!, _transformBuffer!, n);
 
     // Zero-copy view — reads directly from native memory.
-    final Float32List trs = _transformBuffer!.asTypedList(n * 6);
+    final Float32List trs = _transformBuffer!.asTypedList(n * 7);
 
     // Scatter results back to Dart body objects.
     i = 0;
     for (final entry in _bodyMap.entries) {
       final dartBody = entry.key; // PhysicsBody (ECS holds a reference to this)
       final b2Body = entry.value; // Box2DBody (FFI handle + prev/current state)
-      final base = i * 6;
+      final base = i * 7;
 
       b2Body.currentX = trs[base];
       b2Body.currentY = trs[base + 1];
       b2Body.currentAngle = trs[base + 2];
       b2Body.velocityX = trs[base + 3];
       b2Body.velocityY = trs[base + 4];
+      b2Body.angularVelocity = trs[base + 6];
 
       // Write through to PhysicsBody so existing ECS bridge works unchanged.
       dartBody.position.x = b2Body.currentX;
@@ -1425,6 +1474,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       dartBody.angle = b2Body.currentAngle;
       dartBody.velocity.x = b2Body.velocityX;
       dartBody.velocity.y = b2Body.velocityY;
+      dartBody.angularVelocity = b2Body.angularVelocity;
       // Sleep is a dynamic-body concept — static bodies always report
       // "not awake" natively and would otherwise flip PhysicsBody.isAwake
       // to false even though the user never asked for that.

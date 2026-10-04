@@ -42,7 +42,17 @@ Key members:
 - `void cachePolygonShape(String cacheId, List<Offset> vertices)`
 - `List<Offset>? getCachedPolygonShape(String cacheId)`
 
+Body settings, changed while the simulation runs (see [`PhysicsBody`](#physicsbody)):
+
+- `void setBodyDamping(PhysicsBody body, double damping)` — linear (`drag`)
+- `void setBodyAngularDamping(PhysicsBody body, double damping)` — spin decay per second
+- `void setBodyCanSleep(PhysicsBody body, bool canSleep)` — `false` also wakes the body
+- `void setBodyBullet(PhysicsBody body, bool isBullet)` — continuous collision; only the native backend acts on it
+
 `stats` includes diagnostics such as body count, awake bodies, broad-phase stats, resolved collisions, and step time.
+
+Two static bodies are never paired, on either backend: they cannot move, so
+they raise no contacts or sensor events between themselves.
 
 ## `Box2DPhysicsEngine` (native backend)
 
@@ -69,7 +79,7 @@ Shared simulation object used by both backends.
 
 Constructor:
 
-- `PhysicsBody({required Vector2 position, required CollisionShape shape, Vector2? velocity, Vector2? acceleration, double mass = 1.0, double restitution = 0.5, double friction = 0.2, double angle = 0.0, double angularVelocity = 0.0, double torque = 0.0, double inertia = 1.0, double drag = 0.1, bool useGravity = true, bool isActive = true, bool checkCollision = true, bool isAwake = true, double sleepTimer = 0.0, double sleepVelocityThreshold = 5.0, double sleepTimeThreshold = 0.5})`
+- `PhysicsBody({required Vector2 position, required CollisionShape shape, Vector2? velocity, Vector2? acceleration, double mass = 1.0, double restitution = 0.5, double friction = 0.2, double angle = 0.0, double angularVelocity = 0.0, double torque = 0.0, double inertia = 1.0, double drag = 0.1, double angularDamping = 0.0, bool useGravity = true, bool isActive = true, bool checkCollision = true, bool isAwake = true, bool canSleep = true, double sleepTimer = 0.0, double sleepVelocityThreshold = 5.0, double sleepTimeThreshold = 0.5, …})`
 
 Methods:
 
@@ -82,9 +92,16 @@ Common fields:
 - `position`, `velocity`, `acceleration`
 - `shape`
 - `mass`, `inverseMass`
-- `restitution`, `friction`, `drag`
+- `restitution`, `friction`, `drag`, `angularDamping` — `drag` slows only the velocity and `angularDamping` only the spin, on both backends
 - `angle`, `angularVelocity`, `torque`, `inertia`, `inverseInertia`
-- sleep and activity flags (`isActive`, `isAwake`, etc.)
+- sleep and activity flags (`isActive`, `isAwake`, `canSleep`, etc.)
+- `isBullet` (continuous collision; native backend only)
+
+Changed while the simulation runs through the engine, so the native backend
+hears it: `setBodyFriction`, `setBodyRestitution`, `setBodyDamping`,
+`setBodyAngularDamping`, `setBodyCanSleep` (forbidding sleep wakes the
+body), `setBodyBullet`, `setBodyType`, `setBodyGravityScale`,
+`setBodyFilter`, `setBodyOneWay`, `setBodyTransform`.
 
 ## `CollisionShape`
 
@@ -97,9 +114,15 @@ Methods:
 
 Implementations:
 
-- `CircleShape(double radius)`
+- `CircleShape(double radius, {Offset center = Offset.zero})` — `center` puts the circle off the body's position
 - `PolygonShape(List<Offset> vertices)`
 - `RectangleShape(double width, double height)`
+
+`CircleShape` members:
+
+- `double radius`
+- `Offset center` — relative to the body's position. The native backend rotates it with the body; the pure-Dart backend, which does not rotate shapes, leaves it where it is.
+- `Offset centerAt(Offset position)` — the circle's centre in the world for a body at `position`
 
 ## `CollisionManifold`
 
@@ -219,7 +242,7 @@ Members:
 - `void applyLinearImpulse(double ix, double iy)`
 - `void applyTorque(double t)`
 - `void setLinearVelocity(double vx, double vy)`
-- state fields: `prevX`, `prevY`, `prevAngle`, `currentX`, `currentY`, `currentAngle`, `velocityX`, `velocityY`
+- state fields: `prevX`, `prevY`, `prevAngle`, `currentX`, `currentY`, `currentAngle`, `velocityX`, `velocityY`, `angularVelocity` (the spin Box2D reported after the last step)
 
 ## `PhysicsGameLoop`
 

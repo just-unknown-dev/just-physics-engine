@@ -42,8 +42,15 @@ Core files:
 
 Key runtime flow per update:
 
-1. Integrate active and awake bodies (semi-implicit Euler).
-2. Sync broad-phase grid and build potential pairs.
+1. Integrate active and awake bodies (semi-implicit Euler). `drag` damps the
+   velocity and `angularDamping` the spin, each separately; both factors
+   (`1 - damping * dt`) are clamped at 0 so heavy damping stops a body rather
+   than reversing it. A body with `canSleep == false` never starts its sleep
+   timer.
+2. Sync broad-phase grid and build potential pairs. Pairs of two static
+   bodies are skipped before any narrow-phase work, as Box2D does, so a level
+   made of hundreds of static pieces (tile-map collision) costs nothing
+   between its own pieces.
 3. Compute manifolds and resolve collisions via impulses + friction + positional correction.
 4. Store frame diagnostics in `stats`.
 
@@ -63,14 +70,38 @@ Core pieces:
 - `PhysicsGameLoop`: lightweight step coordinator that exposes interpolation alpha.
 - `TransformInterpolator`: sub-frame interpolation helper.
 
+- `src/native/box2d_wrapper.{h,cpp}`: the C ABI (`b2w_*`) over Box2D that
+  `ffi/box2d_bindings.dart` binds. Only this package calls it, so its
+  signatures change with the package (see the CHANGELOG's "Native ABI"
+  entries).
+
 Native synchronization pattern:
 
-1. Before stepping, capture previous body transforms.
+1. Before stepping, capture previous body transforms and push Dart-side
+   writes: linear velocity for awake dynamic bodies, and angular velocity
+   only when it differs from what Box2D last reported (`Box2DBody.angularVelocity`),
+   so an unchanged value never overwrites Box2D's own spin.
 2. Advance fixed-step Box2D world (0..N steps per frame).
-3. Bulk extract transforms in one FFI call to pre-allocated native buffers.
+3. Bulk extract transforms in one FFI call to pre-allocated native buffers:
+   7 floats per body — x, y, angle, vx, vy, awake, angular velocity.
 4. Write transformed state back into shared `PhysicsBody` objects.
 
 This write-through keeps ECS/gameplay integrations unchanged.
+
+Per-body flags in the wrapper:
+
+- The wrapper keeps a sensor flag per body handle, read when shape fixtures
+  are created. Handles are reused (a new world, or a freed slot), so
+  `addBody` writes the flag for every body — solid ones too — before adding
+  shapes, and `b2w_destroyBody` erases it. Otherwise a solid body could
+  inherit `true` from a destroyed sensor.
+- Bullet, sleep (`b2w_setBodySleepEnabled`), damping and the other body
+  settings are set at `addBody` and again by the matching `setBody*` engine
+  methods at runtime.
+
+Shapes: `CircleShape.center` is passed to Box2D as the circle's local centre,
+so it rotates with the body. The pure-Dart backend does not rotate shapes;
+it offsets the circle by `center` unrotated.
 
 ## 4) Platform Selection and Fallback
 
@@ -82,7 +113,8 @@ This write-through keeps ECS/gameplay integrations unchanged.
 
 Primary state object:
 
-- `PhysicsBody` is the shared carrier for gameplay-visible position, velocity, angle, material properties, sleep state, and shape.
+- `PhysicsBody` is the shared carrier for gameplay-visible position, velocity, angle, angular velocity, material properties (friction, restitution, `drag`, `angularDamping`), sleep state (`isAwake`, `canSleep`), and shape.
+- Fields set before `addBody` reach both backends. To change one afterwards, call the engine's `setBody*` method; writing the field directly only reaches the pure-Dart backend. The exceptions are the per-step motion fields — `velocity`, `angularVelocity`, and the forces left by `applyForce`/`applyTorque` (`acceleration`, `torque`) — which the native backend pushes for every awake dynamic body before each step.
 
 Collision model:
 

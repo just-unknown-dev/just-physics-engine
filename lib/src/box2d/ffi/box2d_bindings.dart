@@ -126,9 +126,11 @@ class Box2DBindings {
   late final _b2w_destroyBody = _b2w_destroyBodyPtr
       .asFunction<void Function(int)>();
 
-  /// Attach a circle fixture to a body.
+  /// Attach a circle fixture to a body, centred at (cx, cy) in body space.
   void b2w_addCircleShape(
     int bodyHandle,
+    double cx,
+    double cy,
     double radius,
     double density,
     double friction,
@@ -136,6 +138,8 @@ class Box2DBindings {
   ) {
     return _b2w_addCircleShape(
       bodyHandle,
+      cx,
+      cy,
       radius,
       density,
       friction,
@@ -152,11 +156,15 @@ class Box2DBindings {
             ffi.Float,
             ffi.Float,
             ffi.Float,
+            ffi.Float,
+            ffi.Float,
           )
         >
       >('b2w_addCircleShape');
   late final _b2w_addCircleShape = _b2w_addCircleShapePtr
-      .asFunction<void Function(int, double, double, double, double)>();
+      .asFunction<
+        void Function(int, double, double, double, double, double, double)
+      >();
 
   /// Attach a box (axis-aligned rectangle) fixture. halfW/halfH are half-extents.
   void b2w_addBoxShape(
@@ -779,6 +787,20 @@ class Box2DBindings {
         'b2w_setBodyAwake',
       );
   late final _b2w_setBodyAwake = _b2w_setBodyAwakePtr
+      .asFunction<void Function(int, int)>();
+
+  /// Allow or forbid a body to fall asleep. enabled == 0 keeps it awake (and
+  /// simulated) for as long as it exists, at rest or not; bodies may sleep by
+  /// default.
+  void b2w_setBodySleepEnabled(int bodyHandle, int enabled) {
+    return _b2w_setBodySleepEnabled(bodyHandle, enabled);
+  }
+
+  late final _b2w_setBodySleepEnabledPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Int64, ffi.Int32)>>(
+        'b2w_setBodySleepEnabled',
+      );
+  late final _b2w_setBodySleepEnabled = _b2w_setBodySleepEnabledPtr
       .asFunction<void Function(int, int)>();
 
   /// Lock or unlock a body's rotation. fixed != 0 → the body's angle never

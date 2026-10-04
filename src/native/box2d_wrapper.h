@@ -61,9 +61,10 @@ B2W_EXPORT void b2w_destroyBody(int64_t bodyHandle);
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
-/// Attach a circle fixture to a body.
-B2W_EXPORT void b2w_addCircleShape(int64_t bodyHandle, float radius,
-                         float density, float friction, float restitution);
+/// Attach a circle fixture to a body, centred at (cx, cy) in body space.
+B2W_EXPORT void b2w_addCircleShape(int64_t bodyHandle, float cx, float cy,
+                         float radius, float density, float friction,
+                         float restitution);
 
 /// Attach a box (axis-aligned rectangle) fixture. halfW/halfH are half-extents.
 B2W_EXPORT void b2w_addBoxShape(int64_t bodyHandle, float halfW, float halfH,
@@ -127,11 +128,12 @@ B2W_EXPORT void b2w_setLinearVelocity(int64_t bodyHandle, float vx, float vy);
 // allocation occurs inside this function.
 //
 // `handles`  Pointer to a Dart calloc<Int64>(n) buffer of packed body IDs.
-// `buffer`   Pointer to a Dart calloc<Float>(n*6) buffer.
-//            Layout per body: [posX, posY, angle, velX, velY, isAwake(1.0/0.0)]
+// `buffer`   Pointer to a Dart calloc<Float>(n*7) buffer.
+//            Layout per body:
+//            [posX, posY, angle, velX, velY, isAwake(1.0/0.0), angularVel]
 // `count`    Number of bodies.
 //
-// Dart reads the result via Pointer<Float>.asTypedList(n*6) — zero copy.
+// Dart reads the result via Pointer<Float>.asTypedList(n*7) — zero copy.
 B2W_EXPORT void b2w_bulkExtractTransforms(const int64_t* handles,
                                 float* buffer,
                                 int32_t count);
@@ -200,6 +202,11 @@ B2W_EXPORT void b2w_setBodyGravityScale(int64_t bodyHandle, float gravityScale);
 /// that automatically, and b2w_bulkExtractTransforms reports the resulting
 /// state back every step.
 B2W_EXPORT void b2w_setBodyAwake(int64_t bodyHandle, int32_t awake);
+
+/// Allow or forbid a body to fall asleep. enabled == 0 keeps it awake (and
+/// simulated) for as long as it exists, at rest or not; bodies may sleep by
+/// default.
+B2W_EXPORT void b2w_setBodySleepEnabled(int64_t bodyHandle, int32_t enabled);
 
 /// Lock or unlock a body's rotation. fixed != 0 → the body's angle never
 /// changes, regardless of torque/angular impulses from collisions (e.g.

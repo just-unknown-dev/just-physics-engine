@@ -58,6 +58,7 @@ class Box2DBody {
   double currentAngle;
   double velocityX = 0.0;
   double velocityY = 0.0;
+  double angularVelocity = 0.0;
 
   int get handle => 0;
 

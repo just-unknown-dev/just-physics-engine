@@ -535,13 +535,17 @@ extern "C" int64_t b2w_createStaticBody(int64_t wh,
 
 extern "C" void b2w_destroyBody(int64_t bh) {
     b2DestroyBody(unpackBodyId(bh));
+    // The handle comes back for a later body (a new world, or this slot
+    // reused): it must not inherit this one's sensor flag.
+    std::lock_guard<std::mutex> lk(g_sensorMutex);
+    g_sensorFlags.erase(bh);
 }
 
 // ── Shapes ────────────────────────────────────────────────────────────────────
 
-extern "C" void b2w_addCircleShape(int64_t bh, float radius,
-                                    float density, float friction,
-                                    float restitution) {
+extern "C" void b2w_addCircleShape(int64_t bh, float cx, float cy,
+                                    float radius, float density,
+                                    float friction, float restitution) {
     bool sensor = _isSensorBody(bh);
     b2ShapeDef sd        = b2DefaultShapeDef();
     // b2DefaultShapeDef zero-initialises, so enableContactEvents is FALSE and
@@ -557,7 +561,7 @@ extern "C" void b2w_addCircleShape(int64_t bh, float radius,
     sd.isSensor             = sensor;
     sd.enableSensorEvents   = true; // must be true on BOTH sides for sensor events to fire
 
-    b2Circle circle = {{0.0f, 0.0f}, radius};
+    b2Circle circle = {{cx, cy}, radius};
     b2CreateCircleShape(unpackBodyId(bh), &sd, &circle);
 }
 
@@ -767,13 +771,14 @@ extern "C" void b2w_bulkExtractTransforms(const int64_t* handles,
         b2BodyId    bodyId = unpackBodyId(handles[i]);
         b2Transform t      = b2Body_GetTransform(bodyId);
         b2Vec2      v      = b2Body_GetLinearVelocity(bodyId);
-        float*      slot   = buffer + (ptrdiff_t)i * 6;
+        float*      slot   = buffer + (ptrdiff_t)i * 7;
         slot[0] = t.p.x;
         slot[1] = t.p.y;
         slot[2] = b2Rot_GetAngle(t.q);
         slot[3] = v.x;
         slot[4] = v.y;
         slot[5] = b2Body_IsAwake(bodyId) ? 1.0f : 0.0f;
+        slot[6] = b2Body_GetAngularVelocity(bodyId);
     }
 }
 
@@ -914,6 +919,10 @@ extern "C" void b2w_setBodyGravityScale(int64_t bh, float gravityScale) {
 
 extern "C" void b2w_setBodyAwake(int64_t bh, int32_t awake) {
     b2Body_SetAwake(unpackBodyId(bh), awake != 0);
+}
+
+extern "C" void b2w_setBodySleepEnabled(int64_t bh, int32_t enabled) {
+    b2Body_EnableSleep(unpackBodyId(bh), enabled != 0);
 }
 
 extern "C" void b2w_setBodyFixedRotation(int64_t bh, int32_t fixed) {

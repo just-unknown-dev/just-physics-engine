@@ -13,7 +13,19 @@ abstract class CollisionShape {
 class CircleShape extends CollisionShape {
   final double radius;
 
-  CircleShape(this.radius);
+  /// Where the circle's centre is, relative to the body's position: zero
+  /// for a circle centred on its body, something else for one off to a
+  /// side — a character's feet, say.
+  ///
+  /// The native backend turns it with the body; the pure-Dart backend, which
+  /// does not turn shapes, keeps it where it is.
+  final Offset center;
+
+  CircleShape(this.radius, {this.center = Offset.zero});
+
+  /// The circle's centre in the world, for a body at [position].
+  Offset centerAt(Offset position) =>
+      center == Offset.zero ? position : position + center;
 
   @override
   CollisionManifold getManifold(
@@ -22,7 +34,7 @@ class CircleShape extends CollisionShape {
     Offset posB,
   ) {
     if (other is CircleShape) {
-      final delta = posB - posA;
+      final delta = other.centerAt(posB) - centerAt(posA);
       final distance = delta.distance;
       final totalRadius = radius + other.radius;
 
@@ -53,7 +65,7 @@ class CircleShape extends CollisionShape {
 
   @override
   Rect getBounds(Offset position) {
-    return Rect.fromCircle(center: position, radius: radius);
+    return Rect.fromCircle(center: centerAt(position), radius: radius);
   }
 }
 
@@ -86,7 +98,12 @@ class PolygonShape extends CollisionShape {
       return _satPolygonVsPolygon(posA, this, posB, other);
     } else if (other is CircleShape) {
       // Invert the result so normal points A→B.
-      final manifold = _satCircleVsPolygon(posB, other, posA, this);
+      final manifold = _satCircleVsPolygon(
+        other.centerAt(posB),
+        other,
+        posA,
+        this,
+      );
       return CollisionManifold(
         isColliding: manifold.isColliding,
         normal: -manifold.normal,
@@ -527,9 +544,10 @@ class CapsuleShape extends CollisionShape {
     final wa1 = Offset(posA.dx + center1.dx, posA.dy + center1.dy);
     final wa2 = Offset(posA.dx + center2.dx, posA.dy + center2.dy);
 
-    final closest = closestPointOnSegment(posB, wa1, wa2);
-    final dx = posB.dx - closest.dx;
-    final dy = posB.dy - closest.dy;
+    final at = circle.centerAt(posB);
+    final closest = closestPointOnSegment(at, wa1, wa2);
+    final dx = at.dx - closest.dx;
+    final dy = at.dy - closest.dy;
     final distSq = dx * dx + dy * dy;
     final sumR = radius + circle.radius;
 
@@ -816,7 +834,12 @@ class RoundedPolygonShape extends PolygonShape {
   ) {
     // Inflate the SAT test by treating the circle radius as (circle.radius + cornerRadius).
     final inflatedRadius = circle.radius + cornerRadius;
-    final m = _satCircleVsPolygon(posB, CircleShape(inflatedRadius), posA, this);
+    final m = _satCircleVsPolygon(
+      circle.centerAt(posB),
+      CircleShape(inflatedRadius),
+      posA,
+      this,
+    );
     if (!m.isColliding) return CollisionManifold.empty();
     // The normal from _satCircleVsPolygon points circle→polygon; flip for A→B.
     return CollisionManifold(

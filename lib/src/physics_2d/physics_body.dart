@@ -86,8 +86,13 @@ class PhysicsBody {
   /// Inverse Inertia (calculated automatically)
   double get inverseInertia => inertia > 0 ? 1.0 / inertia : 0.0;
 
-  /// Drag
+  /// Linear damping: how fast the body's velocity decays on its own, per
+  /// second. 0 keeps it moving; 1 loses about two thirds of it each second.
   double drag;
+
+  /// Angular damping: how fast the body's spin decays on its own, per
+  /// second, as [drag] does for its velocity. 0 by default.
+  double angularDamping;
 
   /// Coarse gravity switch. When false this body ignores world gravity
   /// entirely, regardless of [gravityScale].
@@ -112,6 +117,13 @@ class PhysicsBody {
 
   /// Check collisions
   bool checkCollision;
+
+  /// Whether the body may fall asleep when it comes to rest. A body that
+  /// never sleeps costs a little every step, at rest or not; one that must
+  /// react to something changing under it without being touched — a sensor
+  /// standing still, a body whose gravity a script turns off and on — wants
+  /// it. True by default.
+  bool canSleep;
 
   /// Object Sleeping: if true, physics integration happens.
   ///
@@ -210,11 +222,13 @@ class PhysicsBody {
     this.torque = 0.0,
     this.inertia = 1.0,
     this.drag = 0.1,
+    this.angularDamping = 0.0,
     this.useGravity = true,
     this.gravityScale = 1.0,
     this.isActive = true,
     this.checkCollision = true,
     this.isAwake = true,
+    this.canSleep = true,
     this.sleepTimer = 0.0,
     this.sleepVelocityThreshold = 5.0,
     this.sleepTimeThreshold = 0.5,

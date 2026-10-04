@@ -1,14 +1,55 @@
-## Unreleased
+## 1.3.0 - 2026-10-04
+
+### Added
+
+- **`CircleShape(radius, center: ...)`** — a circle off its body's centre:
+  a character's feet, a wheel hung below a cart. Both backends collide,
+  cast rays and draw it there; the native one also turns it with the body
+  (the pure-Dart backend does not turn shapes).
+- **`PhysicsBody.angularDamping`** — spin decay per second, as `drag` is
+  for velocity; 0 by default. `PhysicsEngine.setBodyAngularDamping`.
+- **`PhysicsBody.canSleep`** — false keeps a body awake at rest.
+  `PhysicsEngine.setBodyCanSleep`, which wakes the body when it forbids
+  sleep.
+- **`PhysicsEngine.setBodyBullet`** — continuous collision switched at
+  runtime; before, only at creation.
 
 ### Fixed
 
+- **Spin on the native backend.** `PhysicsBody.angularVelocity` was never
+  read back from Box2D nor written to it: a body spun by a collision read
+  0, and one given a spin started still. Both directions now sync, the
+  write only when something changed the value.
 - **A solid body could come out a sensor on the native backend.** The
-  wrapper keeps each body's sensor flag by handle and never forgets it, and
-  handles come back (a new world, or a reused slot), while `addBody` wrote
-  the flag only for sensors. A solid body given a dead sensor's handle let
-  everything through. `addBody` now writes the flag for every body. (The
-  wrapper's `b2w_destroyBody` still leaves the stale entry behind; it is
-  harmless now, but worth erasing in the C++.)
+  wrapper keeps each body's sensor flag by handle, handles come back (a new
+  world, or a reused slot), and `addBody` wrote the flag only for sensors.
+  A solid body given a dead sensor's handle let everything through.
+  `addBody` now writes the flag for every body, and destroying a body
+  forgets its flag.
+- **Heavy damping reversed a body on the pure-Dart backend.** Each step
+  scaled velocity by `1 - drag * dt`, which goes negative once
+  `drag * dt > 1` (a drag of 100 at 60 fps): the body flipped direction
+  instead of stopping. The factor, and the new spin one, now stop at 0.
+
+### Changed
+
+- **The pure-Dart backend's `drag` no longer slows spin**; `angularDamping`
+  does, as on Box2D. A body that relied on drag to stop spinning on the web
+  sets `angularDamping` instead.
+- **The pure-Dart backend skips pairs of static bodies**, as Box2D does.
+  They cannot move, so they can neither push each other nor start or stop
+  touching; a level built from hundreds of static pieces (a tile map's
+  collision) no longer tests every neighbouring pair each step, and pieces
+  of the same floor no longer report contacts or sensor events between
+  themselves.
+- Native ABI (only this package's own bindings call it):
+  `b2w_addCircleShape` takes the centre after the body handle;
+  `b2w_bulkExtractTransforms` writes 7 floats per body (the 7th the
+  angular velocity); new `b2w_setBodySleepEnabled`.
+
+### Dependencies
+
+- `just_dart: ^0.2.0` (was `^0.1.0`).
 
 ## 1.3.0 - 2026-09-17
 

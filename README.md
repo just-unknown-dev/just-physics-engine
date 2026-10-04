@@ -7,8 +7,10 @@ This package is part of the Just Game Engine workspace, but can be used independ
 ## Features
 
 - 2D rigid-body simulation (`PhysicsEngine`, `PhysicsBody`)
-- Gravity, drag, restitution, friction, torque, and sleeping
-- Collision shapes: `CircleShape`, `PolygonShape`, `RectangleShape`
+- Gravity, drag, angular damping, restitution, friction, torque, and sleeping (per body: `canSleep`)
+- Collision shapes: `CircleShape` (optionally off-centre), `PolygonShape`, `RectangleShape`
+- Body settings changeable while the game runs (`setBodyFriction`, `setBodyAngularDamping`, `setBodyCanSleep`, `setBodyBullet`, …)
+- Static bodies never test against each other, so large tile-map levels stay cheap
 - Broad-phase collision culling via `SpatialGrid`
 - Collision response with impulse + friction + positional correction
 - Runtime simulation stats (`engine.stats`)
@@ -29,7 +31,8 @@ Use the package from pub.dev:
 
 ```yaml
 dependencies:
-	just_physics_engine: ^1.2.1
+	just_physics_engine: ^1.3.0
+	just_dart: ^0.2.0 # Vector2 and the other maths types
 ```
 
 Or add it with Flutter tooling:
@@ -57,6 +60,7 @@ flutter pub get
 ### Basic 2D World
 
 ```dart
+import 'package:just_dart/just_dart.dart';
 import 'package:just_physics_engine/just_physics_engine.dart';
 
 void main() {
@@ -97,6 +101,7 @@ void main() {
 ### Apply Forces
 
 ```dart
+import 'package:just_dart/just_dart.dart';
 import 'package:just_physics_engine/just_physics_engine.dart';
 
 void kickBody(PhysicsBody body) {
@@ -106,11 +111,39 @@ void kickBody(PhysicsBody body) {
 }
 ```
 
+### Body Settings
+
+```dart
+import 'dart:ui';
+
+import 'package:just_dart/just_dart.dart';
+import 'package:just_physics_engine/just_physics_engine.dart';
+
+void addPlayer(PhysicsEngine engine) {
+	final player = PhysicsBody(
+		position: Vector2(100, 100),
+		// Feet: a circle below the body's position. The native backend turns
+		// it with the body; the pure-Dart backend keeps it where it is.
+		shape: CircleShape(10, center: const Offset(0, 14)),
+		angularDamping: 2.0, // spin dies down on its own, as drag does for velocity
+		canSleep: false, // stays awake while standing still
+	);
+	engine.addBody(player);
+
+	// Change settings through the engine while the game runs, so the native
+	// backend sees the change too.
+	engine.setBodyAngularDamping(player, 0.5);
+	engine.setBodyCanSleep(player, true);
+	engine.setBodyBullet(player, true); // continuous collision (native only)
+}
+```
+
 ### Polygon Body
 
 ```dart
 import 'dart:ui';
 
+import 'package:just_dart/just_dart.dart';
 import 'package:just_physics_engine/just_physics_engine.dart';
 
 final crate = PhysicsBody(
@@ -177,7 +210,7 @@ class PhysicsDebugPainter extends CustomPainter {
 > until this package moves to `hooks ^2` / `code_assets ^1.2` /
 > `native_toolchain_c ^0.19` — planned with the 3-D release of the engine.
 
-- Version `1.2.1`
+- Version `1.3.0`
 - Dart SDK: `^3.11.0`
 - Flutter: `>=3.27.0`
 - Platforms: Android, iOS, Linux, macOS, Web, Windows
