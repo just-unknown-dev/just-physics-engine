@@ -171,6 +171,12 @@ class PhysicsDebugPainter extends CustomPainter {
 
 ## Compatibility
 
+> **Known blocker for 3-D:** the native build hook pins `hooks: ^1.0.0` and
+> `native_toolchain_c: ^0.17.0`. `just_graphics_engine` (the flutter_gpu
+> renderer) needs `hooks: ^2.0.0`, so the two cannot resolve in one app
+> until this package moves to `hooks ^2` / `code_assets ^1.2` /
+> `native_toolchain_c ^0.19` — planned with the 3-D release of the engine.
+
 - Version `1.2.1`
 - Dart SDK: `^3.11.0`
 - Flutter: `>=3.27.0`

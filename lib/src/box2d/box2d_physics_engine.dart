@@ -301,10 +301,12 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     }
 
     // Register sensor/bullet BEFORE adding shape fixtures so the C wrapper
-    // applies isSensor to b2ShapeDef at creation time.
-    if (body.isSensor) {
-      box2d.b2w_setBodySensor(b2Body.handle, 1);
-    }
+    // applies isSensor to b2ShapeDef at creation time. Written for every
+    // body, solid ones too: the wrapper keeps the flag per handle and never
+    // forgets it, and a handle comes back — in a new world, or a slot
+    // reused — so a solid body would otherwise inherit `true` from a dead
+    // sensor and let everything through.
+    box2d.b2w_setBodySensor(b2Body.handle, body.isSensor ? 1 : 0);
     if (body.isBullet) {
       box2d.b2w_setBodyBullet(b2Body.handle, 1);
     }

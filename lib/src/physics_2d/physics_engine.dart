@@ -430,6 +430,11 @@ class PhysicsEngine {
       final bodyA = pair.a;
       final bodyB = pair.b;
 
+      // Two static bodies never move, so they can neither push each other
+      // nor begin or end touching: skip them, as Box2D does. A level built
+      // from hundreds of static pieces (a tile map's collision) would
+      // otherwise test every neighbouring pair every step.
+      if (bodyA.isStatic && bodyB.isStatic) continue;
       if (!_shouldBodiesCollide(bodyA, bodyB)) continue;
 
       final posA = bodyA.position.toOffset();

@@ -1,3 +1,15 @@
+## Unreleased
+
+### Fixed
+
+- **A solid body could come out a sensor on the native backend.** The
+  wrapper keeps each body's sensor flag by handle and never forgets it, and
+  handles come back (a new world, or a reused slot), while `addBody` wrote
+  the flag only for sensors. A solid body given a dead sensor's handle let
+  everything through. `addBody` now writes the flag for every body. (The
+  wrapper's `b2w_destroyBody` still leaves the stale entry behind; it is
+  harmless now, but worth erasing in the C++.)
+
 ## 1.3.0 - 2026-09-17
 
 Cross-platform parity release. Closes the gaps where the native Box2D backend
