@@ -1,6 +1,6 @@
 name: just_physics_engine
-description: "Standalone 2D/3D physics engine for Flutter — pure-Dart fallback + native Box2D v3.0 FFI backend."
-version: 1.3.0
+description: "Standalone 2D/3D physics engine for Flutter: 2D on native Box2D v3.0 (FFI) with a pure-Dart fallback, 3D on Jolt Physics through just_jolt."
+version: 1.4.0
 homepage: https://github.com/just-unknown-dev/just-physics-engine
 repository: https://github.com/just-unknown-dev/just-physics-engine
 issue_tracker: https://github.com/just-unknown-dev/just-physics-engine/issues
@@ -24,14 +24,18 @@ environment:
   flutter: ">=3.27.0"
 
 dependencies:
-  code_assets: ^1.0.0
+  code_assets: ^1.2.0
   ffi: ^2.1.0
   flutter:
     sdk: flutter
-  hooks: ^1.0.0
+  hooks: ^2.0.0
   just_dart: ^0.2.0
+  # Jolt Physics for the 3-D engine. Its native library is compiled only
+  # when the app asks (hooks: user_defines: just_jolt: build: true), so a
+  # 2-D game neither builds nor ships it.
+  just_jolt: ^0.1.0
   meta: ^1.17.0
-  native_toolchain_c: ^0.17.0
+  native_toolchain_c: ^0.19.3
 
 dev_dependencies:
   # Native build hook dependencies — only needed at build time.
@@ -40,6 +44,13 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   logging: ^1.3.0
+
+# This package's own tests run Jolt; an app that uses 3-D says the same in
+# its pubspec.
+hooks:
+  user_defines:
+    just_jolt:
+      build: true
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

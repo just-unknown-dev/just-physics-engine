@@ -48,6 +48,20 @@ static inline bool _isSensorBody(int64_t bh) {
     return it != g_sensorFlags.end() && it->second;
 }
 
+static inline void _forgetSensorFlag(int64_t bh) {
+    std::lock_guard<std::mutex> lk(g_sensorMutex);
+    g_sensorFlags.erase(bh);
+}
+
+// Serialises a step against the destroy calls. Every b2w_* entry point is
+// made from the Dart isolate, one at a time — except the destroys, which a
+// NativeFinalizer can also make: while the GC collects a body or world the
+// Dart code dropped, possibly on a GC thread while that isolate is inside
+// b2w_step. Recursive because the finalizers and the create helpers call
+// other entry points.
+static std::recursive_mutex g_lifecycleMutex;
+using LifecycleLock = std::lock_guard<std::recursive_mutex>;
+
 // ── ID packing / unpacking ────────────────────────────────────────────────────
 
 static inline int64_t packWorldId(b2WorldId id) {
@@ -97,11 +111,16 @@ static inline b2BodyType _toBodyType(int32_t t) {
 
 extern "C" int64_t b2w_createBody(int64_t wh, int32_t bodyType,
                                    float x, float y, float angle) {
+    LifecycleLock life(g_lifecycleMutex);
     b2BodyDef def = b2DefaultBodyDef();
     def.type      = _toBodyType(bodyType);
     def.position  = b2ToPos({x, y});
     def.rotation  = b2MakeRot(angle);
-    return packBodyId(b2CreateBody(unpackWorldId(wh), &def));
+    const int64_t bh = packBodyId(b2CreateBody(unpackWorldId(wh), &def));
+    // A handle is reused once its slot is free — after a world went with its
+    // bodies, say. The new body starts with no sensor flag of the old one's.
+    _forgetSensorFlag(bh);
+    return bh;
 }
 
 extern "C" void b2w_setBodyTransform(int64_t bh, float x, float y,
@@ -327,6 +346,269 @@ extern "C" int32_t b2w_queryAABB(int64_t wh,
     return c.count;
 }
 
+// ── Character movers ─────────────────────────────────────────────────────────
+//
+// The native half of just_physics_engine's CharacterMover2D: the same two
+// queries as the pure-Dart engine (lib/src/physics_2d/mover_2d.dart), under
+// the same rules, on Box2D's own GJK (b2ShapeDistance) and shape cast
+// (b2ShapeCast). Box2D's b2World_CollideMover / b2World_CastMover take only a
+// capsule and cannot pass over one-way platforms or the character's own body,
+// so these walk the broad phase themselves. Both run on the calling thread,
+// between steps, like every other query here.
+
+/// B2_LINEAR_SLOP at the 100 length units per metre this wrapper sets.
+static constexpr float kMoverLinearSlop = 0.5f;
+
+/// How far a mover may sit into a one-way platform and still be held by it.
+static constexpr float kMoverOneWayDepth = 2.0f * kMoverLinearSlop;
+
+/// A shape's GJK proxy relative to the query origin, and the ends of the
+/// segment when it is a (one-sided) chain segment.
+struct MoverShapeProxy {
+    b2ShapeProxy proxy;
+    bool         chain;
+    b2Vec2       p1, p2;
+};
+
+/// The way a one-way shape is solid from, as the normal of a surface facing
+/// a mover it holds. False for an ordinary shape.
+static bool s_moverSolidSide(b2ShapeId shapeId, b2Vec2* out) {
+    const uint32_t flags = (uint32_t)(uintptr_t)b2Shape_GetUserData(shapeId);
+    if ((flags & B2W_SHAPE_FLAG_ONE_WAY) == 0) return false;
+    switch ((flags >> B2W_ONEWAY_DIR_SHIFT) & 0x3u) {
+        case B2W_ONEWAY_FROM_ABOVE: *out = {0.0f, -1.0f}; break;
+        case B2W_ONEWAY_FROM_BELOW: *out = {0.0f, 1.0f};  break;
+        case B2W_ONEWAY_FROM_LEFT:  *out = {-1.0f, 0.0f}; break;
+        default:                    *out = {1.0f, 0.0f};  break;
+    }
+    return true;
+}
+
+/// shapeId's proxy relative to origin; false for a shape with none.
+static bool s_moverProxyOf(b2ShapeId shapeId, b2Pos origin, MoverShapeProxy* out) {
+    const b2Transform xf = b2ToRelativeTransform(
+        b2Body_GetTransform(b2Shape_GetBody(shapeId)), origin);
+    out->chain = false;
+    switch (b2Shape_GetType(shapeId)) {
+        case b2_circleShape: {
+            const b2Circle c = b2Shape_GetCircle(shapeId);
+            const b2Vec2   p = b2TransformPoint(xf, c.center);
+            out->proxy = b2MakeProxy(&p, 1, c.radius);
+            return true;
+        }
+        case b2_capsuleShape: {
+            const b2Capsule c = b2Shape_GetCapsule(shapeId);
+            const b2Vec2 pts[2] = {b2TransformPoint(xf, c.center1),
+                                   b2TransformPoint(xf, c.center2)};
+            out->proxy = b2MakeProxy(pts, 2, c.radius);
+            return true;
+        }
+        case b2_polygonShape: {
+            const b2Polygon poly = b2Shape_GetPolygon(shapeId);
+            b2Vec2 pts[B2_MAX_POLYGON_VERTICES];
+            for (int i = 0; i < poly.count; ++i) {
+                pts[i] = b2TransformPoint(xf, poly.vertices[i]);
+            }
+            out->proxy = b2MakeProxy(pts, poly.count, poly.radius);
+            return true;
+        }
+        case b2_segmentShape: {
+            const b2Segment s = b2Shape_GetSegment(shapeId);
+            const b2Vec2 pts[2] = {b2TransformPoint(xf, s.point1),
+                                   b2TransformPoint(xf, s.point2)};
+            out->proxy = b2MakeProxy(pts, 2, 0.0f);
+            return true;
+        }
+        case b2_chainSegmentShape: {
+            const b2Segment s = b2Shape_GetChainSegment(shapeId).segment;
+            out->p1 = b2TransformPoint(xf, s.point1);
+            out->p2 = b2TransformPoint(xf, s.point2);
+            const b2Vec2 pts[2] = {out->p1, out->p2};
+            out->proxy = b2MakeProxy(pts, 2, 0.0f);
+            out->chain = true;
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
+/// The mover's proxy from points (x, y pairs relative to the origin), and
+/// the box around it grown by grow.
+static bool s_moverProxy(const float* points, int32_t count, float radius,
+                         float grow, b2ShapeProxy* proxy, b2AABB* box) {
+    if (points == nullptr || count < 1 || count > B2_MAX_POLYGON_VERTICES) {
+        return false;
+    }
+    b2Vec2 pts[B2_MAX_POLYGON_VERTICES];
+    b2Vec2 lo = {points[0], points[1]}, hi = lo;
+    for (int32_t i = 0; i < count; ++i) {
+        pts[i] = {points[2 * i], points[2 * i + 1]};
+        lo = b2Min(lo, pts[i]);
+        hi = b2Max(hi, pts[i]);
+    }
+    *proxy = b2MakeProxy(pts, count, radius);
+    const float r = radius + grow;
+    box->lowerBound = {lo.x - r, lo.y - r};
+    box->upperBound = {hi.x + r, hi.y + r};
+    return true;
+}
+
+struct MoverCollideCtx {
+    b2Pos        origin;
+    b2ShapeProxy mover;
+    int64_t      ignore;
+    float*       planes;
+    int64_t*     bodies;
+    int32_t      max;
+    int32_t      count;
+};
+
+static bool s_moverCollideCallback(b2ShapeId shapeId, void* ctx) {
+    MoverCollideCtx* c = static_cast<MoverCollideCtx*>(ctx);
+    if (c->count >= c->max) return false;
+    if (b2Shape_IsSensor(shapeId)) return true;
+    const int64_t bh = packBodyId(b2Shape_GetBody(shapeId));
+    if (bh == c->ignore) return true;
+
+    MoverShapeProxy sp;
+    if (!s_moverProxyOf(shapeId, c->origin, &sp)) return true;
+    b2DistanceInput in = {};
+    in.proxyA    = sp.proxy;
+    in.proxyB    = c->mover;
+    in.transform = b2Transform_identity;
+    in.useRadii  = false;
+    b2SimplexCache cache = {};
+    const b2DistanceOutput d = b2ShapeDistance(&in, &cache, nullptr, 0);
+
+    const float totalRadius = sp.proxy.radius + c->mover.radius;
+    // Overlapping cores leave no normal (Box2D skips them too).
+    if (d.distance == 0.0f || d.distance > totalRadius) return true;
+    const float offset = totalRadius - d.distance;
+
+    b2Vec2 solid;
+    if (s_moverSolidSide(shapeId, &solid) &&
+        (b2Dot(d.normal, solid) < kOneWaySolidCos || offset > kMoverOneWayDepth)) {
+        return true;
+    }
+
+    float* o = c->planes + 5 * c->count;
+    o[0] = d.normal.x;
+    o[1] = d.normal.y;
+    o[2] = offset;
+    o[3] = d.pointA.x;
+    o[4] = d.pointA.y;
+    c->bodies[c->count++] = bh;
+    return true;
+}
+
+extern "C" int32_t b2w_moverCollide(int64_t wh,
+                                    float originX, float originY,
+                                    const float* points, int32_t pointCount,
+                                    float radius,
+                                    uint64_t cat, uint64_t mask,
+                                    int64_t ignoreBody,
+                                    float* outPlanes, int64_t* outBodies,
+                                    int32_t maxPlanes) {
+    MoverCollideCtx c = {};
+    b2AABB box;
+    if (!s_moverProxy(points, pointCount, radius, kMoverLinearSlop, &c.mover, &box)) {
+        return 0;
+    }
+    c.origin = b2ToPos({originX, originY});
+    c.ignore = ignoreBody;
+    c.planes = outPlanes;
+    c.bodies = outBodies;
+    c.max    = maxPlanes;
+
+    b2QueryFilter filter;
+    filter.categoryBits = cat;
+    filter.maskBits     = mask;
+    b2World_OverlapAABB(unpackWorldId(wh), c.origin, box, filter,
+                        s_moverCollideCallback, &c);
+    return c.count;
+}
+
+struct MoverCastCtx {
+    b2Pos        origin;
+    b2ShapeProxy mover;
+    b2Vec2       translation;
+    b2Vec2       centroid;
+    int64_t      ignore;
+    float        fraction;
+};
+
+static bool s_moverCastCallback(b2ShapeId shapeId, void* ctx) {
+    MoverCastCtx* c = static_cast<MoverCastCtx*>(ctx);
+    if (b2Shape_IsSensor(shapeId)) return true;
+    if (packBodyId(b2Shape_GetBody(shapeId)) == c->ignore) return true;
+
+    // A one-way platform stops only a mover coming at it from its solid side.
+    b2Vec2 solid;
+    const bool oneWay = s_moverSolidSide(shapeId, &solid);
+    if (oneWay && b2Dot(c->translation, solid) >= 0.0f) return true;
+
+    MoverShapeProxy sp;
+    if (!s_moverProxyOf(shapeId, c->origin, &sp)) return true;
+    if (sp.chain) {
+        // A chain is one-sided: a mover behind a segment passes it.
+        const b2Vec2 edge = b2Sub(sp.p2, sp.p1);
+        const b2Vec2 r    = b2Sub(c->centroid, sp.p1);
+        if (b2Cross(r, edge) < 0.0f) return true;
+    }
+
+    b2ShapeCastPairInput in = {};
+    in.proxyA       = sp.proxy;
+    in.proxyB       = c->mover;
+    in.transform    = b2Transform_identity;
+    in.translationB = c->translation;
+    in.maxFraction  = c->fraction;
+    in.canEncroach  = true;
+    const b2CastOutput out = b2ShapeCast(&in);
+
+    // What it starts out touching is the planes' business; the cast must be
+    // free to slide away from it.
+    if (!out.hit || out.fraction == 0.0f) return true;
+    if (oneWay && b2Dot(out.normal, solid) < kOneWaySolidCos) return true;
+    c->fraction = out.fraction;
+    return true;
+}
+
+extern "C" float b2w_moverCast(int64_t wh,
+                               float originX, float originY,
+                               const float* points, int32_t pointCount,
+                               float radius,
+                               float translationX, float translationY,
+                               uint64_t cat, uint64_t mask,
+                               int64_t ignoreBody) {
+    if (translationX == 0.0f && translationY == 0.0f) return 1.0f;
+    MoverCastCtx c = {};
+    b2AABB box;
+    if (!s_moverProxy(points, pointCount, radius, kMoverLinearSlop, &c.mover, &box)) {
+        return 1.0f;
+    }
+    c.origin      = b2ToPos({originX, originY});
+    c.translation = {translationX, translationY};
+    c.ignore      = ignoreBody;
+    c.fraction    = 1.0f;
+    for (int i = 0; i < c.mover.count; ++i) {
+        c.centroid = b2Add(c.centroid, c.mover.points[i]);
+    }
+    c.centroid = b2MulSV(1.0f / (float)c.mover.count, c.centroid);
+
+    // The whole sweep.
+    b2AABB swept = box;
+    swept.lowerBound = b2Min(box.lowerBound, b2Add(box.lowerBound, c.translation));
+    swept.upperBound = b2Max(box.upperBound, b2Add(box.upperBound, c.translation));
+
+    b2QueryFilter filter;
+    filter.categoryBits = cat;
+    filter.maskBits     = mask;
+    b2World_OverlapAABB(unpackWorldId(wh), c.origin, swept, filter,
+                        s_moverCastCallback, &c);
+    return c.fraction;
+}
+
 // ── Runtime material / damping mutation ──────────────────────────────────────
 
 extern "C" void b2w_setBodyLinearDamping(int64_t bh, float damping) {
@@ -378,6 +660,13 @@ extern "C" void b2w_setBodyFilter64(int64_t bh,
 
 // ── NativeFinalizer-compatible destructors ────────────────────────────────────
 
+//
+// These run in whatever order the GC finds the objects. When an isolate shuts
+// down — a hot restart, say — every world and body still attached is
+// finalized at once, so a world can go before its own bodies. Destroying the
+// world takes its bodies with it; b2w_destroyBody then finds the handle no
+// longer valid and does nothing.
+
 extern "C" void b2w_finalizer_world(void* token) {
     int64_t h = (int64_t)(intptr_t)token;
     b2w_destroyWorld(h);
@@ -422,6 +711,7 @@ static float _minRestitutionCallback(float restitutionA, uint64_t,
 }
 
 extern "C" int64_t b2w_createWorld(float gx, float gy, int32_t numThreads) {
+    LifecycleLock life(g_lifecycleMutex);
     _ensureLengthUnitsConfigured();
 
     if (numThreads <= 0) {
@@ -471,6 +761,7 @@ extern "C" int64_t b2w_createWorld(float gx, float gy, int32_t numThreads) {
 }
 
 extern "C" void b2w_destroyWorld(int64_t h) {
+    LifecycleLock life(g_lifecycleMutex);
     ThreadPool* pool = nullptr;
     {
         std::lock_guard<std::mutex> lk(g_worldsMutex);
@@ -485,6 +776,12 @@ extern "C" void b2w_destroyWorld(int64_t h) {
 }
 
 extern "C" void b2w_step(int64_t h, float timeStep, int32_t subSteps) {
+    LifecycleLock life(g_lifecycleMutex);
+    {
+        // A world that has gone is not stepped: its slot may hold another.
+        std::lock_guard<std::mutex> lk(g_worldsMutex);
+        if (g_worlds.find(h) == g_worlds.end()) return;
+    }
     b2WorldId wid = unpackWorldId(h);
     b2World_Step(wid, timeStep, subSteps);
 
@@ -534,11 +831,14 @@ extern "C" int64_t b2w_createStaticBody(int64_t wh,
 }
 
 extern "C" void b2w_destroyBody(int64_t bh) {
-    b2DestroyBody(unpackBodyId(bh));
+    LifecycleLock life(g_lifecycleMutex);
+    const b2BodyId id = unpackBodyId(bh);
+    // Already gone with its world (see the finalizers above), or destroyed
+    // twice: Box2D would read a wiped world. Nothing left to destroy.
+    if (b2Body_IsValid(id)) b2DestroyBody(id);
     // The handle comes back for a later body (a new world, or this slot
     // reused): it must not inherit this one's sensor flag.
-    std::lock_guard<std::mutex> lk(g_sensorMutex);
-    g_sensorFlags.erase(bh);
+    _forgetSensorFlag(bh);
 }
 
 // ── Shapes ────────────────────────────────────────────────────────────────────
@@ -740,7 +1040,9 @@ extern "C" int64_t b2w_addChainShape(int64_t bh,
 }
 
 extern "C" void b2w_destroyChain(int64_t chainHandle) {
-    b2DestroyChain(unpackChainId(chainHandle));
+    LifecycleLock life(g_lifecycleMutex);
+    const b2ChainId id = unpackChainId(chainHandle);
+    if (b2Chain_IsValid(id)) b2DestroyChain(id);
 }
 
 // ── Forces ────────────────────────────────────────────────────────────────────
@@ -1098,7 +1400,10 @@ extern "C" int64_t b2w_createWheelJoint(int64_t wh,
 }
 
 extern "C" void b2w_destroyJoint(int64_t jh) {
-    b2DestroyJoint(unpackJointId(jh), true);
+    LifecycleLock life(g_lifecycleMutex);
+    const b2JointId id = unpackJointId(jh);
+    // Gone already if either body, or the world, went first.
+    if (b2Joint_IsValid(id)) b2DestroyJoint(id, true);
 }
 
 // ── Joint configuration ───────────────────────────────────────────────────────

@@ -7,6 +7,10 @@ abstract class CollisionShape {
 
   /// Get the axis-aligned bounding box for this shape.
   Rect getBounds(Offset position);
+
+  /// How much ground it covers, in square units: 0 for a line (a segment or
+  /// a chain).
+  double get area;
 }
 
 /// A circular collision shape.
@@ -26,6 +30,9 @@ class CircleShape extends CollisionShape {
   /// The circle's centre in the world, for a body at [position].
   Offset centerAt(Offset position) =>
       center == Offset.zero ? position : position + center;
+
+  @override
+  double get area => math.pi * radius * radius;
 
   @override
   CollisionManifold getManifold(
@@ -75,6 +82,17 @@ class PolygonShape extends CollisionShape {
   List<Offset> vertices;
 
   PolygonShape(this.vertices);
+
+  @override
+  double get area {
+    var twice = 0.0;
+    for (var i = 0; i < vertices.length; i++) {
+      final a = vertices[i];
+      final b = vertices[(i + 1) % vertices.length];
+      twice += a.dx * b.dy - b.dx * a.dy;
+    }
+    return twice.abs() / 2;
+  }
 
   @override
   CollisionManifold getManifold(
@@ -490,6 +508,10 @@ class CapsuleShape extends CollisionShape {
   }
 
   @override
+  double get area =>
+      (center2 - center1).distance * 2 * radius + math.pi * radius * radius;
+
+  @override
   Rect getBounds(Offset position) {
     final wx1 = position.dx + center1.dx;
     final wy1 = position.dy + center1.dy;
@@ -677,6 +699,9 @@ class SegmentShape extends CollisionShape {
   SegmentShape(this.point1, this.point2, {this.thickness = 2.0});
 
   @override
+  double get area => 0;
+
+  @override
   Rect getBounds(Offset position) {
     final wx1 = position.dx + point1.dx;
     final wy1 = position.dy + point1.dy;
@@ -716,6 +741,9 @@ class ChainShape extends CollisionShape {
   final double thickness;
 
   ChainShape(this.vertices, {this.loop = false, this.thickness = 2.0});
+
+  @override
+  double get area => 0;
 
   @override
   Rect getBounds(Offset position) {
@@ -792,6 +820,19 @@ class RoundedPolygonShape extends PolygonShape {
   @override
   Rect getBounds(Offset position) {
     return super.getBounds(position).inflate(cornerRadius);
+  }
+
+  /// The polygon, a band [cornerRadius] wide along each side, and a round
+  /// cap at each corner (the caps add up to one circle).
+  @override
+  double get area {
+    var perimeter = 0.0;
+    for (var i = 0; i < vertices.length; i++) {
+      perimeter += (vertices[(i + 1) % vertices.length] - vertices[i]).distance;
+    }
+    return super.area +
+        perimeter * cornerRadius +
+        math.pi * cornerRadius * cornerRadius;
   }
 
   @override

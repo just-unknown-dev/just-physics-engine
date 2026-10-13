@@ -9,6 +9,13 @@ description: >
   are excluded via include-directives.
 output: 'lib/src/box2d/ffi/box2d_bindings.dart'
 
+# Top-level @Native functions resolved through the code asset the build hook
+# bundles (hook/build.dart, assetName 'box2d_flutter'), so the library is
+# found by asset id on every platform — Android's libbox2d_flutter.so too —
+# rather than by a file name DynamicLibrary.open has to guess.
+ffi-native:
+  assetId: 'package:just_physics_engine/box2d_flutter'
+
 headers:
   entry-points:
     - 'src/native/box2d_wrapper.h'
@@ -18,6 +25,24 @@ headers:
 functions:
   include:
     - 'b2w_.*'
+  # Addresses (`addresses.…`): the finalizers, for NativeFinalizer, and the
+  # symbols loadBox2DLibrary() resolves up front to prove the bundled
+  # library matches these bindings.
+  symbol-address:
+    include:
+      - 'b2w_finalizer_.*'
+      - 'b2w_createBody'
+      - 'b2w_setBodyTransform'
+      - 'b2w_setBodyType'
+      - 'b2w_getBodyType'
+      - 'b2w_setBodyOneWay'
+      - 'b2w_castRayClosest'
+      - 'b2w_castRayAll'
+      - 'b2w_queryAABB'
+      - 'b2w_setBodyFilter64'
+      - 'b2w_setBodyFriction'
+      - 'b2w_setBodyRestitution'
+      - 'b2w_setBodyLinearDamping'
 
 globals:
   exclude:

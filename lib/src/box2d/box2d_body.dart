@@ -1,5 +1,6 @@
 import 'dart:ffi';
 
+import 'ffi/box2d_bindings.dart' as box2d;
 import 'ffi/box2d_library.dart';
 
 // Finalizable is a marker interface required by NativeFinalizer.attach.

@@ -682,7 +682,7 @@ void main() {
   group('Contact events', () {
     /// Drops a body onto a static slab and counts the begin events.
     ///
-    /// This is the mechanism `PhysicsBodyComponent.isGrounded` is built from,
+    /// This is the mechanism `RigidBody2D.isGrounded` is built from,
     /// and therefore the mechanism every jump in a platformer depends on.
     int countLandingContacts(PhysicsEngine engine) {
       final ground = PhysicsBody(

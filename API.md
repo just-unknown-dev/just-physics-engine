@@ -51,8 +51,7 @@ Body settings, changed while the simulation runs (see [`PhysicsBody`](#physicsbo
 
 `stats` includes diagnostics such as body count, awake bodies, broad-phase stats, resolved collisions, and step time.
 
-Two static bodies are never paired, on either backend: they cannot move, so
-they raise no contacts or sensor events between themselves.
+Two static bodies are never paired, on either backend: they cannot move, so they raise no contacts or sensor events between themselves.
 
 ## `Box2DPhysicsEngine` (native backend)
 
@@ -70,6 +69,17 @@ Important extras:
 - `double get alpha`
 
 `stats` includes backend details (`box2d_v3` or fallback), contact count, and fixed-step metrics.
+
+## Character Mover
+
+- `CharacterMover2D(PhysicsEngine engine)` — `CharacterMove2D move({required MoverShape shape, required Offset position, required Offset velocity, required double dt, Offset up, double maxSlopeAngle, double stepHeight, double stickToFloor, bool wasGrounded, MoverFilter filter, double mass, double pushStrength})`
+- `CharacterMove2D` — `position`, `velocity`, `groundState` (`GroundState2D`: `onGround`, `onSteepGround`, `notSupported`, `inAir`), `groundNormal`, `groundBody`, `contacts`, `isGrounded`
+- `MoverShape.capsule({radius, height})`, `MoverShape.box({width, height, cornerRadius})` — centred on the mover's position
+- `MoverFilter({categoryBits, maskBits, ignore})` — never sensors, never `ignore`
+- `PhysicsEngine.collideMover(shape, position, {filter})` → `List<MoverPlane>`; `PhysicsEngine.castMover(shape, position, translation, {filter})` → fraction `0..1` (native: in C)
+- `MoverSolver.solvePlanes(targetDelta, planes)`, `MoverSolver.clipVector(vector, planes)` — Box2D's plane solver
+- `ShapeProxy2D`, `ShapeDistance2D.between(a, b)`, `castShape2D(still, moving, translation, {linearSlop, maxFraction, canEncroach})` — Box2D's GJK and shape cast in Dart
+- `moverLinearSlop` — Box2D's linear slop in world units (0.5)
 
 ## Body and Shapes
 
@@ -97,11 +107,7 @@ Common fields:
 - sleep and activity flags (`isActive`, `isAwake`, `canSleep`, etc.)
 - `isBullet` (continuous collision; native backend only)
 
-Changed while the simulation runs through the engine, so the native backend
-hears it: `setBodyFriction`, `setBodyRestitution`, `setBodyDamping`,
-`setBodyAngularDamping`, `setBodyCanSleep` (forbidding sleep wakes the
-body), `setBodyBullet`, `setBodyType`, `setBodyGravityScale`,
-`setBodyFilter`, `setBodyOneWay`, `setBodyTransform`.
+Changed while the simulation runs through the engine, so the native backend hears it: `setBodyFriction`, `setBodyRestitution`, `setBodyDamping`, `setBodyAngularDamping`, `setBodyCanSleep` (forbidding sleep wakes the body), `setBodyBullet`, `setBodyType`, `setBodyGravityScale`, `setBodyFilter`, `setBodyOneWay`, `setBodyTransform`.
 
 ## `CollisionShape`
 
@@ -254,14 +260,33 @@ Members:
 
 - `static void interpolate({required Map<PhysicsBody, Box2DBody> bodyMap, required double alpha, required void Function(PhysicsBody body, double x, double y, double angle) write})`
 
-## 3D API Status
+## 3D (`package:just_physics_engine/physics_3d.dart`)
 
-## `PhysicsEngine3D`
+## `PhysicsEngineFactory` (3D)
 
-Current placeholder API:
+- `static PhysicsEngine3D create3D({int workerThreads = -1})` — Jolt; throws `Physics3DUnsupportedError` where it cannot run
+- `static String? get unavailable3DReason`
+- `static bool get supports3D`
 
-- `void initialize()`
-- `void update(double deltaTime)`
-- `void dispose()`
+## `PhysicsEngine3D` (interface)
 
-3D simulation is not yet implemented.
+- `String get name`
+- `String? get unavailableReason`
+- `PhysicsWorld3D createWorld(PhysicsWorldSettings3D settings)`
+- `void destroyAll()`
+
+Implementations: `JoltPhysicsEngine` (native; stub on the web), `FakePhysicsEngine3D` (`testing.dart`).
+
+## `PhysicsWorld3D` (interface)
+
+Int handles for bodies, joints and characters; dead handles do nothing.
+
+- bodies: `createBody`, `destroyBody`, `isBody`, `setBodyPose`, `moveKinematic`, `setLinearVelocity`, `setAngularVelocity`, `addForce`, `addTorque`, `addImpulse`, `addAngularImpulse`, `setFriction`, `setRestitution`, `setGravityFactor`, `setLayer`, `setMotionQuality`, `wake`, `isAwake`
+- joints: `createJoint`, `destroyJoint`, `isJoint`, `setJointEnabled`, `setJointMotor`, `jointValue`
+- characters: `createCharacter`, `destroyCharacter`, `isCharacter`, `characterBody`, `moveCharacter`, `characterState`, `setCharacterPosition`, `characterContacts`
+- stepping: `step`, `readMovedBodies`, `readBodies`, `drainEvents`
+- queries: `raycast`, `shapeCast`, `overlap`; `debugLines`
+
+## 3D data
+
+Shapes `BoxShape3D`, `SphereShape3D`, `CapsuleShape3D`, `CylinderShape3D`, `ConvexHullShape3D`, `MeshShape3D`, `HeightFieldShape3D`, `CompoundShape3D`, `TransformedShape3D`; settings `PhysicsWorldSettings3D`, `BodySettings3D`, `JointSettings3D`, `CharacterSettings3D`; results `BodyPoses3D`, `QueryHit3D`, `PhysicsEvent3D`, `CharacterState3D`, `CharacterContact3D`; enums `BodyType3D`, `MotionQuality3D`, `JointKind3D`, `MotorState3D`, `SixDofAxisMode3D`, `PhysicsEventType3D`, `GroundState3D`, `QueryFilter3D`; `Physics3DUnsupportedError`.

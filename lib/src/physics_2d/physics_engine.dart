@@ -5,9 +5,11 @@ library;
 
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:just_dart/just_dart.dart';
 import 'ray_2d.dart';
+import 'shape_distance_2d.dart';
 import '../box2d/_box2d_engine_stub.dart'
     if (dart.library.io) '../box2d/_box2d_engine_native.dart';
 
@@ -16,6 +18,7 @@ part 'collision_shapes.dart';
 part 'physics_body.dart';
 part 'spatial_grid.dart';
 part 'joint_2d.dart';
+part 'mover_2d.dart';
 
 /// Main physics engine class
 class PhysicsEngine {
@@ -102,7 +105,7 @@ class PhysicsEngine {
 
   /// Initialize the physics engine
   void initialize() {
-    debugPrint('Physics Engine initialized');
+    if (kDebugMode) debugPrint('Physics Engine initialized');
   }
 
   /// Set world gravity, updating both the Dart gravity vector and any native
@@ -460,6 +463,15 @@ class PhysicsEngine {
       // from hundreds of static pieces (a tile map's collision) would
       // otherwise test every neighbouring pair every step.
       if (bodyA.isStatic && bodyB.isStatic) continue;
+      // Nor do a kinematic body and a static one, or two kinematic ones,
+      // touch at all — Box2D makes no contact unless one side is dynamic. A
+      // sensor still sees them.
+      if (!bodyA.isDynamic &&
+          !bodyB.isDynamic &&
+          !bodyA.isSensor &&
+          !bodyB.isSensor) {
+        continue;
+      }
       if (!_shouldBodiesCollide(bodyA, bodyB)) continue;
 
       final posA = bodyA.position.toOffset();
@@ -588,7 +600,21 @@ class PhysicsEngine {
     }
   }
 
-  /// Resolve collision
+  /// The slowest approach that bounces, in units per second: Box2D's
+  /// default, 1 m/s at the 100 units per metre both backends use. Slower
+  /// contacts settle instead of bouncing for ever in ever smaller hops.
+  static const double restitutionThreshold = 100.0;
+
+  /// How bouncy a contact between [a] and [b] is: the less bouncy of the
+  /// two, so a bounce needs both. The native backend installs the same rule
+  /// in place of Box2D's default.
+  static double mixRestitution(double a, double b) => math.min(a, b);
+
+  /// How much grip a contact between [a] and [b] has: the geometric mean,
+  /// as Box2D mixes it on the native backend, so ice stays slippery on any
+  /// surface.
+  static double mixFriction(double a, double b) => math.sqrt(a * b);
+
   /// Cosine threshold for a one-way contact, ~60 degrees of tolerance.
   ///
   /// Tighter values drop a player who lands on the very edge of a platform;
@@ -663,7 +689,9 @@ class PhysicsEngine {
 
     if (velAlongNormal > 0) return; // separating
 
-    final restitution = math.min(a.restitution, b.restitution);
+    final restitution = -velAlongNormal < restitutionThreshold
+        ? 0.0
+        : mixRestitution(a.restitution, b.restitution);
     final j = -(1.0 + restitution) * velAlongNormal / inverseMassSum;
 
     final jnx = normal.dx * j;
@@ -687,7 +715,7 @@ class PhysicsEngine {
       ty *= invLen;
 
       final jt = -(rvx2 * tx + rvy2 * ty) / inverseMassSum;
-      final mu = (a.friction + b.friction) / 2.0;
+      final mu = mixFriction(a.friction, b.friction);
 
       double fScalar = jt;
       if (fScalar.abs() > j * mu) {
@@ -838,11 +866,14 @@ class PhysicsEngine {
     _joints.clear();
     _prevAwake.clear();
     _moveEventBuffer.clear();
-    debugPrint('Physics Engine disposed');
+    if (kDebugMode) debugPrint('Physics Engine disposed');
   }
 
   /// Get all bodies
   List<PhysicsBody> get bodies => List.unmodifiable(_bodies);
+
+  /// How many bodies the world holds, without copying them.
+  int get bodyCount => _bodies.length;
 
   // ── Joint management ─────────────────────────────────────────────────────
 
@@ -1288,6 +1319,30 @@ class PhysicsEngine {
     }
     return best;
   }
+
+  // ── Character movers ──────────────────────────────────────────────────────
+
+  /// The surfaces a mover of [shape] centred at [position] touches, as
+  /// planes for [MoverSolver.solvePlanes] (Box2D's b2World_CollideMover,
+  /// for a capsule or a box). Sensors, [MoverFilter.ignore] and bodies the
+  /// filter leaves out are passed over; a one-way platform counts only from
+  /// its solid side and only while the mover is not partway through it.
+  List<MoverPlane> collideMover(
+    MoverShape shape,
+    Offset position, {
+    MoverFilter filter = const MoverFilter(),
+  }) => _collideMoverDart(shape, position, filter);
+
+  /// How much of [translation] a mover of [shape] at [position] can move
+  /// before it touches something: 1 for all of it (Box2D's
+  /// b2World_CastMover). What it starts out touching is ignored, and a
+  /// one-way platform stops it only when it comes from the solid side.
+  double castMover(
+    MoverShape shape,
+    Offset position,
+    Offset translation, {
+    MoverFilter filter = const MoverFilter(),
+  }) => _castMoverDart(shape, position, translation, filter);
 
   // ── Overlap queries ───────────────────────────────────────────────────────
 

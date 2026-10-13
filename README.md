@@ -13,10 +13,11 @@ This package is part of the Just Game Engine workspace, but can be used independ
 - Static bodies never test against each other, so large tile-map levels stay cheap
 - Broad-phase collision culling via `SpatialGrid`
 - Collision response with impulse + friction + positional correction
+- A kinematic character mover (`CharacterMover2D`): slopes, steps, one-way platforms, moving ground and pushing, the same on both backends
 - Runtime simulation stats (`engine.stats`)
 - Debug rendering (`engine.renderDebug`)
 - 2D ray utility (`Ray`, `Ray.fromPoints`)
-- 3D API stubs (`PhysicsEngine3D`)
+- 3D physics on [Jolt Physics](https://github.com/jrouwe/JoltPhysics) through just_jolt (`PhysicsEngineFactory.create3D()`, `PhysicsEngine3D`, `PhysicsWorld3D`): rigid bodies of every common shape, compounds, joints, characters, queries and buffered events. Native platforms; an app opts in to building Jolt in its pubspec, so a 2D app neither builds nor ships it
 
 ## Getting Started
 
@@ -31,8 +32,8 @@ Use the package from pub.dev:
 
 ```yaml
 dependencies:
-	just_physics_engine: ^1.3.0
-	just_dart: ^0.2.0 # Vector2 and the other maths types
+  just_physics_engine: ^1.4.0
+  just_dart: ^0.2.0 # Vector2 and the other maths types
 ```
 
 Or add it with Flutter tooling:
@@ -45,8 +46,8 @@ Or use a local path dependency in a monorepo:
 
 ```yaml
 dependencies:
-	just_physics_engine:
-		path: ../packages/just_physics_engine
+  just_physics_engine:
+    path: ../packages/just_physics_engine
 ```
 
 Then fetch packages:
@@ -64,37 +65,37 @@ import 'package:just_dart/just_dart.dart';
 import 'package:just_physics_engine/just_physics_engine.dart';
 
 void main() {
-	final engine = PhysicsEngine()..initialize();
+  final engine = PhysicsEngine()..initialize();
 
-	final floor = PhysicsBody(
-		position: Vector2(200, 500),
-		shape: RectangleShape(600, 40),
-		mass: 0, // static body
-		restitution: 0.2,
-		friction: 0.8,
-	);
+  final floor = PhysicsBody(
+    position: Vector2(200, 500),
+    shape: RectangleShape(600, 40),
+    mass: 0, // static body
+    restitution: 0.2,
+    friction: 0.8,
+  );
 
-	final ball = PhysicsBody(
-		position: Vector2(220, 120),
-		shape: CircleShape(18),
-		mass: 1.0,
-		restitution: 0.55,
-		friction: 0.35,
-		drag: 0.02,
-	);
+  final ball = PhysicsBody(
+    position: Vector2(220, 120),
+    shape: CircleShape(18),
+    mass: 1.0,
+    restitution: 0.55,
+    friction: 0.35,
+    drag: 0.02,
+  );
 
-	engine.addBody(floor);
-	engine.addBody(ball);
+  engine.addBody(floor);
+  engine.addBody(ball);
 
-	// Fixed step example (60 Hz)
-	const dt = 1.0 / 60.0;
-	engine.update(dt);
+  // Fixed step example (60 Hz)
+  const dt = 1.0 / 60.0;
+  engine.update(dt);
 
-	final stats = engine.stats;
-	print('Bodies: ${stats['bodyCount']}');
-	print('Collisions resolved: ${stats['resolvedCollisions']}');
+  final stats = engine.stats;
+  print('Bodies: ${stats['bodyCount']}');
+  print('Collisions resolved: ${stats['resolvedCollisions']}');
 
-	engine.dispose();
+  engine.dispose();
 }
 ```
 
@@ -105,9 +106,9 @@ import 'package:just_dart/just_dart.dart';
 import 'package:just_physics_engine/just_physics_engine.dart';
 
 void kickBody(PhysicsBody body) {
-	body.applyForce(Vector2(1500, -800));
-	body.applyImpulse(Vector2(8, -3));
-	body.applyTorque(20);
+  body.applyForce(Vector2(1500, -800));
+  body.applyImpulse(Vector2(8, -3));
+  body.applyTorque(20);
 }
 ```
 
@@ -120,21 +121,21 @@ import 'package:just_dart/just_dart.dart';
 import 'package:just_physics_engine/just_physics_engine.dart';
 
 void addPlayer(PhysicsEngine engine) {
-	final player = PhysicsBody(
-		position: Vector2(100, 100),
-		// Feet: a circle below the body's position. The native backend turns
-		// it with the body; the pure-Dart backend keeps it where it is.
-		shape: CircleShape(10, center: const Offset(0, 14)),
-		angularDamping: 2.0, // spin dies down on its own, as drag does for velocity
-		canSleep: false, // stays awake while standing still
-	);
-	engine.addBody(player);
+  final player = PhysicsBody(
+    position: Vector2(100, 100),
+    // Feet: a circle below the body's position. The native backend turns
+    // it with the body; the pure-Dart backend keeps it where it is.
+    shape: CircleShape(10, center: const Offset(0, 14)),
+    angularDamping: 2.0, // spin dies down on its own, as drag does for velocity
+    canSleep: false, // stays awake while standing still
+  );
+  engine.addBody(player);
 
-	// Change settings through the engine while the game runs, so the native
-	// backend sees the change too.
-	engine.setBodyAngularDamping(player, 0.5);
-	engine.setBodyCanSleep(player, true);
-	engine.setBodyBullet(player, true); // continuous collision (native only)
+  // Change settings through the engine while the game runs, so the native
+  // backend sees the change too.
+  engine.setBodyAngularDamping(player, 0.5);
+  engine.setBodyCanSleep(player, true);
+  engine.setBodyBullet(player, true); // continuous collision (native only)
 }
 ```
 
@@ -147,14 +148,14 @@ import 'package:just_dart/just_dart.dart';
 import 'package:just_physics_engine/just_physics_engine.dart';
 
 final crate = PhysicsBody(
-	position: Vector2(400, 260),
-	shape: PolygonShape([
-		const Offset(-20, -20),
-		const Offset(20, -20),
-		const Offset(20, 20),
-		const Offset(-20, 20),
-	]),
-	mass: 2,
+  position: Vector2(400, 260),
+  shape: PolygonShape([
+    const Offset(-20, -20),
+    const Offset(20, -20),
+    const Offset(20, 20),
+    const Offset(-20, 20),
+  ]),
+  mass: 2,
 );
 ```
 
@@ -166,8 +167,8 @@ import 'dart:ui';
 import 'package:just_physics_engine/just_physics_engine.dart';
 
 final ray = Ray.fromPoints(
-	const Offset(10, 10),
-	const Offset(250, 150),
+  const Offset(10, 10),
+  const Offset(250, 150),
 );
 
 final samplePoint = ray.at(120);
@@ -181,40 +182,63 @@ import 'package:flutter/material.dart';
 import 'package:just_physics_engine/just_physics_engine.dart';
 
 class PhysicsDebugPainter extends CustomPainter {
-	PhysicsDebugPainter(this.engine);
+  PhysicsDebugPainter(this.engine);
 
-	final PhysicsEngine engine;
+  final PhysicsEngine engine;
 
-	@override
-	void paint(Canvas canvas, Size size) {
-		engine.debugRender = true;
-		engine.renderDebug(canvas, size);
-	}
+  @override
+  void paint(Canvas canvas, Size size) {
+    engine.debugRender = true;
+    engine.renderDebug(canvas, size);
+  }
 
-	@override
-	bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+```
+
+### Character Mover
+
+A character moved by gameplay rather than by the simulation: a capsule or a box that slides along walls and slopes, climbs steps and stands on one-way platforms. It is not a body; keep one where it is (and pass it as `MoverFilter.ignore`) if sensors should see it.
+
+```dart
+final mover = CharacterMover2D(engine);
+final shape = MoverShape.box(width: 32, height: 48);
+var position = const Offset(0, 0), velocity = Offset.zero;
+var grounded = false;
+
+void step(double dt, double run, bool jump) {
+  var vy = grounded && velocity.dy > 0 ? 0.0 : velocity.dy;
+  if (jump && grounded) vy = -800; // +Y is down
+  vy += 2000 * dt;
+  final move = mover.move(
+    shape: shape,
+    position: position,
+    velocity: Offset(run, vy),
+    dt: dt,
+    stepHeight: 8,
+    stickToFloor: 8,
+    wasGrounded: grounded,
+  );
+  position = move.position;
+  velocity = move.velocity;
+  grounded = move.isGrounded;
 }
 ```
 
 ## Notes
 
-- The 2D engine is the production-ready part of this package.
-- 3D classes are currently scaffolding/stubs and do not provide full simulation yet.
+- 3D needs Jolt built into the app: add `hooks: user_defines: just_jolt: build: true` to the app's pubspec.yaml. Without it (and on the web) `PhysicsEngineFactory.create3D()` throws a `Physics3DUnsupportedError` saying what to add. `package:just_physics_engine/testing.dart` has `FakePhysicsEngine3D` for tests that need no native code.
 - For deterministic gameplay, use a fixed timestep (for example, `1/60`) rather than variable-frame integration.
 
 ## Compatibility
 
-> **Known blocker for 3-D:** the native build hook pins `hooks: ^1.0.0` and
-> `native_toolchain_c: ^0.17.0`. `just_graphics_engine` (the flutter_gpu
-> renderer) needs `hooks: ^2.0.0`, so the two cannot resolve in one app
-> until this package moves to `hooks ^2` / `code_assets ^1.2` /
-> `native_toolchain_c ^0.19` — planned with the 3-D release of the engine.
-
-- Version `1.3.0`
+- Version `1.4.0`
+- Native build hook: `hooks` ^2, `code_assets` ^1.2, `native_toolchain_c` ^0.19.3 (the same generation as `just_graphics_engine`, so both resolve in one app).
 - Dart SDK: `^3.11.0`
 - Flutter: `>=3.27.0`
 - Platforms: Android, iOS, Linux, macOS, Web, Windows
-- Native platforms use the Box2D FFI backend when available.
+- Native platforms use the Box2D FFI backend when available — Android included: the library is found by its code asset id, not by file name.
 - Web and WASM targets use the pure-Dart backend.
 
 ## Development

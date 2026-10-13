@@ -15,8 +15,8 @@ import '../physics_2d/physics_engine.dart';
 import '../physics_2d/ray_2d.dart';
 import 'box2d_body.dart';
 import 'box2d_world.dart';
-import 'ffi/box2d_bindings.dart' show ImpactCallbackFnFunction;
-import 'ffi/box2d_library.dart' show box2d, loadBox2DLibrary;
+import 'ffi/box2d_bindings.dart' as box2d;
+import 'ffi/box2d_library.dart' show loadBox2DLibrary;
 import 'box2d_joint.dart';
 import 'physics_game_loop.dart';
 
@@ -78,7 +78,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
   // ── NativeCallable for cross-thread impact audio callback ──────────────────
 
-  NativeCallable<ImpactCallbackFnFunction>? _impactCallable;
+  NativeCallable<box2d.ImpactCallbackFnFunction>? _impactCallable;
 
   // ── Diagnostics ────────────────────────────────────────────────────────────
 
@@ -623,6 +623,15 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     if (qd != null) calloc.free(qd);
     if (rb != null) calloc.free(rb);
     if (rf != null) calloc.free(rf);
+    final mp = _moverPoints;
+    final ml = _moverPlanes;
+    final mb = _moverBodies;
+    _moverPoints = null;
+    _moverPlanes = null;
+    _moverBodies = null;
+    if (mp != null) calloc.free(mp);
+    if (ml != null) calloc.free(ml);
+    if (mb != null) calloc.free(mb);
   }
 
   /// Box2D's query filter cannot express "skip these specific bodies", only
@@ -715,6 +724,99 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     // Native order is BVH traversal order, not distance order.
     hits.sort((a, b) => a.distance.compareTo(b.distance));
     return hits;
+  }
+
+  // ── Character movers ──────────────────────────────────────────────────────
+  //
+  // Answered in C (b2w_moverCollide / b2w_moverCast) with the same rules as
+  // the pure-Dart engine, on Box2D's own GJK and shape cast.
+
+  /// Most planes one [collideMover] call reports.
+  static const int _maxMoverPlanes = 32;
+
+  Pointer<Float>? _moverPoints; // up to 8 points, x and y
+  Pointer<Float>? _moverPlanes; // _maxMoverPlanes * 5 floats
+  Pointer<Int64>? _moverBodies; // _maxMoverPlanes handles
+
+  /// Writes [shape]'s core points into the buffer; returns their count.
+  int _moverShape(MoverShape shape) {
+    _moverPoints ??= calloc<Float>(16);
+    _moverPlanes ??= calloc<Float>(_maxMoverPlanes * 5);
+    _moverBodies ??= calloc<Int64>(_maxMoverPlanes);
+    final out = _moverPoints!;
+    final points = shape.points;
+    for (var i = 0; i < points.length; i++) {
+      out[2 * i] = points[i].dx;
+      out[2 * i + 1] = points[i].dy;
+    }
+    return points.length;
+  }
+
+  int _moverIgnore(MoverFilter filter) {
+    final ignore = filter.ignore;
+    return ignore == null ? 0 : (_bodyMap[ignore]?.handle ?? 0);
+  }
+
+  @override
+  List<MoverPlane> collideMover(
+    MoverShape shape,
+    Offset position, {
+    MoverFilter filter = const MoverFilter(),
+  }) {
+    if (!_nativeReady) {
+      return super.collideMover(shape, position, filter: filter);
+    }
+    final count = _moverShape(shape);
+    final n = box2d.b2w_moverCollide(
+      _world!.handle,
+      position.dx,
+      position.dy,
+      _moverPoints!,
+      count,
+      shape.radius,
+      filter.categoryBits,
+      filter.maskBits,
+      _moverIgnore(filter),
+      _moverPlanes!,
+      _moverBodies!,
+      _maxMoverPlanes,
+    );
+    final f = _moverPlanes!;
+    return [
+      for (var i = 0; i < n; i++)
+        MoverPlane(
+          normal: Offset(f[5 * i], f[5 * i + 1]),
+          offset: f[5 * i + 2],
+          point: Offset(f[5 * i + 3] + position.dx, f[5 * i + 4] + position.dy),
+          body: _handleToBody[_moverBodies![i]],
+        ),
+    ];
+  }
+
+  @override
+  double castMover(
+    MoverShape shape,
+    Offset position,
+    Offset translation, {
+    MoverFilter filter = const MoverFilter(),
+  }) {
+    if (!_nativeReady) {
+      return super.castMover(shape, position, translation, filter: filter);
+    }
+    final count = _moverShape(shape);
+    return box2d.b2w_moverCast(
+      _world!.handle,
+      position.dx,
+      position.dy,
+      _moverPoints!,
+      count,
+      shape.radius,
+      translation.dx,
+      translation.dy,
+      filter.categoryBits,
+      filter.maskBits,
+      _moverIgnore(filter),
+    );
   }
 
   @override
@@ -857,6 +959,9 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   @override
   List<PhysicsBody> get bodies =>
       _nativeReady ? List.unmodifiable(_bodyMap.keys) : super.bodies;
+
+  @override
+  int get bodyCount => _nativeReady ? _bodyMap.length : super.bodyCount;
 
   /// Override world gravity at runtime — updates both the Dart gravity vector
   /// and the native Box2D world so they stay in sync.
@@ -1218,7 +1323,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   }) {
     if (!_nativeReady) return;
     _impactCallable?.close();
-    _impactCallable = NativeCallable<ImpactCallbackFnFunction>.listener(
+    _impactCallable = NativeCallable<box2d.ImpactCallbackFnFunction>.listener(
       callback,
     );
     box2d.b2w_setImpactCallback(
@@ -1239,6 +1344,11 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
   @override
   void dispose() {
+    // Native first: once closed, the callable must not be called from a step.
+    final world = _world;
+    if (_impactCallable != null && world != null) {
+      box2d.b2w_setImpactCallback(world.handle, nullptr, 0);
+    }
     _impactCallable?.close();
     _impactCallable = null;
 

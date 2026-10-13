@@ -20,14 +20,20 @@
 /// - [PhysicsGameLoop]       — fixed-timestep coordinator
 /// - [TransformInterpolator] — sub-frame render interpolation (α-blending)
 ///
-/// 3D (stub, not yet implemented):
-/// - [PhysicsEngine3D]
+/// 3D (also on its own in `package:just_physics_engine/physics_3d.dart`):
+/// - [PhysicsEngine3D]       — makes worlds; `PhysicsEngineFactory.create3D`
+///                             gives the platform's
+/// - [JoltPhysicsEngine]     — Jolt Physics through just_jolt (native only;
+///                             the app's pubspec opts in to building it)
+/// - [PhysicsWorld3D]        — one simulation, with int body handles
+/// - [Physics3DUnsupportedError] — where 3D cannot run
+/// - shapes, settings, poses, hits and events (`…3D`)
 library;
 
 // ── Pure-Dart 2D backend (web fallback, unchanged) ─────────────────────────
 export 'src/physics_2d/physics_2d.dart';
 
-// ── 3D stubs ───────────────────────────────────────────────────────────────
+// ── 3D: the interface and Jolt ─────────────────────────────────────────────
 export 'src/physics_3d/physics_3d.dart';
 
 // ── Box2D FFI backend (native platforms) ───────────────────────────────────

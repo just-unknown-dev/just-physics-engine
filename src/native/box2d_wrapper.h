@@ -455,6 +455,41 @@ B2W_EXPORT int32_t b2w_queryAABB(int64_t worldHandle,
                                  uint64_t categoryBits, uint64_t maskBits,
                                  int64_t* outBodies, int32_t maxBodies);
 
+// ── Character movers ─────────────────────────────────────────────────────────
+//
+// The two queries CharacterMover2D is built on (lib/src/physics_2d/
+// mover_2d.dart, where the pure-Dart engine answers them the same way). The
+// mover is a convex shape: 1–8 points (x, y pairs RELATIVE to the origin)
+// grown by radius — two points for a capsule, four for a box. Sensors,
+// ignoreBody (0 for none) and shapes the filter rejects are passed over; a
+// one-way platform counts only from its solid side.
+
+/// The surfaces a mover at the origin touches, as Box2D collision planes.
+/// outPlanes: caller-allocated float[maxPlanes*5], per plane:
+///            [normalX, normalY, offset, pointX, pointY]; the normal points
+///            towards the mover, offset is how far the mover is into the
+///            surface's reach, and the point (on the surface) is relative to
+///            the origin. outBodies: the body of each plane.
+/// Returns the number of planes written.
+B2W_EXPORT int32_t b2w_moverCollide(int64_t worldHandle,
+                                    float originX, float originY,
+                                    const float* points, int32_t pointCount,
+                                    float radius,
+                                    uint64_t categoryBits, uint64_t maskBits,
+                                    int64_t ignoreBody,
+                                    float* outPlanes, int64_t* outBodies,
+                                    int32_t maxPlanes);
+
+/// How much of the translation a mover at the origin can move before it
+/// touches something, from 0 to 1. What it starts out touching is ignored.
+B2W_EXPORT float b2w_moverCast(int64_t worldHandle,
+                               float originX, float originY,
+                               const float* points, int32_t pointCount,
+                               float radius,
+                               float translationX, float translationY,
+                               uint64_t categoryBits, uint64_t maskBits,
+                               int64_t ignoreBody);
+
 // ── Runtime material / damping mutation ──────────────────────────────────────
 
 /// Velocity decay. Box2D's model is 1/(1 + dt*damping), which is not identical

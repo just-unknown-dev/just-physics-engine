@@ -46,7 +46,6 @@ void main(List<String> args) async {
       includes: includes,
       flags: sharedFlags,
       std: 'c17',
-      buildMode: BuildMode.release,
       linkModePreference: LinkModePreference.static,
     ).run(input: input, output: staticOutput);
 
@@ -58,15 +57,21 @@ void main(List<String> args) async {
         nativeDir.resolve('box2d_wrapper.cpp').toFilePath(),
       ],
       includes: includes,
-      libraryDirectories: const ['.'],
-      libraries: const ['box2d_core'],
+      libraries: [
+        'box2d_core',
+        // Box2D calls libm (atan2f, …). Android and Linux need it linked
+        // explicitly, or the library fails to load ("cannot locate symbol
+        // atan2f") and every game silently runs the pure-Dart fallback.
+        if (input.config.code.targetOS == OS.android ||
+            input.config.code.targetOS == OS.linux)
+          'm',
+      ],
       flags: sharedFlags,
       std: 'c++17',
       language: Language.cpp,
       cppLinkStdLib: input.config.code.targetOS == OS.android
           ? 'c++_static'
           : null,
-      buildMode: BuildMode.release,
     ).run(input: input, output: output);
   });
 }

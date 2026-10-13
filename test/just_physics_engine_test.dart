@@ -716,17 +716,6 @@ void main() {
     });
   });
 
-  // ── PhysicsEngine3D stub ──────────────────────────────────────────────────
-
-  group('PhysicsEngine3D', () {
-    test('stub lifecycle completes without error', () {
-      final engine = PhysicsEngine3D();
-      engine.initialize();
-      engine.update(0.016);
-      engine.dispose();
-    });
-  });
-
   // ── Joint constraints ─────────────────────────────────────────────────────
 
   PhysicsEngine dartEngine() => PhysicsEngine.pureDart()..initialize();
