@@ -43,7 +43,7 @@ class Box2DWorld implements Finalizable {
   /// Create a Box2D world.
   ///
   /// Default gravity `(0, 981)` = 9.81 m/s² at 1 unit = 1 cm.
-  /// [numThreads] ≤ 0 → `hardware_concurrency − 1`.
+  /// [numThreads] ≤ 0 → cores − 1, at most 4.
   factory Box2DWorld({
     double gravityX = 0.0,
     double gravityY = 981.0,

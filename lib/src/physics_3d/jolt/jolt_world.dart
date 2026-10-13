@@ -1,9 +1,11 @@
 import 'dart:ffi';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 import 'package:just_dart/just_dart.dart';
 import 'package:just_jolt/ffi.dart';
+import 'package:meta/meta.dart' show internal;
 
 import '../physics_engine_3d.dart';
 import '../results_3d.dart';
@@ -14,9 +16,14 @@ import 'jolt_shapes.dart';
 /// A Jolt Physics world: [PhysicsWorld3D] on just_jolt's native layer.
 ///
 /// Made by `JoltPhysicsEngine.createWorld`. Handles are the native layer's
-/// int64 handles, which carry their world, so one from another world or a
-/// dead one is passed over. Shapes are shared and reference-counted
-/// ([JoltShapes]).
+/// int64 handles. A world acts only on the bodies, joints and characters it
+/// made itself, so one from another world, a dead one, or a character's
+/// stand-in body passed to [destroyBody] or [createJoint] is passed over.
+/// Shapes are shared and reference-counted ([JoltShapes]).
+///
+/// Destroy worlds through `PhysicsEngine3D.destroyAll`, not just_jolt's
+/// `Jolt.destroyAll`: a world destroyed behind its back still calls Jolt's
+/// body interface through memory that has gone. Use Jolt from one isolate.
 ///
 /// The world, its scratch memory and its shapes each carry a
 /// [NativeFinalizer], so a world dropped without [dispose] is still freed —
@@ -56,6 +63,18 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
   late final int _tag;
   late final Pointer<JPH_BodyInterface> _bodyInterface;
 
+  /// Bumped when every native world is destroyed at once
+  /// (`PhysicsEngine3D.destroyAll`); a world made before is gone with them.
+  static int _generation = 0;
+  final int _born = _generation;
+
+  /// Marks every world made so far as gone, after their native worlds were
+  /// destroyed together.
+  @internal
+  static void forgetAll() => _generation++;
+
+  bool get _gone => _disposed || _born != _generation;
+
   /// This world's shapes.
   final JoltShapes shapes = JoltShapes();
 
@@ -68,6 +87,9 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
 
   final Map<int, Shape3D> _bodyShapes = {};
   final Map<int, BodyType3D> _bodyTypes = {};
+  final Map<int, (int, int)> _jointBodies = {};
+  final Map<int, Set<int>> _bodyJoints = {};
+  final Set<int> _characters = {};
 
   // Scratch memory, made once.
   late final Pointer<JPH_Vec3> _v1 = _alloc<JPH_Vec3>();
@@ -81,10 +103,13 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
   late final Pointer<JJ_CharacterState> _characterState =
       _alloc<JJ_CharacterState>();
 
-  // Buffers that grow.
+  // Buffers that grow. The pose buffers are freed by their typed views, so
+  // a BodyPoses3D read from them stays readable after the world is gone.
   int _poseCapacity = 0;
   Pointer<Int64> _poseIds = nullptr;
   Pointer<Float> _poses = nullptr;
+  Int64List _poseIdView = Int64List(0);
+  Float32List _poseView = Float32List(0);
   int _eventCapacity = 256;
   late Pointer<JJ_Event> _events = _alloc<JJ_Event>(_eventCapacity);
   int _hitCapacity = 64;
@@ -139,17 +164,20 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
     return p;
   }
 
+  /// [q] made unit length for Jolt; the identity when it has no length.
   Pointer<JPH_Quat> _quat(Quaternion q) {
+    final length = math.sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+    final ok = length.isFinite && length > 1e-12;
     _q.ref
-      ..x = q.x
-      ..y = q.y
-      ..z = q.z
-      ..w = q.w;
+      ..x = ok ? q.x / length : 0
+      ..y = ok ? q.y / length : 0
+      ..z = ok ? q.z / length : 0
+      ..w = ok ? q.w / length : 1;
     return _q;
   }
 
   @override
-  bool get isDisposed => _disposed;
+  bool get isDisposed => _gone;
 
   @override
   void dispose() {
@@ -160,6 +188,9 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
     shapes.clear();
     _bodyShapes.clear();
     _bodyTypes.clear();
+    _jointBodies.clear();
+    _bodyJoints.clear();
+    _characters.clear();
     for (final address in List.of(_owned.keys)) {
       _drop(Pointer<Uint8>.fromAddress(address));
     }
@@ -170,7 +201,7 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
 
   @override
   set gravity(Vector3 value) {
-    if (_disposed) return;
+    if (_gone) return;
     _gravity.setFrom(value);
     _f
       ..[0] = value.x
@@ -180,19 +211,19 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
   }
 
   @override
-  int get bodyCount => _disposed ? 0 : jj_world_body_count(handle);
+  int get bodyCount => _gone ? 0 : jj_world_body_count(handle);
 
   /// Rebuilds the broad phase; worth it after adding many static bodies at
   /// once (a level loading).
   void optimize() {
-    if (!_disposed) jj_world_optimize(handle);
+    if (!_gone) jj_world_optimize(handle);
   }
 
   // ── Bodies ────────────────────────────────────────────────────────────
 
   @override
   int createBody(Shape3D shape, BodySettings3D settings) {
-    if (_disposed) return 0;
+    if (_gone) return 0;
     final pointer = shapes.acquire(shape);
     if (pointer == null) return 0;
     final s = _bodySettings.ref;
@@ -237,24 +268,31 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
 
   @override
   void destroyBody(int body) {
-    if (_disposed) return;
+    // Only bodies made by createBody: a character's stand-in body belongs to
+    // its character, and destroying it here would destroy it twice.
+    if (_gone) return;
     final shape = _bodyShapes.remove(body);
+    if (shape == null) return;
     _bodyTypes.remove(body);
     jj_body_destroy(body);
-    if (shape != null) shapes.release(shape);
+    shapes.release(shape);
+    // The native layer destroyed the joints holding it.
+    for (final joint in _bodyJoints.remove(body)?.toList() ?? const <int>[]) {
+      _forgetJoint(joint);
+    }
   }
 
   @override
-  bool isBody(int body) => !_disposed && _mine(body) && jj_body_valid(body);
+  bool isBody(int body) => !_gone && _mine(body) && jj_body_valid(body);
 
   bool _moving(int body) {
-    if (_disposed || !_mine(body)) return false;
+    if (_gone || !_mine(body)) return false;
     final type = _bodyTypes[body];
     return type != null && type != BodyType3D.static;
   }
 
   bool _dynamic(int body) =>
-      !_disposed && _mine(body) && _bodyTypes[body] == BodyType3D.dynamic;
+      !_gone && _mine(body) && _bodyTypes[body] == BodyType3D.dynamic;
 
   @override
   void setBodyPose(
@@ -263,7 +301,7 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
     Quaternion rotation, {
     bool wake = true,
   }) {
-    if (_disposed || !_mine(body)) return;
+    if (_gone || !_mine(body)) return;
     JPH_BodyInterface_SetPositionAndRotation(
       _bodyInterface,
       _id(body),
@@ -346,13 +384,13 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
 
   @override
   void setFriction(int body, double friction) {
-    if (_disposed || !_mine(body)) return;
+    if (_gone || !_mine(body)) return;
     JPH_BodyInterface_SetFriction(_bodyInterface, _id(body), friction);
   }
 
   @override
   void setRestitution(int body, double restitution) {
-    if (_disposed || !_mine(body)) return;
+    if (_gone || !_mine(body)) return;
     JPH_BodyInterface_SetRestitution(_bodyInterface, _id(body), restitution);
   }
 
@@ -364,7 +402,7 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
 
   @override
   void setLayer(int body, int layer) {
-    if (_disposed || !_mine(body)) return;
+    if (_gone || !_mine(body)) return;
     jj_body_set_layer(body, layer);
   }
 
@@ -392,7 +430,18 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
 
   @override
   int createJoint(int bodyA, int bodyB, JointSettings3D settings) {
-    if (_disposed) return 0;
+    // Only bodies made by createBody: a joint must not hold a character's
+    // stand-in body, which goes with its character.
+    final sixDofLists =
+        settings.sixDofModes.length >= 6 &&
+        settings.sixDofMin.length >= 6 &&
+        settings.sixDofMax.length >= 6;
+    if (_gone ||
+        !_bodyShapes.containsKey(bodyA) ||
+        (bodyB != 0 && !_bodyShapes.containsKey(bodyB)) ||
+        (settings.kind == JointKind3D.sixDof && !sixDofLists)) {
+      return 0;
+    }
     final s = _jointSettings.ref;
     void put(Array<Float> to, Vector3 v) {
       to[0] = v.x;
@@ -416,7 +465,7 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
       ..motorTarget = settings.motorTarget
       ..motorMaxForce = settings.motorMaxForce;
     var free = 0, fixed = 0;
-    for (var a = 0; a < 6; a++) {
+    for (var a = 0; a < (sixDofLists ? 6 : 0); a++) {
       switch (settings.sixDofModes[a]) {
         case SixDofAxisMode3D.free:
           free |= 1 << a;
@@ -431,35 +480,52 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
     s
       ..sixDofFree = free
       ..sixDofFixed = fixed;
-    return jj_joint_create(handle, bodyA, bodyB, _jointSettings);
+    final joint = jj_joint_create(handle, bodyA, bodyB, _jointSettings);
+    if (joint != 0) {
+      _jointBodies[joint] = (bodyA, bodyB);
+      (_bodyJoints[bodyA] ??= {}).add(joint);
+      if (bodyB != 0) (_bodyJoints[bodyB] ??= {}).add(joint);
+    }
+    return joint;
+  }
+
+  bool _myJoint(int joint) => !_gone && _jointBodies.containsKey(joint);
+
+  void _forgetJoint(int joint) {
+    final bodies = _jointBodies.remove(joint);
+    if (bodies == null) return;
+    _bodyJoints[bodies.$1]?.remove(joint);
+    _bodyJoints[bodies.$2]?.remove(joint);
   }
 
   @override
   void destroyJoint(int joint) {
-    if (!_disposed) jj_joint_destroy(joint);
+    if (!_myJoint(joint)) return;
+    _forgetJoint(joint);
+    jj_joint_destroy(joint);
   }
 
   @override
-  bool isJoint(int joint) => !_disposed && jj_joint_valid(joint);
+  bool isJoint(int joint) => _myJoint(joint) && jj_joint_valid(joint);
 
   @override
   void setJointEnabled(int joint, bool enabled) {
-    if (!_disposed) jj_joint_set_enabled(joint, enabled);
+    if (_myJoint(joint)) jj_joint_set_enabled(joint, enabled);
   }
 
   @override
   void setJointMotor(int joint, MotorState3D state, double target) {
-    if (!_disposed) jj_joint_set_motor(joint, state.index, target);
+    if (_myJoint(joint)) jj_joint_set_motor(joint, state.index, target);
   }
 
   @override
-  double jointValue(int joint) => _disposed ? 0 : jj_joint_value(joint);
+  double jointValue(int joint) => _myJoint(joint) ? jj_joint_value(joint) : 0;
 
   // ── Characters ────────────────────────────────────────────────────────
 
   @override
   int createCharacter(CharacterSettings3D settings, Vector3 position) {
-    if (_disposed) return 0;
+    if (_gone) return 0;
     final s = _characterSettings.ref;
     s
       ..radius = settings.radius
@@ -481,21 +547,27 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
       ..[0] = position.x
       ..[1] = position.y
       ..[2] = position.z;
-    return jj_character_create(handle, _characterSettings, _f);
+    final character = jj_character_create(handle, _characterSettings, _f);
+    if (character != 0) _characters.add(character);
+    return character;
   }
+
+  bool _myCharacter(int character) => !_gone && _characters.contains(character);
 
   @override
   void destroyCharacter(int character) {
-    if (!_disposed) jj_character_destroy(character);
+    if (!_myCharacter(character)) return;
+    _characters.remove(character);
+    jj_character_destroy(character);
   }
 
   @override
   bool isCharacter(int character) =>
-      !_disposed && jj_character_valid(character);
+      _myCharacter(character) && jj_character_valid(character);
 
   @override
   int characterBody(int character) =>
-      _disposed ? 0 : jj_character_inner_body(character);
+      _myCharacter(character) ? jj_character_inner_body(character) : 0;
 
   @override
   void moveCharacter(
@@ -506,8 +578,8 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
     required Vector3 stepDown,
     required Vector3 stepUp,
   }) {
-    if (_disposed) {
-      out.groundState = GroundState3D.inAir;
+    if (!_myCharacter(character)) {
+      _clearState(out);
       return;
     }
     final f = _f;
@@ -530,12 +602,24 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
 
   @override
   void characterState(int character, CharacterState3D out) {
-    if (_disposed) {
-      out.groundState = GroundState3D.inAir;
+    if (!_myCharacter(character)) {
+      _clearState(out);
       return;
     }
     jj_character_state(character, _characterState);
     _readState(out);
+  }
+
+  /// What a dead character reads as: nothing, in the air.
+  static void _clearState(CharacterState3D out) {
+    out.position.setZero();
+    out.velocity.setZero();
+    out.groundState = GroundState3D.inAir;
+    out.groundNormal.setZero();
+    out.groundVelocity.setZero();
+    out.groundPosition.setZero();
+    out.groundBody = 0;
+    out.contactCount = 0;
   }
 
   void _readState(CharacterState3D out) {
@@ -564,7 +648,7 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
 
   @override
   void setCharacterPosition(int character, Vector3 position) {
-    if (_disposed) return;
+    if (!_myCharacter(character)) return;
     _f
       ..[0] = position.x
       ..[1] = position.y
@@ -574,7 +658,7 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
 
   @override
   List<CharacterContact3D> characterContacts(int character) {
-    if (_disposed) return const [];
+    if (!_myCharacter(character)) return const [];
     var n = jj_character_contacts(character, _contacts, _contactCapacity);
     if (n == _contactCapacity) {
       jj_character_state(character, _characterState);
@@ -608,21 +692,30 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
 
   @override
   void step(double dt, {int collisionSteps = 1}) {
-    if (_disposed) return;
+    if (_gone || dt <= 0) return;
     jj_world_step(handle, dt, collisionSteps);
   }
 
   void _growPoses(int capacity) {
-    _drop(_poseIds);
-    _drop(_poses);
+    // The old buffers go with the last view of them.
     _poseCapacity = capacity;
-    _poseIds = _alloc<Int64>(capacity);
-    _poses = _alloc<Float>(capacity * BodyPoses3D.stride);
+    _poseIds = calloc<Int64>(capacity);
+    _poses = calloc<Float>(capacity * BodyPoses3D.stride);
+    _poseIdView = _poseIds.asTypedList(
+      capacity,
+      finalizer: calloc.nativeFree,
+      token: _poseIds.cast(),
+    );
+    _poseView = _poses.asTypedList(
+      capacity * BodyPoses3D.stride,
+      finalizer: calloc.nativeFree,
+      token: _poses.cast(),
+    );
   }
 
   @override
   void readMovedBodies(BodyPoses3D out) {
-    if (_disposed) {
+    if (_gone) {
       out.set(0, const [], Float32List(0));
       return;
     }
@@ -634,14 +727,14 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
     }
     out.set(
       n,
-      _poseIds.asTypedList(n),
-      _poses.asTypedList(n * BodyPoses3D.stride),
+      Int64List.sublistView(_poseIdView, 0, n),
+      Float32List.sublistView(_poseView, 0, n * BodyPoses3D.stride),
     );
   }
 
   @override
   void readBodies(List<int> bodies, BodyPoses3D out) {
-    if (_disposed || bodies.isEmpty) {
+    if (_gone || bodies.isEmpty) {
       out.set(0, const [], Float32List(0));
       return;
     }
@@ -674,7 +767,7 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
 
   @override
   List<PhysicsEvent3D> drainEvents() {
-    if (_disposed) return const [];
+    if (_gone) return const [];
     final out = <PhysicsEvent3D>[];
     while (true) {
       final n = jj_drain_events(handle, _events, _eventCapacity);
@@ -753,7 +846,7 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
     QueryFilter3D filter = QueryFilter3D.all,
     bool allHits = false,
   }) {
-    if (_disposed) return const [];
+    if (_gone) return const [];
     _f
       ..[0] = origin.x
       ..[1] = origin.y
@@ -786,7 +879,7 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
     QueryFilter3D filter = QueryFilter3D.all,
     bool allHits = false,
   }) {
-    if (_disposed) return const [];
+    if (_gone) return const [];
     final pointer = shapes.borrow(shape);
     if (pointer == null) return const [];
     _pose(position, rotation);
@@ -818,7 +911,7 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
     Quaternion rotation, {
     QueryFilter3D filter = QueryFilter3D.all,
   }) {
-    if (_disposed) return const [];
+    if (_gone) return const [];
     final pointer = shapes.borrow(shape);
     if (pointer == null) return const [];
     _pose(position, rotation);
@@ -842,7 +935,7 @@ final class JoltWorld implements PhysicsWorld3D, Finalizable {
 
   @override
   Float32List? debugLines({bool joints = false}) {
-    if (_disposed || !jj_has_debug_renderer()) return null;
+    if (_gone || !jj_has_debug_renderer()) return null;
     final flags = joints ? 1 : 0;
     final total = jj_debug_lines(handle, flags, nullptr, 0);
     if (total <= 0) return Float32List(0);

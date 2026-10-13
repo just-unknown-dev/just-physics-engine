@@ -5,6 +5,6 @@ import 'box2d_physics_engine.dart';
 /// Windows, macOS, Linux).
 ///
 /// Imported conditionally by physics_engine_factory.dart:
-///   import '_box2d_engine_stub.dart'
-///       if (dart.library.io) '_box2d_engine_native.dart';
+///   import '_box2d_engine_native.dart'
+///       if (dart.library.js_interop) '_box2d_engine_stub.dart';
 PhysicsEngine createPhysicsEngine() => Box2DPhysicsEngine();

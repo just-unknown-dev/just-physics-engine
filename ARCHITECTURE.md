@@ -4,14 +4,14 @@
 
 `just_physics_engine` is a dual-backend physics package for Flutter:
 
-- Native platforms (Android/iOS/macOS/Windows/Linux): Box2D v3.0 through Dart FFI.
+- Native platforms (Android/iOS/macOS/Windows/Linux): Box2D v3.2 through Dart FFI.
 - Web: pure-Dart 2D fallback engine.
 
 The public package entry point is `lib/just_physics_engine.dart`, which exports:
 
 - `physics_2d` API (always available)
 - `physics_3d`: the 3D interface and its data, and `JoltPhysicsEngine` (conditional: a stub on the web)
-- platform-conditional Box2D exports (`box2d_public_native.dart` on IO, `box2d_public_web.dart` on web)
+- platform-conditional Box2D exports: `box2d_public_native.dart` by default — what the analyzer and the API docs see — and `box2d_public_web.dart`, the same API doing nothing, where `dart.library.js_interop` is (JS and Wasm)
 
 ## Design Goals
 
@@ -90,8 +90,8 @@ Character movers: `b2w_moverCollide` and `b2w_moverCast` in `box2d_wrapper.cpp` 
 
 - `PhysicsEngineFactory` uses conditional imports.
 - On native init failure (missing shared lib/submodule issues), `Box2DPhysicsEngine` logs and falls back to pure-Dart update behavior.
-- A game that never needs Box2D (a 3-D game on another physics package) can ask the engine for the pure-Dart engine directly: `EngineConfig(createPhysics: PhysicsEngine.pureDart)` in just_game_engine.
-- On web, `box2d_public_web.dart` provides compatible stubs where native FFI is not possible.
+- A game that never needs Box2D (a 3-D game with no 2-D physics) can ask the engine for the pure-Dart engine directly: `EngineConfig(createPhysics: PhysicsEngine.pureDart)` in just_game_engine.
+- On web, `box2d_public_web.dart` has the native classes' whole API, doing nothing, so code written against them compiles there too. Keep the two in step.
 
 ## Data Model
 
@@ -110,7 +110,7 @@ Collision model:
 
 Pure-Dart backend:
 
-- Integrates directly using provided `deltaTime`.
+- Uses a fixed `1/60` s timestep with an accumulator, at most 5 sub-steps a frame (`PhysicsEngine.maxSubSteps`), and exposes the remainder as `alpha`. `PhysicsEngine.pureDart(fixedTimestep: false)` integrates the frame's `deltaTime` directly instead.
 
 Box2D backend:
 
@@ -119,7 +119,8 @@ Box2D backend:
 
 ## Memory and Resource Ownership
 
-- Box2D world and bodies are disposable and guarded with `NativeFinalizer` as a safety net.
+- Box2D world and bodies are disposable and guarded with `NativeFinalizer` as a safety net. A finalizer can run on any thread, so it only queues the destroy; the next call from Dart performs it.
+- Native handles carry their world's generation as well as Box2D's id, and every `b2w_*` entry point checks them before Box2D sees them (Box2D checks nothing in a release build): a handle of a body, chain, joint or world that has gone does nothing, even after a new world took its slot.
 - Explicit `dispose()` remains required for predictable resource release.
 - Native transform buffers are manually allocated/freed and resized with growth strategy.
 
@@ -127,5 +128,6 @@ Box2D backend:
 
 - `PhysicsEngine3D` makes `PhysicsWorld3D`s; the world API is int handles plus batched reads (`readMovedBodies`, 14 floats a body) and one event drain per step, so a frame costs a few FFI calls, not one per body.
 - `JoltPhysicsEngine` (`src/physics_3d/jolt/`) is the implementation, on just_jolt's bindings: `JoltWorld` (bodies, joints, characters, queries) and `JoltShapes` (shared, reference-counted native shapes; height fields turned to Jolt's +Y up). Worlds ask just_jolt for min restitution, as the 2D engines mix it.
+- A `JoltWorld` acts only on the bodies, joints and characters it made itself: a handle from another world, or a character's stand-in body passed to `destroyBody` or `createJoint`, is passed over — Jolt would otherwise destroy that body twice. Shapes are checked (`Shape3D.isValid`) before Jolt sees them.
 - Jolt's native library is compiled only when the app asks (`hooks: user_defines: just_jolt: build: true`). The 3D code is reachable only through `PhysicsEngineFactory.create3D` and `JoltPhysicsEngine`, so a 2D app tree-shakes all of it and, without the define, builds no Jolt.
 - `create3D` throws `Physics3DUnsupportedError` on the web, on 32-bit Android ABIs and when Jolt was not built.

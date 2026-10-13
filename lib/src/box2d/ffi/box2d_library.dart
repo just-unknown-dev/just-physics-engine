@@ -87,12 +87,18 @@ bool get isBox2DAvailable {
 
 /// Raw pointer to `b2w_finalizer_world` for use with [NativeFinalizer].
 Pointer<NativeFunction<Void Function(Pointer<Void>)>> get box2dFinalizerWorld {
-  assert(_finWorldPtr != null, 'Call loadBox2DLibrary() before using Box2D bindings.');
+  assert(
+    _finWorldPtr != null,
+    'Call loadBox2DLibrary() before using Box2D bindings.',
+  );
   return _finWorldPtr!;
 }
 
 /// Raw pointer to `b2w_finalizer_body` for use with [NativeFinalizer].
 Pointer<NativeFunction<Void Function(Pointer<Void>)>> get box2dFinalizerBody {
-  assert(_finBodyPtr != null, 'Call loadBox2DLibrary() before using Box2D bindings.');
+  assert(
+    _finBodyPtr != null,
+    'Call loadBox2DLibrary() before using Box2D bindings.',
+  );
   return _finBodyPtr!;
 }

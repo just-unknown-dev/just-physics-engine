@@ -39,7 +39,10 @@ final class JoltPhysicsEngine implements PhysicsEngine3D {
   }
 
   @override
-  void destroyAll() => Jolt.destroyAll();
+  void destroyAll() {
+    Jolt.destroyAll();
+    JoltWorld.forgetAll();
+  }
 
   /// How many native worlds are alive in this process (for leak checks).
   int get liveWorlds => Jolt.liveWorlds;

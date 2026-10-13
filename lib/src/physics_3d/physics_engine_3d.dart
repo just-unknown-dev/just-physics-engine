@@ -29,7 +29,7 @@ abstract interface class PhysicsEngine3D {
 
   /// Destroys every world this engine made in this process, whoever made
   /// it — for a hot restart, when the Dart objects that owned them are gone
-  /// but native memory is not.
+  /// but native memory is not. A world still held reads as disposed.
   void destroyAll();
 }
 
@@ -38,15 +38,18 @@ abstract interface class PhysicsEngine3D {
 /// which, and what to change when something can be.
 final class Physics3DUnsupportedError extends UnsupportedError {
   /// An error saying [reason].
-  Physics3DUnsupportedError(String reason) : super('3D physics is not available: $reason');
+  Physics3DUnsupportedError(String reason)
+    : super('3D physics is not available: $reason');
 }
 
 /// One simulation: bodies, joints and characters that see each other.
 ///
-/// Bodies, joints and characters are plain `int` handles. A handle is never
-/// reused, and every method accepts dead ones and does nothing with them, so
-/// gameplay code never crashes on a body something else destroyed. 0 is
-/// never a handle.
+/// Bodies, joints and characters are plain `int` handles. Every method
+/// accepts dead ones, and ones from another world, and does nothing with
+/// them, so gameplay code never crashes on a body something else destroyed.
+/// 0 is never a handle. A handle can come back for a new body once its own
+/// was destroyed (Jolt reuses a body's id after 256 bodies have used its
+/// slot), so forget a handle when you destroy what it names.
 abstract interface class PhysicsWorld3D {
   /// Whether [dispose] was called.
   bool get isDisposed;
@@ -63,11 +66,13 @@ abstract interface class PhysicsWorld3D {
 
   // ── Bodies ────────────────────────────────────────────────────────────
 
-  /// Makes a body of [shape]; 0 when it cannot be made (a mesh or a
-  /// height field on a dynamic body, a full world).
+  /// Makes a body of [shape]; 0 when it cannot be made (a shape that is
+  /// not [Shape3D.isValid], a mesh or a height field on a body that is not
+  /// static, a layer outside 0–15, a full world).
   int createBody(Shape3D shape, BodySettings3D settings);
 
-  /// Destroys [body] and every joint holding it.
+  /// Destroys [body] and every joint holding it. Only bodies [createBody]
+  /// made: a character's body ([characterBody]) goes with its character.
   void destroyBody(int body);
 
   /// Whether [body] is a live body of this world.
@@ -133,7 +138,8 @@ abstract interface class PhysicsWorld3D {
   // ── Joints ────────────────────────────────────────────────────────────
 
   /// Joins [bodyA] to [bodyB], or to the world when [bodyB] is 0; 0 when
-  /// it cannot be made.
+  /// it cannot be made. Both must be bodies [createBody] made, not a
+  /// character's body.
   int createJoint(int bodyA, int bodyB, JointSettings3D settings);
 
   /// Destroys [joint].
@@ -182,7 +188,8 @@ abstract interface class PhysicsWorld3D {
     required Vector3 stepUp,
   });
 
-  /// Reads [character]'s state into [out] without moving it.
+  /// Reads [character]'s state into [out] without moving it; a dead
+  /// character reads as zeros, in the air.
   void characterState(int character, CharacterState3D out);
 
   /// Teleports [character]'s feet to [position].

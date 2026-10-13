@@ -246,12 +246,14 @@ class PolygonShape extends CollisionShape {
     // Find the polygon vertex closest to the circle center (world space).
     double closestX = poly.vertices[0].dx + polyPos.dx;
     double closestY = poly.vertices[0].dy + polyPos.dy;
-    double minDistSq = (closestX - center.dx) * (closestX - center.dx) +
+    double minDistSq =
+        (closestX - center.dx) * (closestX - center.dx) +
         (closestY - center.dy) * (closestY - center.dy);
     for (int i = 1; i < poly.vertices.length; i++) {
       final vx = poly.vertices[i].dx + polyPos.dx;
       final vy = poly.vertices[i].dy + polyPos.dy;
-      final dSq = (vx - center.dx) * (vx - center.dx) +
+      final dSq =
+          (vx - center.dx) * (vx - center.dx) +
           (vy - center.dy) * (vy - center.dy);
       if (dSq < minDistSq) {
         minDistSq = dSq;
@@ -265,8 +267,14 @@ class PolygonShape extends CollisionShape {
       final axLen = math.sqrt(minDistSq);
       final nx = (center.dx - closestX) / axLen;
       final ny = (center.dy - closestY) / axLen;
-      final overlap =
-          _overlapOnAxisCircle(poly, polyPos, center, circle.radius, nx, ny);
+      final overlap = _overlapOnAxisCircle(
+        poly,
+        polyPos,
+        center,
+        circle.radius,
+        nx,
+        ny,
+      );
       if (overlap == null) return CollisionManifold.empty();
       minPenetration = overlap;
       bestNx = nx;
@@ -283,8 +291,14 @@ class PolygonShape extends CollisionShape {
       final nx = -ey / len;
       final ny = ex / len;
 
-      final overlap =
-          _overlapOnAxisCircle(poly, polyPos, center, circle.radius, nx, ny);
+      final overlap = _overlapOnAxisCircle(
+        poly,
+        polyPos,
+        center,
+        circle.radius,
+        nx,
+        ny,
+      );
       if (overlap == null) return CollisionManifold.empty();
 
       if (overlap < minPenetration) {
@@ -325,7 +339,8 @@ class PolygonShape extends CollisionShape {
     // inside each per-axis projection loop, reducing constant factor.
     final worldVerts = List<Offset>.generate(
       poly.vertices.length,
-      (i) => Offset(poly.vertices[i].dx + posA.dx, poly.vertices[i].dy + posA.dy),
+      (i) =>
+          Offset(poly.vertices[i].dx + posA.dx, poly.vertices[i].dy + posA.dy),
     );
 
     double minPen = double.infinity;
@@ -806,15 +821,12 @@ class RoundedPolygonShape extends PolygonShape {
     required double height,
     required double cornerRadius,
   }) {
-    return RoundedPolygonShape(
-      [
-        Offset(-width / 2, -height / 2),
-        Offset(width / 2, -height / 2),
-        Offset(width / 2, height / 2),
-        Offset(-width / 2, height / 2),
-      ],
-      cornerRadius,
-    );
+    return RoundedPolygonShape([
+      Offset(-width / 2, -height / 2),
+      Offset(width / 2, -height / 2),
+      Offset(width / 2, height / 2),
+      Offset(-width / 2, height / 2),
+    ], cornerRadius);
   }
 
   @override
@@ -908,7 +920,10 @@ class RoundedPolygonShape extends PolygonShape {
     );
     final worldB = List<Offset>.generate(
       other.vertices.length,
-      (i) => Offset(other.vertices[i].dx + posB.dx, other.vertices[i].dy + posB.dy),
+      (i) => Offset(
+        other.vertices[i].dx + posB.dx,
+        other.vertices[i].dy + posB.dy,
+      ),
     );
 
     void testAxis(double nx, double ny) {

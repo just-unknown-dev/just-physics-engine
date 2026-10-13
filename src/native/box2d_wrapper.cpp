@@ -19,6 +19,7 @@
 #include <mutex>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
 // ── Global state ─────────────────────────────────────────────────────────────
 
@@ -53,37 +54,149 @@ static inline void _forgetSensorFlag(int64_t bh) {
     g_sensorFlags.erase(bh);
 }
 
-// Serialises a step against the destroy calls. Every b2w_* entry point is
-// made from the Dart isolate, one at a time — except the destroys, which a
-// NativeFinalizer can also make: while the GC collects a body or world the
-// Dart code dropped, possibly on a GC thread while that isolate is inside
-// b2w_step. Recursive because the finalizers and the create helpers call
-// other entry points.
-static std::recursive_mutex g_lifecycleMutex;
-using LifecycleLock = std::lock_guard<std::recursive_mutex>;
+// Every b2w_* entry point is made from the Dart isolate, one at a time — but
+// a NativeFinalizer runs whenever the GC collects a world or body the Dart
+// code dropped, possibly on a GC thread while that isolate is inside b2w_step
+// or any other call. Box2D is not thread-safe, so a finalizer only queues the
+// handle here; the next call from Dart that creates, destroys or steps
+// destroys what is queued (_drainPending), on the isolate's own thread.
+static std::mutex g_pendingMutex;
+static std::vector<int64_t> g_pendingBodies;
+static std::vector<int64_t> g_pendingWorlds;
+static void _drainPending();
 
-// ── ID packing / unpacking ────────────────────────────────────────────────────
+// ── Handles ───────────────────────────────────────────────────────────────────
+//
+// A world handle is its b2WorldId: (slot + 1) | generation << 16.
+//
+// A body, chain or joint handle is its Box2D id with its world's generation:
+//   index1 (24 bits) | world0 (8) << 24 | generation (16) << 32
+//   | world generation (16) << 48
+// Box2D checks an id against its world's slot only, and a world made in a
+// freed slot numbers its bodies from the start again, so a body of a world
+// that has gone could name a body of the new one; the world's generation
+// tells them apart. Box2D checks nothing at all in a release build, so every
+// entry point checks its handles (liveWorld, liveBody, …) before Box2D sees
+// them, and does nothing with a dead one.
 
 static inline int64_t packWorldId(b2WorldId id) {
-    return (int64_t)id.index1 | ((int64_t)id.generation << 16);
+    return (int64_t)((uint64_t)id.index1 | ((uint64_t)id.generation << 16));
 }
 static inline b2WorldId unpackWorldId(int64_t h) {
     b2WorldId id;
-    id.index1     = (uint16_t)(h & 0xFFFF);
-    id.generation = (uint16_t)((h >> 16) & 0xFFFF);
+    id.index1     = (uint16_t)((uint64_t)h & 0xFFFFu);
+    id.generation = (uint16_t)(((uint64_t)h >> 16) & 0xFFFFu);
     return id;
 }
-static inline int64_t packBodyId(b2BodyId id) {
-    return (int64_t)(uint32_t)id.index1
-         | ((int64_t)id.world0      << 32)
-         | ((int64_t)id.generation  << 48);
+
+static inline int64_t packObject(int32_t index1, uint16_t world0,
+                                 uint16_t generation, uint16_t worldGeneration) {
+    return (int64_t)(((uint64_t)(uint32_t)index1 & 0xFFFFFFu)
+                   | ((uint64_t)(world0 & 0xFFu) << 24)
+                   | ((uint64_t)generation << 32)
+                   | ((uint64_t)worldGeneration << 48));
+}
+static inline int32_t objectIndex1(int64_t h) {
+    return (int32_t)((uint64_t)h & 0xFFFFFFu);
+}
+static inline uint16_t objectWorld0(int64_t h) {
+    return (uint16_t)(((uint64_t)h >> 24) & 0xFFu);
+}
+static inline uint16_t objectGeneration(int64_t h) {
+    return (uint16_t)(((uint64_t)h >> 32) & 0xFFFFu);
+}
+/// The world an object handle belongs to.
+static inline b2WorldId objectWorld(int64_t h) {
+    b2WorldId id;
+    id.index1     = (uint16_t)(objectWorld0(h) + 1);
+    id.generation = (uint16_t)(((uint64_t)h >> 48) & 0xFFFFu);
+    return id;
+}
+
+static inline int64_t packBodyId(b2BodyId id, uint16_t worldGeneration) {
+    return packObject(id.index1, id.world0, id.generation, worldGeneration);
 }
 static inline b2BodyId unpackBodyId(int64_t h) {
     b2BodyId id;
-    id.index1     = (int32_t)(h & 0xFFFFFFFF);
-    id.world0     = (uint16_t)((h >> 32) & 0xFFFF);
-    id.generation = (uint16_t)((h >> 48) & 0xFFFF);
+    id.index1     = objectIndex1(h);
+    id.world0     = objectWorld0(h);
+    id.generation = objectGeneration(h);
     return id;
+}
+static inline int64_t packChainId(b2ChainId id, uint16_t worldGeneration) {
+    return packObject(id.index1, id.world0, id.generation, worldGeneration);
+}
+static inline b2ChainId unpackChainId(int64_t h) {
+    b2ChainId id;
+    id.index1     = objectIndex1(h);
+    id.world0     = objectWorld0(h);
+    id.generation = objectGeneration(h);
+    return id;
+}
+static inline int64_t packJointId(b2JointId id, uint16_t worldGeneration) {
+    return packObject(id.index1, id.world0, id.generation, worldGeneration);
+}
+static inline b2JointId unpackJointId(int64_t h) {
+    b2JointId id;
+    id.index1     = objectIndex1(h);
+    id.world0     = objectWorld0(h);
+    id.generation = objectGeneration(h);
+    return id;
+}
+
+/// The world wh names, when it is alive.
+static inline bool liveWorld(int64_t wh, b2WorldId* out) {
+    const b2WorldId id = unpackWorldId(wh);
+    if (wh == 0 || !b2World_IsValid(id)) return false;
+    *out = id;
+    return true;
+}
+/// The body bh names, when it and its world are alive.
+static inline bool liveBody(int64_t bh, b2BodyId* out) {
+    if (bh == 0 || !b2World_IsValid(objectWorld(bh))) return false;
+    const b2BodyId id = unpackBodyId(bh);
+    if (!b2Body_IsValid(id)) return false;
+    *out = id;
+    return true;
+}
+/// The chain ch names, when it and its world are alive.
+static inline bool liveChain(int64_t ch, b2ChainId* out) {
+    if (ch == 0 || !b2World_IsValid(objectWorld(ch))) return false;
+    const b2ChainId id = unpackChainId(ch);
+    if (!b2Chain_IsValid(id)) return false;
+    *out = id;
+    return true;
+}
+/// The joint jh names, when it and its world are alive.
+static inline bool liveJoint(int64_t jh, b2JointId* out) {
+    if (jh == 0 || !b2World_IsValid(objectWorld(jh))) return false;
+    const b2JointId id = unpackJointId(jh);
+    if (!b2Joint_IsValid(id)) return false;
+    *out = id;
+    return true;
+}
+/// Whether a joint of world wid may hold bodies a and b: two different
+/// bodies of that world (Box2D finds them by index alone).
+static inline bool jointable(b2WorldId wid, b2BodyId a, b2BodyId b) {
+    const uint16_t world0 = (uint16_t)(wid.index1 - 1);
+    return a.world0 == world0 && b.world0 == world0 && !B2_ID_EQUALS(a, b);
+}
+
+/// Every shape of body — a chain makes one per segment, so there can be many.
+static std::vector<b2ShapeId> shapesOf(b2BodyId body) {
+    std::vector<b2ShapeId> shapes((size_t)b2Body_GetShapeCount(body));
+    if (!shapes.empty()) {
+        shapes.resize((size_t)b2Body_GetShapes(body, shapes.data(), (int)shapes.size()));
+    }
+    return shapes;
+}
+
+/// The handle of shape's body in a world of generation worldGeneration; 0
+/// when the shape has gone (an end event can outlive it).
+static inline int64_t bodyOfShape(b2ShapeId shape, uint16_t worldGeneration) {
+    return b2Shape_IsValid(shape)
+        ? packBodyId(b2Shape_GetBody(shape), worldGeneration)
+        : 0;
 }
 
 // ── Static callback stubs (avoids MSVC lambda-to-function-pointer issues) ────
@@ -111,12 +224,14 @@ static inline b2BodyType _toBodyType(int32_t t) {
 
 extern "C" int64_t b2w_createBody(int64_t wh, int32_t bodyType,
                                    float x, float y, float angle) {
-    LifecycleLock life(g_lifecycleMutex);
+    _drainPending();
+    b2WorldId wid;
+    if (!liveWorld(wh, &wid)) return 0;
     b2BodyDef def = b2DefaultBodyDef();
     def.type      = _toBodyType(bodyType);
     def.position  = b2ToPos({x, y});
     def.rotation  = b2MakeRot(angle);
-    const int64_t bh = packBodyId(b2CreateBody(unpackWorldId(wh), &def));
+    const int64_t bh = packBodyId(b2CreateBody(wid, &def), wid.generation);
     // A handle is reused once its slot is free — after a world went with its
     // bodies, say. The new body starts with no sensor flag of the old one's.
     _forgetSensorFlag(bh);
@@ -125,7 +240,8 @@ extern "C" int64_t b2w_createBody(int64_t wh, int32_t bodyType,
 
 extern "C" void b2w_setBodyTransform(int64_t bh, float x, float y,
                                       float angle, int32_t wake) {
-    b2BodyId id = unpackBodyId(bh);
+    b2BodyId id;
+    if (!liveBody(bh, &id)) return;
     b2Body_SetTransform(id, b2ToPos({x, y}), b2MakeRot(angle));
     // SetTransform does not wake the body on its own; a teleported sleeping
     // body would stay inert at its new location.
@@ -133,24 +249,32 @@ extern "C" void b2w_setBodyTransform(int64_t bh, float x, float y,
 }
 
 extern "C" void b2w_setAngularVelocity(int64_t bh, float omega) {
-    b2Body_SetAngularVelocity(unpackBodyId(bh), omega);
+    b2BodyId id;
+    if (!liveBody(bh, &id)) return;
+    b2Body_SetAngularVelocity(id, omega);
 }
 
 extern "C" void b2w_setBodyType(int64_t bh, int32_t bodyType) {
-    b2Body_SetType(unpackBodyId(bh), _toBodyType(bodyType));
+    b2BodyId id;
+    if (!liveBody(bh, &id)) return;
+    b2Body_SetType(id, _toBodyType(bodyType));
 }
 
 extern "C" int32_t b2w_getBodyType(int64_t bh) {
-    return (int32_t)b2Body_GetType(unpackBodyId(bh));
+    b2BodyId id;
+    if (!liveBody(bh, &id)) return B2W_BODY_STATIC;
+    return (int32_t)b2Body_GetType(id);
 }
 
 extern "C" void b2w_setBodyTargetTransform(int64_t bh, float x, float y,
                                             float angle, float timeStep,
                                             int32_t wake) {
+    b2BodyId id;
+    if (!liveBody(bh, &id)) return;
     b2WorldTransform t;
     t.p = b2ToPos({x, y});
     t.q = b2MakeRot(angle);
-    b2Body_SetTargetTransform(unpackBodyId(bh), t, timeStep, wake != 0);
+    b2Body_SetTargetTransform(id, t, timeStep, wake != 0);
 }
 
 // ── One-way platforms ────────────────────────────────────────────────────────
@@ -223,11 +347,10 @@ extern "C" void b2w_setBodyOneWay(int64_t bh, int32_t enabled, int32_t dir) {
               ((uint32_t)(dir & 0x3) << B2W_ONEWAY_DIR_SHIFT))
            : 0u;
 
-    b2BodyId bodyId = unpackBodyId(bh);
-    static constexpr int kMaxShapes = 64;
-    b2ShapeId shapes[kMaxShapes];
-    int count = b2Body_GetShapes(bodyId, shapes, kMaxShapes);
-    assert(count < kMaxShapes && "body has >= 64 shapes — raise kMaxShapes");
+    b2BodyId bodyId;
+    if (!liveBody(bh, &bodyId)) return;
+    const std::vector<b2ShapeId> shapes = shapesOf(bodyId);
+    const int count = (int)shapes.size();
     for (int i = 0; i < count; ++i) {
         b2Shape_SetUserData(shapes[i], (void*)(uintptr_t)flags);
         // Enable pre-solve ONLY on one-way shapes. Box2D flags a contact for
@@ -249,17 +372,18 @@ extern "C" int32_t b2w_castRayClosest(int64_t wh, float ox, float oy,
                                        float* opx, float* opy,
                                        float* onx, float* ony,
                                        float* ofrac) {
+    b2WorldId wid;
+    if (!liveWorld(wh, &wid)) return 0;
     b2QueryFilter filter;
     filter.categoryBits = cat;
     filter.maskBits     = mask;
 
-    b2RayResult r = b2World_CastRayClosest(unpackWorldId(wh),
-                                           b2ToPos({ox, oy}), {tx, ty},
+    b2RayResult r = b2World_CastRayClosest(wid, b2ToPos({ox, oy}), {tx, ty},
                                            filter);
     if (!r.hit) return 0;
 
     b2Vec2 p = b2ToVec2(r.point);
-    *outBody = packBodyId(b2Shape_GetBody(r.shapeId));
+    *outBody = packBodyId(b2Shape_GetBody(r.shapeId), wid.generation);
     *opx = p.x;
     *opy = p.y;
     *onx = r.normal.x;
@@ -273,6 +397,7 @@ struct RayAllCtx {
     float*   buf;
     int32_t  max;
     int32_t  count;
+    uint16_t worldGeneration;
 };
 
 static float s_rayAllCallback(b2ShapeId shapeId, b2Pos point,
@@ -287,7 +412,7 @@ static float s_rayAllCallback(b2ShapeId shapeId, b2Pos point,
     slot[2] = normal.x;
     slot[3] = normal.y;
     slot[4] = fraction;
-    c->bodies[c->count++] = packBodyId(b2Shape_GetBody(shapeId));
+    c->bodies[c->count++] = packBodyId(b2Shape_GetBody(shapeId), c->worldGeneration);
 
     return 1.0f;  // 1 = do not clip the ray, keep collecting
 }
@@ -297,12 +422,14 @@ extern "C" int32_t b2w_castRayAll(int64_t wh, float ox, float oy,
                                    uint64_t cat, uint64_t mask,
                                    int64_t* outBodies, float* outBuffer,
                                    int32_t maxHits) {
+    b2WorldId wid;
+    if (!liveWorld(wh, &wid)) return 0;
     b2QueryFilter filter;
     filter.categoryBits = cat;
     filter.maskBits     = mask;
 
-    RayAllCtx c{outBodies, outBuffer, maxHits, 0};
-    b2World_CastRay(unpackWorldId(wh), b2ToPos({ox, oy}), {tx, ty},
+    RayAllCtx c{outBodies, outBuffer, maxHits, 0, wid.generation};
+    b2World_CastRay(wid, b2ToPos({ox, oy}), {tx, ty},
                     filter, s_rayAllCallback, &c);
     return c.count;
 }
@@ -311,13 +438,14 @@ struct QueryCtx {
     int64_t* bodies;
     int32_t  max;
     int32_t  count;
+    uint16_t worldGeneration;
 };
 
 static bool s_overlapCallback(b2ShapeId shapeId, void* ctx) {
     QueryCtx* c = static_cast<QueryCtx*>(ctx);
     if (c->count >= c->max) return false;  // stop the query
 
-    const int64_t bh = packBodyId(b2Shape_GetBody(shapeId));
+    const int64_t bh = packBodyId(b2Shape_GetBody(shapeId), c->worldGeneration);
     // One body can own several shapes; report each body once.
     for (int32_t i = 0; i < c->count; ++i) {
         if (c->bodies[i] == bh) return true;
@@ -331,6 +459,8 @@ extern "C" int32_t b2w_queryAABB(int64_t wh,
                                   float maxX, float maxY,
                                   uint64_t cat, uint64_t mask,
                                   int64_t* outBodies, int32_t maxBodies) {
+    b2WorldId wid;
+    if (!liveWorld(wh, &wid)) return 0;
     b2QueryFilter filter;
     filter.categoryBits = cat;
     filter.maskBits     = mask;
@@ -339,9 +469,9 @@ extern "C" int32_t b2w_queryAABB(int64_t wh,
     aabb.lowerBound = {minX, minY};
     aabb.upperBound = {maxX, maxY};
 
-    QueryCtx c{outBodies, maxBodies, 0};
+    QueryCtx c{outBodies, maxBodies, 0, wid.generation};
     // Box2D's own docs: near the origin, pass b2Pos_zero and a world AABB.
-    b2World_OverlapAABB(unpackWorldId(wh), b2Pos_zero, aabb, filter,
+    b2World_OverlapAABB(wid, b2Pos_zero, aabb, filter,
                         s_overlapCallback, &c);
     return c.count;
 }
@@ -462,13 +592,14 @@ struct MoverCollideCtx {
     int64_t*     bodies;
     int32_t      max;
     int32_t      count;
+    uint16_t     worldGeneration;
 };
 
 static bool s_moverCollideCallback(b2ShapeId shapeId, void* ctx) {
     MoverCollideCtx* c = static_cast<MoverCollideCtx*>(ctx);
     if (c->count >= c->max) return false;
     if (b2Shape_IsSensor(shapeId)) return true;
-    const int64_t bh = packBodyId(b2Shape_GetBody(shapeId));
+    const int64_t bh = packBodyId(b2Shape_GetBody(shapeId), c->worldGeneration);
     if (bh == c->ignore) return true;
 
     MoverShapeProxy sp;
@@ -510,11 +641,14 @@ extern "C" int32_t b2w_moverCollide(int64_t wh,
                                     int64_t ignoreBody,
                                     float* outPlanes, int64_t* outBodies,
                                     int32_t maxPlanes) {
+    b2WorldId wid;
+    if (!liveWorld(wh, &wid)) return 0;
     MoverCollideCtx c = {};
     b2AABB box;
     if (!s_moverProxy(points, pointCount, radius, kMoverLinearSlop, &c.mover, &box)) {
         return 0;
     }
+    c.worldGeneration = wid.generation;
     c.origin = b2ToPos({originX, originY});
     c.ignore = ignoreBody;
     c.planes = outPlanes;
@@ -524,7 +658,7 @@ extern "C" int32_t b2w_moverCollide(int64_t wh,
     b2QueryFilter filter;
     filter.categoryBits = cat;
     filter.maskBits     = mask;
-    b2World_OverlapAABB(unpackWorldId(wh), c.origin, box, filter,
+    b2World_OverlapAABB(wid, c.origin, box, filter,
                         s_moverCollideCallback, &c);
     return c.count;
 }
@@ -536,12 +670,15 @@ struct MoverCastCtx {
     b2Vec2       centroid;
     int64_t      ignore;
     float        fraction;
+    uint16_t     worldGeneration;
 };
 
 static bool s_moverCastCallback(b2ShapeId shapeId, void* ctx) {
     MoverCastCtx* c = static_cast<MoverCastCtx*>(ctx);
     if (b2Shape_IsSensor(shapeId)) return true;
-    if (packBodyId(b2Shape_GetBody(shapeId)) == c->ignore) return true;
+    if (packBodyId(b2Shape_GetBody(shapeId), c->worldGeneration) == c->ignore) {
+        return true;
+    }
 
     // A one-way platform stops only a mover coming at it from its solid side.
     b2Vec2 solid;
@@ -550,6 +687,23 @@ static bool s_moverCastCallback(b2ShapeId shapeId, void* ctx) {
 
     MoverShapeProxy sp;
     if (!s_moverProxyOf(shapeId, c->origin, &sp)) return true;
+    if (oneWay) {
+        // Partway through it already (rising through, or carried into it):
+        // passed over, as b2w_moverCollide passes over it, so the mover
+        // carries on through instead of being caught on the way.
+        b2DistanceInput din = {};
+        din.proxyA    = sp.proxy;
+        din.proxyB    = c->mover;
+        din.transform = b2Transform_identity;
+        din.useRadii  = false;
+        b2SimplexCache cache = {};
+        const b2DistanceOutput d = b2ShapeDistance(&din, &cache, nullptr, 0);
+        const float totalRadius = sp.proxy.radius + c->mover.radius;
+        if (d.distance == 0.0f ||
+            totalRadius - d.distance > kMoverOneWayDepth) {
+            return true;
+        }
+    }
     if (sp.chain) {
         // A chain is one-sided: a mover behind a segment passes it.
         const b2Vec2 edge = b2Sub(sp.p2, sp.p1);
@@ -582,7 +736,10 @@ extern "C" float b2w_moverCast(int64_t wh,
                                uint64_t cat, uint64_t mask,
                                int64_t ignoreBody) {
     if (translationX == 0.0f && translationY == 0.0f) return 1.0f;
+    b2WorldId wid;
+    if (!liveWorld(wh, &wid)) return 1.0f;
     MoverCastCtx c = {};
+    c.worldGeneration = wid.generation;
     b2AABB box;
     if (!s_moverProxy(points, pointCount, radius, kMoverLinearSlop, &c.mover, &box)) {
         return 1.0f;
@@ -604,7 +761,7 @@ extern "C" float b2w_moverCast(int64_t wh,
     b2QueryFilter filter;
     filter.categoryBits = cat;
     filter.maskBits     = mask;
-    b2World_OverlapAABB(unpackWorldId(wh), c.origin, swept, filter,
+    b2World_OverlapAABB(wid, c.origin, swept, filter,
                         s_moverCastCallback, &c);
     return c.fraction;
 }
@@ -612,30 +769,32 @@ extern "C" float b2w_moverCast(int64_t wh,
 // ── Runtime material / damping mutation ──────────────────────────────────────
 
 extern "C" void b2w_setBodyLinearDamping(int64_t bh, float damping) {
-    b2Body_SetLinearDamping(unpackBodyId(bh), damping);
+    b2BodyId id;
+    if (!liveBody(bh, &id)) return;
+    b2Body_SetLinearDamping(id, damping);
 }
 
 extern "C" void b2w_setBodyAngularDamping(int64_t bh, float damping) {
-    b2Body_SetAngularDamping(unpackBodyId(bh), damping);
+    b2BodyId id;
+    if (!liveBody(bh, &id)) return;
+    b2Body_SetAngularDamping(id, damping);
 }
 
 extern "C" void b2w_setBodyFriction(int64_t bh, float friction) {
-    b2BodyId bodyId = unpackBodyId(bh);
-    static constexpr int kMaxShapes = 64;
-    b2ShapeId shapes[kMaxShapes];
-    int count = b2Body_GetShapes(bodyId, shapes, kMaxShapes);
-    assert(count < kMaxShapes && "body has >= 64 shapes — raise kMaxShapes");
+    b2BodyId bodyId;
+    if (!liveBody(bh, &bodyId)) return;
+    const std::vector<b2ShapeId> shapes = shapesOf(bodyId);
+    const int count = (int)shapes.size();
     for (int i = 0; i < count; ++i) {
         b2Shape_SetFriction(shapes[i], friction);
     }
 }
 
 extern "C" void b2w_setBodyRestitution(int64_t bh, float restitution) {
-    b2BodyId bodyId = unpackBodyId(bh);
-    static constexpr int kMaxShapes = 64;
-    b2ShapeId shapes[kMaxShapes];
-    int count = b2Body_GetShapes(bodyId, shapes, kMaxShapes);
-    assert(count < kMaxShapes && "body has >= 64 shapes — raise kMaxShapes");
+    b2BodyId bodyId;
+    if (!liveBody(bh, &bodyId)) return;
+    const std::vector<b2ShapeId> shapes = shapesOf(bodyId);
+    const int count = (int)shapes.size();
     for (int i = 0; i < count; ++i) {
         b2Shape_SetRestitution(shapes[i], restitution);
     }
@@ -644,11 +803,10 @@ extern "C" void b2w_setBodyRestitution(int64_t bh, float restitution) {
 extern "C" void b2w_setBodyFilter64(int64_t bh,
                                      uint64_t categoryBits, uint64_t maskBits,
                                      int32_t groupIndex) {
-    b2BodyId bodyId = unpackBodyId(bh);
-    static constexpr int kMaxShapes = 64;
-    b2ShapeId shapes[kMaxShapes];
-    int count = b2Body_GetShapes(bodyId, shapes, kMaxShapes);
-    assert(count < kMaxShapes && "body has >= 64 shapes — raise kMaxShapes");
+    b2BodyId bodyId;
+    if (!liveBody(bh, &bodyId)) return;
+    const std::vector<b2ShapeId> shapes = shapesOf(bodyId);
+    const int count = (int)shapes.size();
     b2Filter filter;
     filter.categoryBits = categoryBits;
     filter.maskBits     = maskBits;
@@ -661,19 +819,20 @@ extern "C" void b2w_setBodyFilter64(int64_t bh,
 // ── NativeFinalizer-compatible destructors ────────────────────────────────────
 
 //
-// These run in whatever order the GC finds the objects. When an isolate shuts
-// down — a hot restart, say — every world and body still attached is
-// finalized at once, so a world can go before its own bodies. Destroying the
-// world takes its bodies with it; b2w_destroyBody then finds the handle no
-// longer valid and does nothing.
+// These run in whatever order the GC finds the objects, on whatever thread it
+// runs them. When an isolate shuts down — a hot restart, say — every world
+// and body still attached is finalized at once, so a world can go before its
+// own bodies. They only queue the handle (see g_pendingMutex); the next call
+// from Dart destroys it, after which a body whose world went first is simply
+// no longer alive.
 
 extern "C" void b2w_finalizer_world(void* token) {
-    int64_t h = (int64_t)(intptr_t)token;
-    b2w_destroyWorld(h);
+    std::lock_guard<std::mutex> lk(g_pendingMutex);
+    g_pendingWorlds.push_back((int64_t)(intptr_t)token);
 }
 extern "C" void b2w_finalizer_body(void* token) {
-    int64_t h = (int64_t)(intptr_t)token;
-    b2w_destroyBody(h);
+    std::lock_guard<std::mutex> lk(g_pendingMutex);
+    g_pendingBodies.push_back((int64_t)(intptr_t)token);
 }
 
 // ── World management ──────────────────────────────────────────────────────────
@@ -711,7 +870,7 @@ static float _minRestitutionCallback(float restitutionA, uint64_t,
 }
 
 extern "C" int64_t b2w_createWorld(float gx, float gy, int32_t numThreads) {
-    LifecycleLock life(g_lifecycleMutex);
+    _drainPending();
     _ensureLengthUnitsConfigured();
 
     if (numThreads <= 0) {
@@ -740,7 +899,12 @@ extern "C" int64_t b2w_createWorld(float gx, float gy, int32_t numThreads) {
     def.restitutionCallback = _minRestitutionCallback;
 
     b2WorldId id = b2CreateWorld(&def);
-    int64_t   h  = packWorldId(id);
+    if (!b2World_IsValid(id)) {
+        // Every world slot is taken (B2_MAX_WORLDS).
+        delete pool;
+        return 0;
+    }
+    int64_t h = packWorldId(id);
 
     // Installed unconditionally at creation rather than lazily on the first
     // b2w_setBodyOneWay call: registration is just a pointer store, and doing
@@ -755,13 +919,12 @@ extern "C" int64_t b2w_createWorld(float gx, float gy, int32_t numThreads) {
 
     {
         std::lock_guard<std::mutex> lk(g_worldsMutex);
-        g_worlds[h] = {pool, nullptr, 0.0f, {}};
+        g_worlds[h] = {pool, nullptr, 0.0f, {}, {}};
     }
     return h;
 }
 
-extern "C" void b2w_destroyWorld(int64_t h) {
-    LifecycleLock life(g_lifecycleMutex);
+static void _destroyWorld(int64_t h) {
     ThreadPool* pool = nullptr;
     {
         std::lock_guard<std::mutex> lk(g_worldsMutex);
@@ -771,51 +934,103 @@ extern "C" void b2w_destroyWorld(int64_t h) {
         g_worlds.erase(it);
     }
     // Destroy world first — it may call finishTask during teardown.
-    b2DestroyWorld(unpackWorldId(h));
+    const b2WorldId wid = unpackWorldId(h);
+    if (b2World_IsValid(wid)) b2DestroyWorld(wid);
     delete pool;
+    // Its bodies' sensor flags go with it.
+    std::lock_guard<std::mutex> lk(g_sensorMutex);
+    for (auto it = g_sensorFlags.begin(); it != g_sensorFlags.end();) {
+        const b2WorldId owner = objectWorld(it->first);
+        if (owner.index1 == wid.index1 && owner.generation == wid.generation) {
+            it = g_sensorFlags.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+static void _destroyBody(int64_t bh) {
+    b2BodyId id;
+    // Already gone with its world, or destroyed twice: nothing to destroy.
+    if (liveBody(bh, &id)) b2DestroyBody(id);
+    _forgetSensorFlag(bh);
+}
+
+static void _drainPending() {
+    std::vector<int64_t> bodies, worlds;
+    {
+        std::lock_guard<std::mutex> lk(g_pendingMutex);
+        if (g_pendingBodies.empty() && g_pendingWorlds.empty()) return;
+        bodies.swap(g_pendingBodies);
+        worlds.swap(g_pendingWorlds);
+    }
+    for (int64_t bh : bodies) _destroyBody(bh);
+    for (int64_t wh : worlds) _destroyWorld(wh);
+}
+
+extern "C" void b2w_destroyWorld(int64_t h) {
+    _drainPending();
+    _destroyWorld(h);
 }
 
 extern "C" void b2w_step(int64_t h, float timeStep, int32_t subSteps) {
-    LifecycleLock life(g_lifecycleMutex);
+    _drainPending();
     {
         // A world that has gone is not stepped: its slot may hold another.
         std::lock_guard<std::mutex> lk(g_worldsMutex);
         if (g_worlds.find(h) == g_worlds.end()) return;
     }
-    b2WorldId wid = unpackWorldId(h);
+    b2WorldId wid;
+    if (!liveWorld(h, &wid)) return;
     b2World_Step(wid, timeStep, subSteps);
 
-    std::lock_guard<std::mutex> lk(g_worldsMutex);
-    auto it = g_worlds.find(h);
-    if (it == g_worlds.end()) return;
+    struct Impact {
+        int64_t a, b;
+        float   speed;
+    };
+    std::vector<Impact> impacts;
+    ImpactCallbackFn cb = nullptr;
+    {
+        std::lock_guard<std::mutex> lk(g_worldsMutex);
+        auto it = g_worlds.find(h);
+        if (it == g_worlds.end()) return;
 
-    it->second.lastContacts = b2World_GetContactEvents(wid);
-    it->second.lastSensors  = b2World_GetSensorEvents(wid);
+        it->second.lastContacts = b2World_GetContactEvents(wid);
+        it->second.lastSensors  = b2World_GetSensorEvents(wid);
 
-    // Fire impact callback for high-velocity begin-touch events.
-    if (it->second.impactCallback) {
-        const b2ContactEvents& contacts = it->second.lastContacts;
-        float            threshold = it->second.impactThreshold;
-        ImpactCallbackFn cb        = it->second.impactCallback;
-
-        for (int32_t i = 0; i < contacts.beginCount; ++i) {
-            const b2ContactBeginTouchEvent& ev = contacts.beginEvents[i];
-            b2BodyId bodyA = b2Shape_GetBody(ev.shapeIdA);
-            b2BodyId bodyB = b2Shape_GetBody(ev.shapeIdB);
-            b2Vec2   vA    = b2Body_GetLinearVelocity(bodyA);
-            b2Vec2   vB    = b2Body_GetLinearVelocity(bodyB);
-            float dvx  = vA.x - vB.x;
-            float dvy  = vA.y - vB.y;
-            float speed = std::sqrt(dvx * dvx + dvy * dvy);
-            if (speed >= threshold) {
-                cb(packBodyId(bodyA), packBodyId(bodyB), speed);
+        // High-velocity begin-touch events, for the impact callback.
+        cb = it->second.impactCallback;
+        if (cb != nullptr) {
+            const b2ContactEvents& contacts = it->second.lastContacts;
+            const float threshold = it->second.impactThreshold;
+            for (int32_t i = 0; i < contacts.beginCount; ++i) {
+                const b2ContactBeginTouchEvent& ev = contacts.beginEvents[i];
+                if (!b2Shape_IsValid(ev.shapeIdA) || !b2Shape_IsValid(ev.shapeIdB)) {
+                    continue;
+                }
+                b2BodyId bodyA = b2Shape_GetBody(ev.shapeIdA);
+                b2BodyId bodyB = b2Shape_GetBody(ev.shapeIdB);
+                b2Vec2   vA    = b2Body_GetLinearVelocity(bodyA);
+                b2Vec2   vB    = b2Body_GetLinearVelocity(bodyB);
+                float dvx   = vA.x - vB.x;
+                float dvy   = vA.y - vB.y;
+                float speed = std::sqrt(dvx * dvx + dvy * dvy);
+                if (speed >= threshold) {
+                    impacts.push_back({packBodyId(bodyA, wid.generation),
+                                       packBodyId(bodyB, wid.generation),
+                                       speed});
+                }
             }
         }
     }
+    // Called with no lock held.
+    for (const Impact& i : impacts) cb(i.a, i.b, i.speed);
 }
 
 extern "C" void b2w_setGravity(int64_t h, float gx, float gy) {
-    b2World_SetGravity(unpackWorldId(h), {gx, gy});
+    b2WorldId wid;
+    if (!liveWorld(h, &wid)) return;
+    b2World_SetGravity(wid, {gx, gy});
 }
 
 // ── Body management ───────────────────────────────────────────────────────────
@@ -831,14 +1046,8 @@ extern "C" int64_t b2w_createStaticBody(int64_t wh,
 }
 
 extern "C" void b2w_destroyBody(int64_t bh) {
-    LifecycleLock life(g_lifecycleMutex);
-    const b2BodyId id = unpackBodyId(bh);
-    // Already gone with its world (see the finalizers above), or destroyed
-    // twice: Box2D would read a wiped world. Nothing left to destroy.
-    if (b2Body_IsValid(id)) b2DestroyBody(id);
-    // The handle comes back for a later body (a new world, or this slot
-    // reused): it must not inherit this one's sensor flag.
-    _forgetSensorFlag(bh);
+    _drainPending();
+    _destroyBody(bh);
 }
 
 // ── Shapes ────────────────────────────────────────────────────────────────────
@@ -862,7 +1071,9 @@ extern "C" void b2w_addCircleShape(int64_t bh, float cx, float cy,
     sd.enableSensorEvents   = true; // must be true on BOTH sides for sensor events to fire
 
     b2Circle circle = {{cx, cy}, radius};
-    b2CreateCircleShape(unpackBodyId(bh), &sd, &circle);
+    b2BodyId body;
+    if (!liveBody(bh, &body)) return;
+    b2CreateCircleShape(body, &sd, &circle);
 }
 
 extern "C" void b2w_addBoxShape(int64_t bh, float halfW, float halfH,
@@ -884,13 +1095,46 @@ extern "C" void b2w_addBoxShape(int64_t bh, float halfW, float halfH,
     sd.enableSensorEvents   = true;
 
     b2Polygon box = b2MakeBox(halfW, halfH);
-    b2CreatePolygonShape(unpackBodyId(bh), &sd, &box);
+    b2BodyId body;
+    if (!liveBody(bh, &body)) return;
+    b2CreatePolygonShape(body, &sd, &box);
+}
+
+/// Box2D's polygons have at most B2_MAX_POLYGON_VERTICES (8) vertices. A
+/// convex polygon with more is cut into a fan of pieces sharing vertex 0, each
+/// convex and within the limit, so a native body keeps the whole shape (the
+/// pure-Dart engine has no limit). The engine sets a dynamic body's total
+/// mass after adding its shapes; a rounded polygon's pieces overlap along
+/// their seams by the rounding, which moves its centre of mass a little.
+static void _addConvexPolygon(b2BodyId body, const b2ShapeDef& sd,
+                              const float* verts, int32_t count, float radius) {
+    if (verts == nullptr || count < 3) return;
+    constexpr int32_t kStep = B2_MAX_POLYGON_VERTICES - 2;
+    for (int32_t first = 1; first < count - 1; first += kStep) {
+        const int32_t last = count <= B2_MAX_POLYGON_VERTICES
+            ? count - 1
+            : std::min(first + kStep, count - 1);
+        b2Vec2  pts[B2_MAX_POLYGON_VERTICES];
+        int32_t n = 0;
+        pts[n++] = {verts[0], verts[1]};
+        for (int32_t i = first; i <= last; ++i) {
+            pts[n++] = {verts[i * 2], verts[i * 2 + 1]};
+        }
+        const b2Hull hull = b2ComputeHull(pts, n);
+        if (hull.count >= 3) {
+            const b2Polygon poly = b2MakePolygon(&hull, radius);
+            b2CreatePolygonShape(body, &sd, &poly);
+        }
+        if (last == count - 1) break;
+    }
 }
 
 extern "C" void b2w_addPolygonShape(int64_t bh,
                                      const float* verts, int32_t count,
                                      float density, float friction,
                                      float restitution) {
+    b2BodyId body;
+    if (!liveBody(bh, &body)) return;
     bool sensor = _isSensorBody(bh);
     b2ShapeDef sd        = b2DefaultShapeDef();
     // b2DefaultShapeDef zero-initialises, so enableContactEvents is FALSE and
@@ -906,15 +1150,7 @@ extern "C" void b2w_addPolygonShape(int64_t bh,
     sd.isSensor             = sensor;
     sd.enableSensorEvents   = true;
 
-    b2Vec2 pts[B2_MAX_POLYGON_VERTICES];
-    int32_t n = count < B2_MAX_POLYGON_VERTICES ? count : B2_MAX_POLYGON_VERTICES;
-    for (int32_t i = 0; i < n; ++i) {
-        pts[i] = {verts[i * 2], verts[i * 2 + 1]};
-    }
-
-    b2Hull    hull = b2ComputeHull(pts, n);
-    b2Polygon poly = b2MakePolygon(&hull, 0.0f);
-    b2CreatePolygonShape(unpackBodyId(bh), &sd, &poly);
+    _addConvexPolygon(body, sd, verts, count, 0.0f);
 }
 
 extern "C" void b2w_addRoundedPolygonShape(int64_t bh,
@@ -922,6 +1158,8 @@ extern "C" void b2w_addRoundedPolygonShape(int64_t bh,
                                             float cornerRadius,
                                             float density, float friction,
                                             float restitution) {
+    b2BodyId body;
+    if (!liveBody(bh, &body)) return;
     bool sensor = _isSensorBody(bh);
     b2ShapeDef sd        = b2DefaultShapeDef();
     // b2DefaultShapeDef zero-initialises, so enableContactEvents is FALSE and
@@ -937,15 +1175,7 @@ extern "C" void b2w_addRoundedPolygonShape(int64_t bh,
     sd.isSensor             = sensor;
     sd.enableSensorEvents   = true;
 
-    b2Vec2 pts[B2_MAX_POLYGON_VERTICES];
-    int32_t n = count < B2_MAX_POLYGON_VERTICES ? count : B2_MAX_POLYGON_VERTICES;
-    for (int32_t i = 0; i < n; ++i) {
-        pts[i] = {verts[i * 2], verts[i * 2 + 1]};
-    }
-
-    b2Hull    hull = b2ComputeHull(pts, n);
-    b2Polygon poly = b2MakePolygon(&hull, cornerRadius);
-    b2CreatePolygonShape(unpackBodyId(bh), &sd, &poly);
+    _addConvexPolygon(body, sd, verts, count, cornerRadius);
 }
 
 extern "C" void b2w_addCapsuleShape(int64_t bh,
@@ -972,7 +1202,9 @@ extern "C" void b2w_addCapsuleShape(int64_t bh,
     capsule.center1 = {cx1, cy1};
     capsule.center2 = {cx2, cy2};
     capsule.radius  = radius;
-    b2CreateCapsuleShape(unpackBodyId(bh), &sd, &capsule);
+    b2BodyId body;
+    if (!liveBody(bh, &body)) return;
+    b2CreateCapsuleShape(body, &sd, &capsule);
 }
 
 extern "C" void b2w_addSegmentShape(int64_t bh,
@@ -997,28 +1229,21 @@ extern "C" void b2w_addSegmentShape(int64_t bh,
     b2Segment seg;
     seg.point1 = {x1, y1};
     seg.point2 = {x2, y2};
-    b2CreateSegmentShape(unpackBodyId(bh), &sd, &seg);
+    b2BodyId body;
+    if (!liveBody(bh, &body)) return;
+    b2CreateSegmentShape(body, &sd, &seg);
 }
 
-// ── Chain shape ID packing ────────────────────────────────────────────────────
-
-static inline int64_t packChainId(b2ChainId id) {
-    return (int64_t)(uint32_t)id.index1
-         | ((int64_t)id.world0     << 32)
-         | ((int64_t)id.generation << 48);
-}
-static inline b2ChainId unpackChainId(int64_t h) {
-    b2ChainId id;
-    id.index1     = (int32_t)(h & 0xFFFFFFFF);
-    id.world0     = (uint16_t)((h >> 32) & 0xFFFF);
-    id.generation = (uint16_t)((h >> 48) & 0xFFFF);
-    return id;
-}
+// ── Chain shape ───────────────────────────────────────────────────────────────
 
 extern "C" int64_t b2w_addChainShape(int64_t bh,
                                       const float* points, int32_t count,
                                       int32_t loop,
                                       float friction, float restitution) {
+    b2BodyId body;
+    // Box2D needs at least 4 points; an open chain's first and last are its
+    // ghost ends (the Dart side adds them).
+    if (points == nullptr || count < 4 || !liveBody(bh, &body)) return 0;
     b2SurfaceMaterial mat = b2DefaultSurfaceMaterial();
     mat.friction    = friction;
     mat.restitution = restitution;
@@ -1035,34 +1260,40 @@ extern "C" int64_t b2w_addChainShape(int64_t bh,
     cd.points = pts.get();
     cd.count  = count;
 
-    b2ChainId chainId = b2CreateChain(unpackBodyId(bh), &cd);
-    return packChainId(chainId);
+    b2ChainId chainId = b2CreateChain(body, &cd);
+    return packChainId(chainId, objectWorld(bh).generation);
 }
 
 extern "C" void b2w_destroyChain(int64_t chainHandle) {
-    LifecycleLock life(g_lifecycleMutex);
-    const b2ChainId id = unpackChainId(chainHandle);
-    if (b2Chain_IsValid(id)) b2DestroyChain(id);
+    b2ChainId id;
+    if (liveChain(chainHandle, &id)) b2DestroyChain(id);
 }
 
 // ── Forces ────────────────────────────────────────────────────────────────────
 
 extern "C" void b2w_applyForce(int64_t bh, float fx, float fy) {
-    b2Body_ApplyForceToCenter(unpackBodyId(bh), {fx, fy}, true);
+    b2BodyId id;
+    if (!liveBody(bh, &id)) return;
+    b2Body_ApplyForceToCenter(id, {fx, fy}, true);
 }
 
 extern "C" void b2w_applyLinearImpulse(int64_t bh, float ix, float iy) {
-    b2BodyId id = unpackBodyId(bh);
+    b2BodyId id;
+    if (!liveBody(bh, &id)) return;
     b2Vec2 point = b2Body_GetPosition(id);
     b2Body_ApplyLinearImpulse(id, {ix, iy}, point, true);
 }
 
 extern "C" void b2w_applyTorque(int64_t bh, float torque) {
-    b2Body_ApplyTorque(unpackBodyId(bh), torque, true);
+    b2BodyId id;
+    if (!liveBody(bh, &id)) return;
+    b2Body_ApplyTorque(id, torque, true);
 }
 
 extern "C" void b2w_setLinearVelocity(int64_t bh, float vx, float vy) {
-    b2Body_SetLinearVelocity(unpackBodyId(bh), {vx, vy});
+    b2BodyId id;
+    if (!liveBody(bh, &id)) return;
+    b2Body_SetLinearVelocity(id, {vx, vy});
 }
 
 // ── Zero-copy bulk transform extraction ──────────────────────────────────────
@@ -1070,10 +1301,15 @@ extern "C" void b2w_setLinearVelocity(int64_t bh, float vx, float vy) {
 extern "C" void b2w_bulkExtractTransforms(const int64_t* handles,
                                            float* buffer, int32_t count) {
     for (int32_t i = 0; i < count; ++i) {
-        b2BodyId    bodyId = unpackBodyId(handles[i]);
-        b2Transform t      = b2Body_GetTransform(bodyId);
-        b2Vec2      v      = b2Body_GetLinearVelocity(bodyId);
-        float*      slot   = buffer + (ptrdiff_t)i * 7;
+        float*   slot = buffer + (ptrdiff_t)i * 7;
+        b2BodyId bodyId;
+        if (!liveBody(handles[i], &bodyId)) {
+            // Gone: zeros, as for a body that never moved.
+            for (int k = 0; k < 7; ++k) slot[k] = 0.0f;
+            continue;
+        }
+        b2Transform t = b2Body_GetTransform(bodyId);
+        b2Vec2      v = b2Body_GetLinearVelocity(bodyId);
         slot[0] = t.p.x;
         slot[1] = t.p.y;
         slot[2] = b2Rot_GetAngle(t.q);
@@ -1095,19 +1331,23 @@ extern "C" int32_t b2w_getContactBeginCount(int64_t wh) {
 extern "C" void b2w_getContactBeginEvent(int64_t wh, int32_t index,
                                           int64_t* outBodyA, int64_t* outBodyB,
                                           float* outNx, float* outNy) {
+    *outBodyA = 0;
+    *outBodyB = 0;
+    *outNx = 0.0f;
+    *outNy = 0.0f;
     std::lock_guard<std::mutex> lk(g_worldsMutex);
     auto it = g_worlds.find(wh);
     if (it == g_worlds.end()) return;
+    if (index < 0 || index >= it->second.lastContacts.beginCount) return;
+    const uint16_t gen = unpackWorldId(wh).generation;
 
     const b2ContactBeginTouchEvent& ev = it->second.lastContacts.beginEvents[index];
-    *outBodyA = packBodyId(b2Shape_GetBody(ev.shapeIdA));
-    *outBodyB = packBodyId(b2Shape_GetBody(ev.shapeIdB));
+    *outBodyA = bodyOfShape(ev.shapeIdA, gen);
+    *outBodyB = bodyOfShape(ev.shapeIdB, gen);
 
     // Manifold normal points from shapeA to shapeB (world space). The contact
     // may already be gone (e.g. a shape was destroyed this same step) — guard
     // with b2Contact_IsValid per the box2d.h contract on b2ContactId.
-    *outNx = 0.0f;
-    *outNy = 0.0f;
     if (b2Contact_IsValid(ev.contactId)) {
         b2ContactData data = b2Contact_GetData(ev.contactId);
         if (data.manifold.pointCount > 0) {
@@ -1125,13 +1365,17 @@ extern "C" int32_t b2w_getContactEndCount(int64_t wh) {
 
 extern "C" void b2w_getContactEndEvent(int64_t wh, int32_t index,
                                         int64_t* outBodyA, int64_t* outBodyB) {
+    *outBodyA = 0;
+    *outBodyB = 0;
     std::lock_guard<std::mutex> lk(g_worldsMutex);
     auto it = g_worlds.find(wh);
     if (it == g_worlds.end()) return;
+    if (index < 0 || index >= it->second.lastContacts.endCount) return;
+    const uint16_t gen = unpackWorldId(wh).generation;
 
     const b2ContactEndTouchEvent& ev = it->second.lastContacts.endEvents[index];
-    *outBodyA = packBodyId(b2Shape_GetBody(ev.shapeIdA));
-    *outBodyB = packBodyId(b2Shape_GetBody(ev.shapeIdB));
+    *outBodyA = bodyOfShape(ev.shapeIdA, gen);
+    *outBodyB = bodyOfShape(ev.shapeIdB, gen);
 }
 
 // ── Sensor events ─────────────────────────────────────────────────────────────
@@ -1145,13 +1389,17 @@ extern "C" int32_t b2w_getSensorBeginCount(int64_t wh) {
 extern "C" void b2w_getSensorBeginEvent(int64_t wh, int32_t index,
                                          int64_t* outSensorBody,
                                          int64_t* outVisitorBody) {
+    *outSensorBody  = 0;
+    *outVisitorBody = 0;
     std::lock_guard<std::mutex> lk(g_worldsMutex);
     auto it = g_worlds.find(wh);
     if (it == g_worlds.end()) return;
+    if (index < 0 || index >= it->second.lastSensors.beginCount) return;
+    const uint16_t gen = unpackWorldId(wh).generation;
 
     const b2SensorBeginTouchEvent& ev = it->second.lastSensors.beginEvents[index];
-    *outSensorBody  = packBodyId(b2Shape_GetBody(ev.sensorShapeId));
-    *outVisitorBody = packBodyId(b2Shape_GetBody(ev.visitorShapeId));
+    *outSensorBody  = bodyOfShape(ev.sensorShapeId, gen);
+    *outVisitorBody = bodyOfShape(ev.visitorShapeId, gen);
 }
 
 extern "C" int32_t b2w_getSensorEndCount(int64_t wh) {
@@ -1163,29 +1411,29 @@ extern "C" int32_t b2w_getSensorEndCount(int64_t wh) {
 extern "C" void b2w_getSensorEndEvent(int64_t wh, int32_t index,
                                        int64_t* outSensorBody,
                                        int64_t* outVisitorBody) {
+    *outSensorBody  = 0;
+    *outVisitorBody = 0;
     std::lock_guard<std::mutex> lk(g_worldsMutex);
     auto it = g_worlds.find(wh);
     if (it == g_worlds.end()) return;
+    if (index < 0 || index >= it->second.lastSensors.endCount) return;
+    const uint16_t gen = unpackWorldId(wh).generation;
 
     const b2SensorEndTouchEvent& ev = it->second.lastSensors.endEvents[index];
-    *outSensorBody  = packBodyId(b2Shape_GetBody(ev.sensorShapeId));
-    *outVisitorBody = packBodyId(b2Shape_GetBody(ev.visitorShapeId));
+    *outSensorBody  = bodyOfShape(ev.sensorShapeId, gen);
+    *outVisitorBody = bodyOfShape(ev.visitorShapeId, gen);
 }
 
 // ── Sensor / filter setters (applied to all shapes on a body) ─────────────────
 
 extern "C" void b2w_setBodySensor(int64_t bh, int32_t isSensor) {
+    b2BodyId bodyId;
+    if (!liveBody(bh, &bodyId)) return;
     { std::lock_guard<std::mutex> lk(g_sensorMutex); g_sensorFlags[bh] = (isSensor != 0); }
     // Update sensor events on shapes already attached to this body.
     // enableSensorEvents stays true on all shapes; only isSensor changes here.
-    b2BodyId bodyId = unpackBodyId(bh);
-    // Capacity 64 covers all practical use; assert fires in debug if a body
-    // somehow has more shapes so we can raise the limit rather than silently
-    // leaving shapes unprocessed.
-    static constexpr int kMaxShapes = 64;
-    b2ShapeId shapes[kMaxShapes];
-    int count = b2Body_GetShapes(bodyId, shapes, kMaxShapes);
-    assert(count < kMaxShapes && "body has >= 64 shapes — raise kMaxShapes");
+    const std::vector<b2ShapeId> shapes = shapesOf(bodyId);
+    const int count = (int)shapes.size();
     for (int i = 0; i < count; ++i) {
         b2Shape_EnableSensorEvents(shapes[i], true);
     }
@@ -1195,11 +1443,10 @@ extern "C" void b2w_setBodyFilter(int64_t bh,
                                    uint32_t categoryBits,
                                    uint32_t maskBits,
                                    int32_t  groupIndex) {
-    b2BodyId bodyId = unpackBodyId(bh);
-    static constexpr int kMaxShapes = 64;
-    b2ShapeId shapes[kMaxShapes];
-    int count = b2Body_GetShapes(bodyId, shapes, kMaxShapes);
-    assert(count < kMaxShapes && "body has >= 64 shapes — raise kMaxShapes");
+    b2BodyId bodyId;
+    if (!liveBody(bh, &bodyId)) return;
+    const std::vector<b2ShapeId> shapes = shapesOf(bodyId);
+    const int count = (int)shapes.size();
     b2Filter filter;
     filter.categoryBits = categoryBits;
     filter.maskBits     = maskBits;
@@ -1212,33 +1459,43 @@ extern "C" void b2w_setBodyFilter(int64_t bh,
 // ── Bullet / CCD ─────────────────────────────────────────────────────────────
 
 extern "C" void b2w_setBodyBullet(int64_t bh, int32_t isBullet) {
-    b2Body_SetBullet(unpackBodyId(bh), isBullet != 0);
+    b2BodyId id;
+    if (!liveBody(bh, &id)) return;
+    b2Body_SetBullet(id, isBullet != 0);
 }
 
 extern "C" void b2w_setBodyGravityScale(int64_t bh, float gravityScale) {
-    b2Body_SetGravityScale(unpackBodyId(bh), gravityScale);
+    b2BodyId id;
+    if (!liveBody(bh, &id)) return;
+    b2Body_SetGravityScale(id, gravityScale);
 }
 
 extern "C" void b2w_setBodyAwake(int64_t bh, int32_t awake) {
-    b2Body_SetAwake(unpackBodyId(bh), awake != 0);
+    b2BodyId id;
+    if (!liveBody(bh, &id)) return;
+    b2Body_SetAwake(id, awake != 0);
 }
 
 extern "C" void b2w_setBodySleepEnabled(int64_t bh, int32_t enabled) {
-    b2Body_EnableSleep(unpackBodyId(bh), enabled != 0);
+    b2BodyId id;
+    if (!liveBody(bh, &id)) return;
+    b2Body_EnableSleep(id, enabled != 0);
 }
 
 extern "C" void b2w_setBodyFixedRotation(int64_t bh, int32_t fixed) {
     // Box2D v3.1 replaced the old bool `fixedRotation` with per-axis
     // b2MotionLocks; only the angular lock is touched here, translation
     // stays free.
-    b2BodyId id = unpackBodyId(bh);
+    b2BodyId id;
+    if (!liveBody(bh, &id)) return;
     b2MotionLocks locks = b2Body_GetMotionLocks(id);
     locks.angularZ = fixed != 0;
     b2Body_SetMotionLocks(id, locks);
 }
 
 extern "C" void b2w_setBodyMass(int64_t bh, float mass) {
-    b2BodyId id = unpackBodyId(bh);
+    b2BodyId id;
+    if (!liveBody(bh, &id)) return;
     b2MassData data = b2Body_GetMassData(id);
     if (data.mass > 0.0f) {
         // Keep the mass/inertia ratio (and therefore angular response)
@@ -1255,33 +1512,25 @@ extern "C" int32_t b2w_getBodyMoveEventCount(int64_t wh) {
     std::lock_guard<std::mutex> lk(g_worldsMutex);
     auto it = g_worlds.find(wh);
     if (it == g_worlds.end()) return 0;
-    b2BodyEvents ev = b2World_GetBodyEvents(unpackWorldId(wh));
+    b2WorldId wid;
+    if (!liveWorld(wh, &wid)) return 0;
+    b2BodyEvents ev = b2World_GetBodyEvents(wid);
     return ev.moveCount;
 }
 
 extern "C" void b2w_getBodyMoveEvent(int64_t wh, int32_t index,
                                       int64_t* outBodyHandle,
                                       int32_t* outFellAsleep) {
-    b2BodyEvents ev = b2World_GetBodyEvents(unpackWorldId(wh));
+    *outBodyHandle = 0;
+    *outFellAsleep = 0;
+    b2WorldId wid;
+    if (!liveWorld(wh, &wid)) return;
+    b2BodyEvents ev = b2World_GetBodyEvents(wid);
     if (index < 0 || index >= ev.moveCount) return;
     const b2BodyMoveEvent& e = ev.moveEvents[index];
-    *outBodyHandle = packBodyId(e.bodyId);
+    if (!b2Body_IsValid(e.bodyId)) return;
+    *outBodyHandle = packBodyId(e.bodyId, wid.generation);
     *outFellAsleep = e.fellAsleep ? 1 : 0;
-}
-
-// ── Joint ID packing/unpacking ────────────────────────────────────────────────
-
-static inline int64_t packJointId(b2JointId id) {
-    return (int64_t)(uint32_t)id.index1
-         | ((int64_t)id.world0      << 32)
-         | ((int64_t)id.generation  << 48);
-}
-static inline b2JointId unpackJointId(int64_t h) {
-    b2JointId id;
-    id.index1     = (int32_t)(h & 0xFFFFFFFF);
-    id.world0     = (uint16_t)((h >> 32) & 0xFFFF);
-    id.generation = (uint16_t)((h >> 48) & 0xFFFF);
-    return id;
 }
 
 // ── Joint creation ────────────────────────────────────────────────────────────
@@ -1289,9 +1538,12 @@ static inline b2JointId unpackJointId(int64_t h) {
 extern "C" int64_t b2w_createRevoluteJoint(int64_t wh,
                                              int64_t bA, int64_t bB,
                                              float anchorX, float anchorY) {
-    b2WorldId wid   = unpackWorldId(wh);
-    b2BodyId  bodyA = unpackBodyId(bA);
-    b2BodyId  bodyB = unpackBodyId(bB);
+    b2WorldId wid;
+    b2BodyId  bodyA, bodyB;
+    if (!liveWorld(wh, &wid) || !liveBody(bA, &bodyA) || !liveBody(bB, &bodyB) ||
+        !jointable(wid, bodyA, bodyB)) {
+        return 0;
+    }
     b2Vec2    world = {anchorX, anchorY};
 
     b2RevoluteJointDef def = b2DefaultRevoluteJointDef();
@@ -1301,16 +1553,19 @@ extern "C" int64_t b2w_createRevoluteJoint(int64_t wh,
     def.base.localFrameA.q = b2Rot_identity;
     def.base.localFrameB.p = b2Body_GetLocalPoint(bodyB, world);
     def.base.localFrameB.q = b2Rot_identity;
-    return packJointId(b2CreateRevoluteJoint(wid, &def));
+    return packJointId(b2CreateRevoluteJoint(wid, &def), wid.generation);
 }
 
 extern "C" int64_t b2w_createPrismaticJoint(int64_t wh,
                                               int64_t bA, int64_t bB,
                                               float anchorX, float anchorY,
                                               float axisX,   float axisY) {
-    b2WorldId wid   = unpackWorldId(wh);
-    b2BodyId  bodyA = unpackBodyId(bA);
-    b2BodyId  bodyB = unpackBodyId(bB);
+    b2WorldId wid;
+    b2BodyId  bodyA, bodyB;
+    if (!liveWorld(wh, &wid) || !liveBody(bA, &bodyA) || !liveBody(bB, &bodyB) ||
+        !jointable(wid, bodyA, bodyB)) {
+        return 0;
+    }
     b2Vec2    world = {anchorX, anchorY};
     b2Vec2    axis  = {axisX, axisY};
 
@@ -1324,15 +1579,18 @@ extern "C" int64_t b2w_createPrismaticJoint(int64_t wh,
     def.base.localFrameA.q   = b2MakeRot(angle);
     def.base.localFrameB.p   = b2Body_GetLocalPoint(bodyB, world);
     def.base.localFrameB.q   = b2Rot_identity;
-    return packJointId(b2CreatePrismaticJoint(wid, &def));
+    return packJointId(b2CreatePrismaticJoint(wid, &def), wid.generation);
 }
 
 extern "C" int64_t b2w_createDistanceJoint(int64_t wh,
                                              int64_t bA, int64_t bB,
                                              float minLen, float maxLen) {
-    b2WorldId wid   = unpackWorldId(wh);
-    b2BodyId  bodyA = unpackBodyId(bA);
-    b2BodyId  bodyB = unpackBodyId(bB);
+    b2WorldId wid;
+    b2BodyId  bodyA, bodyB;
+    if (!liveWorld(wh, &wid) || !liveBody(bA, &bodyA) || !liveBody(bB, &bodyB) ||
+        !jointable(wid, bodyA, bodyB)) {
+        return 0;
+    }
 
     b2DistanceJointDef def = b2DefaultDistanceJointDef();
     def.base.bodyIdA       = bodyA;
@@ -1344,7 +1602,7 @@ extern "C" int64_t b2w_createDistanceJoint(int64_t wh,
     def.minLength          = minLen;
     def.maxLength          = maxLen;
     def.length             = (minLen + maxLen) * 0.5f;
-    return packJointId(b2CreateDistanceJoint(wid, &def));
+    return packJointId(b2CreateDistanceJoint(wid, &def), wid.generation);
 }
 
 extern "C" int64_t b2w_createMouseJoint(int64_t wh,
@@ -1359,9 +1617,12 @@ extern "C" int64_t b2w_createMouseJoint(int64_t wh,
 extern "C" int64_t b2w_createWeldJoint(int64_t wh,
                                          int64_t bA, int64_t bB,
                                          float anchorX, float anchorY) {
-    b2WorldId wid   = unpackWorldId(wh);
-    b2BodyId  bodyA = unpackBodyId(bA);
-    b2BodyId  bodyB = unpackBodyId(bB);
+    b2WorldId wid;
+    b2BodyId  bodyA, bodyB;
+    if (!liveWorld(wh, &wid) || !liveBody(bA, &bodyA) || !liveBody(bB, &bodyB) ||
+        !jointable(wid, bodyA, bodyB)) {
+        return 0;
+    }
     b2Vec2    world = {anchorX, anchorY};
 
     b2WeldJointDef def     = b2DefaultWeldJointDef();
@@ -1371,16 +1632,19 @@ extern "C" int64_t b2w_createWeldJoint(int64_t wh,
     def.base.localFrameA.q = b2Rot_identity;
     def.base.localFrameB.p = b2Body_GetLocalPoint(bodyB, world);
     def.base.localFrameB.q = b2Rot_identity;
-    return packJointId(b2CreateWeldJoint(wid, &def));
+    return packJointId(b2CreateWeldJoint(wid, &def), wid.generation);
 }
 
 extern "C" int64_t b2w_createWheelJoint(int64_t wh,
                                           int64_t bA, int64_t bB,
                                           float anchorX, float anchorY,
                                           float axisX,   float axisY) {
-    b2WorldId wid   = unpackWorldId(wh);
-    b2BodyId  bodyA = unpackBodyId(bA);
-    b2BodyId  bodyB = unpackBodyId(bB);
+    b2WorldId wid;
+    b2BodyId  bodyA, bodyB;
+    if (!liveWorld(wh, &wid) || !liveBody(bA, &bodyA) || !liveBody(bB, &bodyB) ||
+        !jointable(wid, bodyA, bodyB)) {
+        return 0;
+    }
     b2Vec2    world = {anchorX, anchorY};
     b2Vec2    axis  = {axisX, axisY};
 
@@ -1396,14 +1660,13 @@ extern "C" int64_t b2w_createWheelJoint(int64_t wh,
     def.base.localFrameB.q = b2Rot_identity;
     def.hertz              = 4.0f;
     def.dampingRatio       = 0.7f;
-    return packJointId(b2CreateWheelJoint(wid, &def));
+    return packJointId(b2CreateWheelJoint(wid, &def), wid.generation);
 }
 
 extern "C" void b2w_destroyJoint(int64_t jh) {
-    LifecycleLock life(g_lifecycleMutex);
-    const b2JointId id = unpackJointId(jh);
+    b2JointId id;
     // Gone already if either body, or the world, went first.
-    if (b2Joint_IsValid(id)) b2DestroyJoint(id, true);
+    if (liveJoint(jh, &id)) b2DestroyJoint(id, true);
 }
 
 // ── Joint configuration ───────────────────────────────────────────────────────
@@ -1423,14 +1686,16 @@ static void _wakeJointBodies(b2JointId id) {
 
 extern "C" void b2w_setRevoluteLimits(int64_t jh,
                                        float lower, float upper, int32_t enable) {
-    b2JointId id = unpackJointId(jh);
+    b2JointId id;
+    if (!liveJoint(jh, &id)) return;
     b2RevoluteJoint_SetLimits(id, lower, upper);
     b2RevoluteJoint_EnableLimit(id, enable != 0);
 }
 
 extern "C" void b2w_setRevoluteMotor(int64_t jh,
                                       float speed, float maxTorque, int32_t enable) {
-    b2JointId id = unpackJointId(jh);
+    b2JointId id;
+    if (!liveJoint(jh, &id)) return;
     b2RevoluteJoint_SetMotorSpeed(id, speed);
     b2RevoluteJoint_SetMaxMotorTorque(id, maxTorque);
     b2RevoluteJoint_EnableMotor(id, enable != 0);
@@ -1439,14 +1704,16 @@ extern "C" void b2w_setRevoluteMotor(int64_t jh,
 
 extern "C" void b2w_setPrismaticLimits(int64_t jh,
                                         float lower, float upper, int32_t enable) {
-    b2JointId id = unpackJointId(jh);
+    b2JointId id;
+    if (!liveJoint(jh, &id)) return;
     b2PrismaticJoint_SetLimits(id, lower, upper);
     b2PrismaticJoint_EnableLimit(id, enable != 0);
 }
 
 extern "C" void b2w_setPrismaticMotor(int64_t jh,
                                        float speed, float maxForce, int32_t enable) {
-    b2JointId id = unpackJointId(jh);
+    b2JointId id;
+    if (!liveJoint(jh, &id)) return;
     b2PrismaticJoint_SetMotorSpeed(id, speed);
     b2PrismaticJoint_SetMaxMotorForce(id, maxForce);
     b2PrismaticJoint_EnableMotor(id, enable != 0);
@@ -1454,12 +1721,15 @@ extern "C" void b2w_setPrismaticMotor(int64_t jh,
 }
 
 extern "C" void b2w_setDistanceLimits(int64_t jh, float minLen, float maxLen) {
-    b2DistanceJoint_SetLengthRange(unpackJointId(jh), minLen, maxLen);
+    b2JointId id;
+    if (!liveJoint(jh, &id)) return;
+    b2DistanceJoint_SetLengthRange(id, minLen, maxLen);
 }
 
 extern "C" void b2w_setDistanceSpring(int64_t jh,
                                        float stiffness, float damping) {
-    b2JointId id = unpackJointId(jh);
+    b2JointId id;
+    if (!liveJoint(jh, &id)) return;
     b2DistanceJoint_SetSpringHertz(id, stiffness);
     b2DistanceJoint_SetSpringDampingRatio(id, damping);
 }
@@ -1471,14 +1741,16 @@ extern "C" void b2w_setMouseJointTarget(int64_t jh, float x, float y) {
 
 extern "C" void b2w_setWheelSpring(int64_t jh,
                                     float stiffness, float damping) {
-    b2JointId id = unpackJointId(jh);
+    b2JointId id;
+    if (!liveJoint(jh, &id)) return;
     b2WheelJoint_SetSpringHertz(id, stiffness);
     b2WheelJoint_SetSpringDampingRatio(id, damping);
 }
 
 extern "C" void b2w_setWheelMotor(int64_t jh,
                                    float speed, float maxTorque, int32_t enable) {
-    b2JointId id = unpackJointId(jh);
+    b2JointId id;
+    if (!liveJoint(jh, &id)) return;
     b2WheelJoint_SetMotorSpeed(id, speed);
     b2WheelJoint_SetMaxMotorTorque(id, maxTorque);
     b2WheelJoint_EnableMotor(id, enable != 0);
@@ -1489,13 +1761,19 @@ extern "C" void b2w_setWheelMotor(int64_t jh,
 
 extern "C" void b2w_getJointReactionForce(int64_t jh,
                                            float* outFx, float* outFy) {
-    b2Vec2 f = b2Joint_GetConstraintForce(unpackJointId(jh));
+    *outFx = 0.0f;
+    *outFy = 0.0f;
+    b2JointId id;
+    if (!liveJoint(jh, &id)) return;
+    b2Vec2 f = b2Joint_GetConstraintForce(id);
     *outFx = f.x;
     *outFy = f.y;
 }
 
 extern "C" float b2w_getJointReactionTorque(int64_t jh) {
-    return b2Joint_GetConstraintTorque(unpackJointId(jh));
+    b2JointId id;
+    if (!liveJoint(jh, &id)) return 0.0f;
+    return b2Joint_GetConstraintTorque(id);
 }
 
 // ── Impact callback ───────────────────────────────────────────────────────────

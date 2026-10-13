@@ -138,6 +138,66 @@ void main() {
       box2d.b2w_step(w, 1 / 60, 4);
     });
 
+    /// Whether [body] is a live native body: a live dynamic body reads back
+    /// awake after it is made, a dead one as zeros.
+    bool alive(int body) {
+      final handles = calloc<Int64>()..[0] = body;
+      final out = calloc<Float>(7); // x, y, angle, vx, vy, awake, spin
+      try {
+        box2d.b2w_bulkExtractTransforms(handles, out, 1);
+        return out[5] == 1;
+      } finally {
+        calloc.free(handles);
+        calloc.free(out);
+      }
+    }
+
+    test("a gone world's body never names a newer world's", () {
+      if (!nativeLoaded) return markTestSkipped('native Box2D unavailable');
+      final first = world();
+      final stale = body(first, 0);
+      box2d.b2w_destroyWorld(first);
+      // Most likely the same slot, its bodies numbered from the start again.
+      final second = world();
+      final live = body(second, 0);
+      expect(live, isNot(stale));
+      box2d.b2w_destroyBody(stale);
+      finalizeBody(stale);
+      box2d.b2w_setLinearVelocity(stale, 0, -500);
+      box2d.b2w_step(second, 1 / 60, 4); // Runs the queued finalizer.
+      expect(alive(live), isTrue);
+      expect(alive(stale), isFalse);
+      box2d.b2w_destroyWorld(second);
+    });
+
+    test('a finalized body goes on the next call from Dart', () {
+      if (!nativeLoaded) return markTestSkipped('native Box2D unavailable');
+      final w = world();
+      final b = body(w, 0);
+      expect(alive(b), isTrue);
+      finalizeBody(b);
+      box2d.b2w_step(w, 1 / 60, 4);
+      expect(alive(b), isFalse);
+      box2d.b2w_destroyWorld(w);
+    });
+
+    test('a world past the last free slot is 0, and nothing breaks', () {
+      if (!nativeLoaded) return markTestSkipped('native Box2D unavailable');
+      final worlds = <int>[];
+      try {
+        while (worlds.length < 200) {
+          final w = box2d.b2w_createWorld(0, 981, 1);
+          if (w == 0) break;
+          worlds.add(w);
+        }
+        expect(worlds.length, lessThan(200));
+        expect(box2d.b2w_createDynamicBody(0, 0, 0, 0), 0);
+        box2d.b2w_step(0, 1 / 60, 4);
+      } finally {
+        worlds.forEach(box2d.b2w_destroyWorld);
+      }
+    });
+
     test('200 worlds made and torn down, in both orders', () {
       if (!nativeLoaded) return markTestSkipped('native Box2D unavailable');
       for (var round = 0; round < 200; round++) {

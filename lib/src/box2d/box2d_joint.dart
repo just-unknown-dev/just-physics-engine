@@ -42,11 +42,7 @@ class Box2DJoint extends JointConstraint {
     box2d.b2w_setRevoluteLimits(_handle, lower, upper, enable ? 1 : 0);
   }
 
-  void setRevoluteMotor(
-    double speed,
-    double maxTorque, {
-    bool enable = true,
-  }) {
+  void setRevoluteMotor(double speed, double maxTorque, {bool enable = true}) {
     if (_destroyed) return;
     box2d.b2w_setRevoluteMotor(_handle, speed, maxTorque, enable ? 1 : 0);
   }
@@ -58,11 +54,7 @@ class Box2DJoint extends JointConstraint {
     box2d.b2w_setPrismaticLimits(_handle, lower, upper, enable ? 1 : 0);
   }
 
-  void setPrismaticMotor(
-    double speed,
-    double maxForce, {
-    bool enable = true,
-  }) {
+  void setPrismaticMotor(double speed, double maxForce, {bool enable = true}) {
     if (_destroyed) return;
     box2d.b2w_setPrismaticMotor(_handle, speed, maxForce, enable ? 1 : 0);
   }

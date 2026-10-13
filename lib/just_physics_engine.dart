@@ -1,13 +1,13 @@
 /// just_physics_engine
 ///
 /// Standalone physics engine for Flutter with dual backends:
-///   - Native (Android/iOS/Windows/macOS/Linux): Box2D v3.0 via Dart FFI
+///   - Native (Android/iOS/Windows/macOS/Linux): Box2D v3.2 via Dart FFI
 ///   - Web: pure-Dart fallback (SAT collision, spatial grid, impulse resolution)
 ///
 /// Core types (both backends):
 /// - [PhysicsEngineFactory]  — create the best backend for the current platform
 /// - [PhysicsEngine]         — pure-Dart engine (also returned on web)
-/// - [Box2DPhysicsEngine]    — Box2D v3.0 FFI engine (native only)
+/// - [Box2DPhysicsEngine]    — Box2D v3.2 FFI engine (native; a stub on the web)
 /// - [PhysicsBody]           — shared rigid body state carrier
 /// - [CollisionShape], [CircleShape], [PolygonShape], [RectangleShape]
 /// - [CollisionManifold], [SpatialGrid], [BodyPair]
@@ -37,5 +37,7 @@ export 'src/physics_2d/physics_2d.dart';
 export 'src/physics_3d/physics_3d.dart';
 
 // ── Box2D FFI backend (native platforms) ───────────────────────────────────
-export 'src/box2d/box2d_public_web.dart'
-    if (dart.library.io) 'src/box2d/box2d_public_native.dart';
+// Native by default, so the analyzer and the API docs see the Box2D classes;
+// the web gets same-shaped stubs.
+export 'src/box2d/box2d_public_native.dart'
+    if (dart.library.js_interop) 'src/box2d/box2d_public_web.dart';

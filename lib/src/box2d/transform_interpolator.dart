@@ -31,7 +31,7 @@ abstract final class TransformInterpolator {
     required Map<PhysicsBody, Box2DBody> bodyMap,
     required double alpha,
     required void Function(PhysicsBody body, double x, double y, double angle)
-        write,
+    write,
   }) {
     final oneMinusAlpha = 1.0 - alpha;
     for (final entry in bodyMap.entries) {

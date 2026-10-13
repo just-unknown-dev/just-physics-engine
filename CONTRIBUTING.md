@@ -33,6 +33,10 @@ This project follows our [Code of Conduct](CODE_OF_CONDUCT.md). By participating
    git clone https://github.com/just-unknown-dev/just-physics-engine.git
    cd just-physics-engine
    ```
+3. **Fetch Box2D**, a git submodule the build hook compiles (without it every test runs the pure-Dart engine and the native ones skip):
+   ```bash
+   git submodule update --init
+   ```
 4. **Install dependencies:**
    ```bash
    flutter pub get
@@ -92,15 +96,12 @@ When opening a bug report, include:
 
 | Tool | Minimum Version | Recommended Version |
 |------|------------------|---------------------|
-| Flutter | 1.17.0 | latest stable |
+| Flutter | 3.41.0 | latest stable |
 | Dart SDK | 3.11.0 | 3.11.x |
 
-This package lives in the monorepo at `packages/just_physics_engine`.
+In the Just Game Engine workspace this package lives at `packages/just_physics_engine`; on its own, work from the clone's root.
 
 ```bash
-# From the repository root
-cd packages/just_physics_engine
-
 # Fetch dependencies
 flutter pub get
 

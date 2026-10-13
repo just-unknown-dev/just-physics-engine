@@ -1,3 +1,6 @@
+// An example prints its results.
+// ignore_for_file: avoid_print
+
 import 'package:just_dart/just_dart.dart';
 import 'package:just_physics_engine/just_physics_engine.dart';
 
@@ -15,7 +18,6 @@ void main() {
   final ball = PhysicsBody(
     position: Vector2(320, 120),
     shape: CircleShape(20),
-    mass: 1.0,
     restitution: 0.55,
     friction: 0.35,
     drag: 0.02,
@@ -41,10 +43,7 @@ void main() {
     '${ball.velocity.y.toStringAsFixed(2)})',
   );
   print('Backend: ${stats['backend'] ?? 'physics_2d'}');
-  print('Bodies: ${stats['bodyCount']}');
-  print(
-    'Resolved collisions: ${stats['resolvedCollisions'] ?? stats['contactCount'] ?? 0}',
-  );
+  print('Bodies: ${engine.bodyCount}');
 
   engine.dispose();
 }

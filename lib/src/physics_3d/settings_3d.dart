@@ -259,6 +259,8 @@ final class CharacterSettings3D {
 
   /// Whether the rest of the world can see it: sensors detect it and rays
   /// hit it. Without it a character is invisible to everything but itself.
+  /// The body belongs to the character: it cannot be destroyed or joined
+  /// on its own.
   final bool innerBody;
 
   /// Any number the game wants back with it.

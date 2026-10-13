@@ -163,6 +163,7 @@ ShapeCastHit2D? castShape2D(
   double maxFraction = 1,
   bool canEncroach = false,
 }) {
+  assert(linearSlop > 0, 'linearSlop must be above 0');
   final totalRadius = still.radius + moving.radius;
   var target = math.max(linearSlop, totalRadius - linearSlop);
   final tolerance = 0.25 * linearSlop;
@@ -192,7 +193,8 @@ ShapeCastHit2D? castShape2D(
     if (d.overlaps) return null;
 
     // Approaching each other?
-    final denominator = translation.dx * d.normal.dx + translation.dy * d.normal.dy;
+    final denominator =
+        translation.dx * d.normal.dx + translation.dy * d.normal.dy;
     if (denominator >= 0) return null;
 
     fraction += (target - d.distance) / denominator;

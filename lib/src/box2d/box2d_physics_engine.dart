@@ -20,7 +20,7 @@ import 'ffi/box2d_library.dart' show loadBox2DLibrary;
 import 'box2d_joint.dart';
 import 'physics_game_loop.dart';
 
-/// Box2D v3.0 physics engine adapter exposing the same duck-typed API as
+/// Box2D v3.2 physics engine adapter exposing the same duck-typed API as
 /// the pure-Dart [PhysicsEngine].
 ///
 /// Drop-in replacement on native platforms — [PhysicsEngineFactory.create]
@@ -73,8 +73,8 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
   final List<({PhysicsBody sensor, PhysicsBody visitor})>
   _nativeSensorBeginBuf = [];
-  final List<({PhysicsBody sensor, PhysicsBody visitor})>
-  _nativeSensorEndBuf = [];
+  final List<({PhysicsBody sensor, PhysicsBody visitor})> _nativeSensorEndBuf =
+      [];
 
   // ── NativeCallable for cross-thread impact audio callback ──────────────────
 
@@ -92,7 +92,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   /// Number of Box2D sub-steps per fixed tick (4 recommended).
   final int subSteps;
 
-  /// Number of native worker threads (0 → hardware_concurrency − 1).
+  /// Number of native worker threads (0 → cores − 1, at most 4).
   final int numThreads;
 
   Box2DPhysicsEngine({
@@ -232,7 +232,12 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       final outVisitor = calloc<Int64>();
       try {
         for (int i = 0; i < beginCount; i++) {
-          box2d.b2w_getSensorBeginEvent(_world!.handle, i, outSensor, outVisitor);
+          box2d.b2w_getSensorBeginEvent(
+            _world!.handle,
+            i,
+            outSensor,
+            outVisitor,
+          );
           final pSensor = _handleToBody[outSensor.value];
           final pVisitor = _handleToBody[outVisitor.value];
           if (pSensor != null && pVisitor != null) {
@@ -364,11 +369,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     // Must come after _addShapeFixture: the one-way flag is stored per shape,
     // so there have to be shapes to store it on.
     if (body.isOneWay) {
-      box2d.b2w_setBodyOneWay(
-        b2Body.handle,
-        1,
-        body.oneWayDirection.index,
-      );
+      box2d.b2w_setBodyOneWay(b2Body.handle, 1, body.oneWayDirection.index);
     }
 
     // Box2D's per-body linear damping is a different curve from the pure-Dart
@@ -397,12 +398,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   // respawn, moving platforms and one-way platforms all depend on them.
 
   @override
-  void setBodyTransform(
-    PhysicsBody body,
-    double x,
-    double y, {
-    double? angle,
-  }) {
+  void setBodyTransform(PhysicsBody body, double x, double y, {double? angle}) {
     super.setBodyTransform(body, x, y, angle: angle);
     if (!_nativeReady) return;
     final b2Body = _bodyMap[body];
@@ -478,11 +474,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     if (!_nativeReady) return;
     final b2Body = _bodyMap[body];
     if (b2Body == null) return;
-    box2d.b2w_setBodyOneWay(
-      b2Body.handle,
-      enabled ? 1 : 0,
-      direction.index,
-    );
+    box2d.b2w_setBodyOneWay(b2Body.handle, enabled ? 1 : 0, direction.index);
   }
 
   @override
@@ -939,7 +931,8 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   @override
   Map<String, dynamic> get stats => _nativeReady
       ? {
-          ...super.stats, // pure-Dart keys with zero values when native is running
+          ...super
+              .stats, // pure-Dart keys with zero values when native is running
           'bodyCount': _bodyMap.length,
           'awakeBodies': _bodyMap.length, // all native bodies are active
           'lastStepCount': _lastStepCount,
@@ -1457,19 +1450,16 @@ class Box2DPhysicsEngine extends PhysicsEngine {
         friction,
         restitution,
       );
-    } else if (shape is ChainShape && shape.vertices.length >= 2) {
-      final pts = Float32List(shape.vertices.length * 2);
-      for (int i = 0; i < shape.vertices.length; i++) {
-        pts[i * 2] = shape.vertices[i].dx;
-        pts[i * 2 + 1] = shape.vertices[i].dy;
-      }
+    } else if (shape is ChainShape) {
+      final pts = _chainPoints(shape);
+      if (pts == null) return;
       final ptr = calloc<Float>(pts.length);
       try {
         ptr.asTypedList(pts.length).setAll(0, pts);
         box2d.b2w_addChainShape(
           handle,
           ptr,
-          shape.vertices.length,
+          pts.length ~/ 2,
           shape.loop ? 1 : 0,
           friction,
           restitution,
@@ -1528,6 +1518,40 @@ class Box2DPhysicsEngine extends PhysicsEngine {
         calloc.free(ptr);
       }
     }
+  }
+
+  /// [shape]'s points as Box2D takes a chain: at least 4, and an open
+  /// chain's first and last are ghosts that only shape its ends. The
+  /// pure-Dart engine collides with every segment of an open chain, so a
+  /// ghost is added beyond each end (the end segment carried on) and both
+  /// backends collide with the same segments; a three-point loop gets a
+  /// midpoint. Points closer than Box2D's linear slop to the one before are
+  /// dropped first (a segment of no length has no normal). Null when there
+  /// is no chain to make.
+  static Float32List? _chainPoints(ChainShape shape) {
+    const slop = 0.5; // B2_LINEAR_SLOP at 100 units a metre.
+    final v = <Offset>[];
+    for (final p in shape.vertices) {
+      if (v.isEmpty || (p - v.last).distance > slop) v.add(p);
+    }
+    if (shape.loop && v.length > 1 && (v.first - v.last).distance <= slop) {
+      v.removeLast();
+    }
+    final List<Offset> points;
+    if (shape.loop) {
+      if (v.length < 3) return null;
+      points = v.length == 3 ? [v[0], (v[0] + v[1]) / 2, v[1], v[2]] : v;
+    } else {
+      if (v.length < 2) return null;
+      final last = v.length - 1;
+      points = [v[0] + (v[0] - v[1]), ...v, v[last] + (v[last] - v[last - 1])];
+    }
+    final out = Float32List(points.length * 2);
+    for (var i = 0; i < points.length; i++) {
+      out[i * 2] = points[i].dx;
+      out[i * 2 + 1] = points[i].dy;
+    }
+    return out;
   }
 
   void _ensureBufferCapacity(int needed) {

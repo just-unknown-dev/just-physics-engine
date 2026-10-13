@@ -10,8 +10,8 @@ import 'package:flutter/material.dart';
 import 'package:just_dart/just_dart.dart';
 import 'ray_2d.dart';
 import 'shape_distance_2d.dart';
-import '../box2d/_box2d_engine_stub.dart'
-    if (dart.library.io) '../box2d/_box2d_engine_native.dart';
+import '../box2d/_box2d_engine_native.dart'
+    if (dart.library.js_interop) '../box2d/_box2d_engine_stub.dart';
 
 part 'collision_manifold.dart';
 part 'collision_shapes.dart';
@@ -312,12 +312,7 @@ class PhysicsEngine {
   ///
   /// The body is woken, since a teleported sleeping body would otherwise sit
   /// inert at its new location until something else disturbed it.
-  void setBodyTransform(
-    PhysicsBody body,
-    double x,
-    double y, {
-    double? angle,
-  }) {
+  void setBodyTransform(PhysicsBody body, double x, double y, {double? angle}) {
     body.position.setValues(x, y);
     if (angle != null) body.angle = angle;
     body.isAwake = true;
@@ -1336,7 +1331,8 @@ class PhysicsEngine {
   /// How much of [translation] a mover of [shape] at [position] can move
   /// before it touches something: 1 for all of it (Box2D's
   /// b2World_CastMover). What it starts out touching is ignored, and a
-  /// one-way platform stops it only when it comes from the solid side.
+  /// one-way platform stops it only when it comes from the solid side and
+  /// is not partway through it.
   double castMover(
     MoverShape shape,
     Offset position,

@@ -7,7 +7,8 @@ import 'package:just_dart/just_dart.dart';
 /// (3), awake (1 or 0).
 ///
 /// A world owns one and refills it on every read; its contents are good
-/// until the next.
+/// until the world's next read, into any buffer (a backend may hand out
+/// views of its own memory). They stay readable after the world is gone.
 final class BodyPoses3D {
   /// An empty buffer.
   BodyPoses3D();

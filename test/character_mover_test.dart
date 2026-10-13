@@ -354,6 +354,82 @@ void main() {
         final cap = _Walker(engine, capsule, const Offset(8, 70))..run(60);
         expect(cap.position.dy, greaterThan(100), reason: 'rolled off and fell');
       });
+
+      final box = MoverShape.box(width: 24, height: 48);
+
+      /// A 16-high step whose left side is at x = 20, on [floor].
+      void stepUp() =>
+          engine.addBody(_static(const Offset(40, 92), RectangleShape(40, 16)));
+
+      test('a jump that clips a step carries on up', () {
+        if (skipped()) return;
+        floor();
+        stepUp();
+        final w = _Walker(engine, box, const Offset(0, 70))..run(30);
+        expect(w.grounded, isTrue);
+        // Flush against the step's side.
+        w.position = Offset(20 - 12 - moverLinearSlop, w.position.dy);
+        w.step(moveX: 200, jump: 600, stepHeight: 20);
+        expect(w.velocity.dy, lessThan(-500), reason: 'still rising');
+        expect(w.grounded, isFalse);
+      });
+
+      test('a wall turned upright stops it', () {
+        if (skipped()) return;
+        floor();
+        // 400 long, 20 thick, turned a quarter: upright, x 90..110.
+        engine.addBody(
+          PhysicsBody(
+            position: Vector2(100, 0),
+            shape: RectangleShape(400, 20),
+            mass: 0,
+            bodyType: BodyType.static,
+            angle: math.pi / 2,
+          ),
+        );
+        final w = _Walker(engine, capsule, const Offset(0, 70))..run(30);
+        w.run(90, moveX: 300);
+        expect(w.position.dx, lessThan(90 - 12 + 1));
+      });
+
+      test('a one-way platform it is partway into does not catch it', () {
+        if (skipped()) return;
+        // One-way from above; its top at y = 45.
+        engine.addBody(
+          _static(const Offset(0, 50), RectangleShape(200, 10), oneWay: true),
+        );
+        engine.update(_dt);
+        // The capsule's core ends 12 above its bottom. Feet 6 into the
+        // platform: it falls on through.
+        expect(
+          engine.castMover(capsule, const Offset(0, 27), const Offset(0, 10)),
+          1,
+        );
+        // Feet 1 above it: caught.
+        expect(
+          engine.castMover(capsule, const Offset(0, 20), const Offset(0, 10)),
+          lessThan(1),
+        );
+      });
+
+      test('up of any length means the same', () {
+        if (skipped()) return;
+        floor();
+        stepUp();
+        CharacterMove2D move(Offset up) => CharacterMover2D(engine).move(
+          shape: box,
+          position: const Offset(7, 76),
+          velocity: const Offset(200, 10),
+          dt: _dt,
+          up: up,
+          stepHeight: 20,
+          wasGrounded: true,
+        );
+        final unit = move(const Offset(0, -1)), long = move(const Offset(0, -4));
+        expect((unit.position - long.position).distance, lessThan(1e-6));
+        expect((unit.velocity - long.velocity).distance, lessThan(1e-6));
+        expect(long.groundState, unit.groundState);
+      });
     });
   }
 }

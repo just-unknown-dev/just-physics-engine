@@ -1,11 +1,16 @@
 // box2d_wrapper.h — pure-C public API consumed by Dart FFI via ffigen.
 //
-// All Box2D 3.0 opaque ID structs (b2WorldId, b2BodyId) are packed into
-// int64_t so Dart FFI never has to pass structs by value across the boundary.
+// All Box2D 3.x opaque ID structs (b2WorldId, b2BodyId, b2ChainId,
+// b2JointId) are packed into int64_t so Dart FFI never has to pass structs by
+// value across the boundary.
 //
 // ID encoding:
 //   b2WorldId → int64: index1[15:0] | generation[31:16]
-//   b2BodyId  → int64: index1[31:0] | world0[47:32] | generation[63:48]
+//   b2BodyId, b2ChainId, b2JointId → int64:
+//     index1[23:0] | world0[31:24] | generation[47:32] | world generation[63:48]
+// The world's generation tells a handle of a world that has gone from one of
+// a newer world in the same slot. Every function checks its handles and does
+// nothing with a dead one (Box2D itself checks nothing in a release build).
 
 #pragma once
 
@@ -30,8 +35,8 @@ extern "C" {
 // ── World ────────────────────────────────────────────────────────────────────
 
 /// Create a Box2D world with a native thread pool injected into the task system.
-/// numThreads <= 0 → hardware_concurrency - 1.
-/// Returns packed int64 world handle; 0 on failure.
+/// numThreads <= 0 → cores - 1, at most 4.
+/// Returns packed int64 world handle; 0 on failure (every world slot taken).
 B2W_EXPORT int64_t b2w_createWorld(float gravityX, float gravityY, int32_t numThreads);
 
 /// Destroy a Box2D world and its associated thread pool.
@@ -48,11 +53,13 @@ B2W_EXPORT void b2w_setGravity(int64_t worldHandle, float gx, float gy);
 
 // ── Bodies ───────────────────────────────────────────────────────────────────
 
-/// Create a dynamic (simulated) body. Returns packed int64 body handle.
+/// Create a dynamic (simulated) body. Returns packed int64 body handle; 0
+/// when the world has gone.
 B2W_EXPORT int64_t b2w_createDynamicBody(int64_t worldHandle,
                                float posX, float posY, float angle);
 
-/// Create a static (immovable) body. Returns packed int64 body handle.
+/// Create a static (immovable) body. Returns packed int64 body handle; 0
+/// when the world has gone.
 B2W_EXPORT int64_t b2w_createStaticBody(int64_t worldHandle,
                               float posX, float posY, float angle);
 
@@ -98,8 +105,11 @@ B2W_EXPORT void b2w_addSegmentShape(int64_t bodyHandle,
 
 /// Attach a chain-of-segments fixture.
 /// points: interleaved (x0,y0, x1,y1, ...) array of `count` vertices.
-/// If loop != 0 the last point connects back to the first.
-/// Returns a packed int64 chain handle; pass to b2w_destroyChain to remove it.
+/// If loop != 0 the last point connects back to the first. At least 4
+/// points; an open chain's first and last are ghosts that only shape its
+/// ends.
+/// Returns a packed int64 chain handle (0 for too few points or a dead body);
+/// pass to b2w_destroyChain to remove it.
 B2W_EXPORT int64_t b2w_addChainShape(int64_t bodyHandle,
                            const float* points, int32_t count, int32_t loop,
                            float friction, float restitution);
@@ -514,8 +524,12 @@ B2W_EXPORT void b2w_setBodyFilter64(int64_t bodyHandle,
 // NativeFinalizer requires a native function with signature void(void*).
 // These wrappers receive the packed int64 handle reinterpreted as a void*
 // token (set via Pointer<Void>.fromAddress(handle) on the Dart side), cast
-// it back to int64_t, and call the real destroy function.
-// Only used as safety-net GC finalizers — prefer explicit dispose().
+// it back to int64_t, and queue the destroy: the GC may call them on any
+// thread, so the next b2w_* call from Dart (a create, destroy or step)
+// performs it. Only used as safety-net GC finalizers — prefer explicit
+// dispose(). Use Box2D from one isolate per process. On a 32-bit platform the
+// token keeps only a body handle's low 32 bits, so a body's finalizer does
+// nothing there; the body goes with its world.
 
 B2W_EXPORT void b2w_finalizer_world(void* token);
 B2W_EXPORT void b2w_finalizer_body(void* token);

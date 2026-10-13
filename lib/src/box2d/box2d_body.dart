@@ -28,6 +28,9 @@ class Box2DBody implements Finalizable {
   static final _finalizer = NativeFinalizer(box2dFinalizerBody);
 
   Box2DBody._({required int handle}) : _handle = handle {
+    if (handle == 0) {
+      throw StateError('Box2D made no body: its world has gone.');
+    }
     _finalizer.attach(
       this,
       Pointer<Void>.fromAddress(handle),

@@ -1,14 +1,7 @@
 part of 'physics_engine.dart';
 
 /// Enumeration of joint types.
-enum JointType {
-  distance,
-  mouse,
-  weld,
-  revolute,
-  prismatic,
-  wheel,
-}
+enum JointType { distance, mouse, weld, revolute, prismatic, wheel }
 
 /// Base class for all Dart-fallback joint constraints.
 ///
@@ -46,9 +39,9 @@ class DistanceJoint extends JointConstraint {
     double? maxLength,
     this.stiffness = 0.0,
     this.damping = 0.3,
-  })  : minLength = minLength ?? length,
-        maxLength = maxLength ?? length,
-        super(JointType.distance);
+  }) : minLength = minLength ?? length,
+       maxLength = maxLength ?? length,
+       super(JointType.distance);
 
   @override
   void applyConstraint(double dt) {
@@ -82,7 +75,8 @@ class DistanceJoint extends JointConstraint {
     // Soft spring impulse: positive violation means too far → pull together.
     // impulse > 0: move A in +nx (toward B), move B in -nx (toward A).
     if (stiffness > 0) {
-      final relVelN = (bodyB.velocity.x - bodyA.velocity.x) * nx +
+      final relVelN =
+          (bodyB.velocity.x - bodyA.velocity.x) * nx +
           (bodyB.velocity.y - bodyA.velocity.y) * ny;
       final springForce = stiffness * violation;
       final dampForce = damping * relVelN;
@@ -116,8 +110,8 @@ class MouseJoint extends JointConstraint {
     this.stiffness = 500.0,
     this.damping = 0.7,
     this.maxForce = 50000.0,
-  })  : target = Vector2(target.x, target.y),
-        super(JointType.mouse);
+  }) : target = Vector2(target.x, target.y),
+       super(JointType.mouse);
 
   /// Move the target (call from the game loop when the pointer moves).
   void setTarget(double x, double y) {
@@ -163,10 +157,10 @@ class WeldJoint extends JointConstraint {
   final double _relAngle;
 
   WeldJoint({required this.bodyA, required this.bodyB})
-      : _relX = bodyB.position.x - bodyA.position.x,
-        _relY = bodyB.position.y - bodyA.position.y,
-        _relAngle = bodyB.angle - bodyA.angle,
-        super(JointType.weld);
+    : _relX = bodyB.position.x - bodyA.position.x,
+      _relY = bodyB.position.y - bodyA.position.y,
+      _relAngle = bodyB.angle - bodyA.angle,
+      super(JointType.weld);
 
   @override
   void applyConstraint(double dt) {
@@ -203,8 +197,16 @@ class WeldJoint extends JointConstraint {
     // Angular weld: correct angle
     final targetAngle = bodyA.angle + _relAngle;
     final angleErr = targetAngle - bodyB.angle;
-    bodyA.angle += angleErr * bodyA.inverseMass / (bodyA.inverseMass + bodyB.inverseMass) * 0.5;
-    bodyB.angle -= angleErr * bodyB.inverseMass / (bodyA.inverseMass + bodyB.inverseMass) * 0.5;
+    bodyA.angle +=
+        angleErr *
+        bodyA.inverseMass /
+        (bodyA.inverseMass + bodyB.inverseMass) *
+        0.5;
+    bodyB.angle -=
+        angleErr *
+        bodyB.inverseMass /
+        (bodyA.inverseMass + bodyB.inverseMass) *
+        0.5;
   }
 }
 
@@ -234,9 +236,9 @@ class PrismaticJoint extends JointConstraint {
     required this.bodyA,
     required this.bodyB,
     required Offset axis,
-  })  : _axisX = axis.dx,
-        _axisY = axis.dy,
-        super(JointType.prismatic);
+  }) : _axisX = axis.dx,
+       _axisY = axis.dy,
+       super(JointType.prismatic);
 
   @override
   void applyConstraint(double dt) {
@@ -275,7 +277,8 @@ class PrismaticJoint extends JointConstraint {
 
     // Motor: drive relative velocity along the axis.
     if (motorEnabled) {
-      final relVel = (bodyB.velocity.x - bodyA.velocity.x) * _axisX +
+      final relVel =
+          (bodyB.velocity.x - bodyA.velocity.x) * _axisX +
           (bodyB.velocity.y - bodyA.velocity.y) * _axisY;
       var force = (motorSpeed - relVel) / totalInvMass;
       force = force.clamp(-maxMotorForce, maxMotorForce);
@@ -315,13 +318,10 @@ class WheelJoint extends JointConstraint {
   double motorSpeed = 0.0;
   double maxMotorTorque = 0.0;
 
-  WheelJoint({
-    required this.bodyA,
-    required this.bodyB,
-    required Offset axis,
-  })  : _axisX = axis.dx,
-        _axisY = axis.dy,
-        super(JointType.wheel);
+  WheelJoint({required this.bodyA, required this.bodyB, required Offset axis})
+    : _axisX = axis.dx,
+      _axisY = axis.dy,
+      super(JointType.wheel);
 
   /// Set the suspension spring (matches [Box2DJoint.setWheelSpring] for a
   /// consistent API across backends).
@@ -362,7 +362,8 @@ class WheelJoint extends JointConstraint {
     // anchor (zero axis displacement) with damping, like a shock absorber.
     if (springStiffness > 0) {
       final slide = dx * _axisX + dy * _axisY;
-      final relVel = (bodyB.velocity.x - bodyA.velocity.x) * _axisX +
+      final relVel =
+          (bodyB.velocity.x - bodyA.velocity.x) * _axisX +
           (bodyB.velocity.y - bodyA.velocity.y) * _axisY;
       final springForce = -springStiffness * slide;
       final dampForce = -springDamping * relVel;
@@ -415,11 +416,11 @@ class RevoluteJoint extends JointConstraint {
     required this.bodyA,
     required this.bodyB,
     required Offset worldAnchor,
-  })  : _anchorAX = worldAnchor.dx - bodyA.position.x,
-        _anchorAY = worldAnchor.dy - bodyA.position.y,
-        _anchorBX = worldAnchor.dx - bodyB.position.x,
-        _anchorBY = worldAnchor.dy - bodyB.position.y,
-        super(JointType.revolute);
+  }) : _anchorAX = worldAnchor.dx - bodyA.position.x,
+       _anchorAY = worldAnchor.dy - bodyA.position.y,
+       _anchorBX = worldAnchor.dx - bodyB.position.x,
+       _anchorBY = worldAnchor.dy - bodyB.position.y,
+       super(JointType.revolute);
 
   @override
   void applyConstraint(double dt) {

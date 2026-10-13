@@ -15,7 +15,8 @@ final class JoltPhysicsEngine implements PhysicsEngine3D {
   String get name => 'jolt';
 
   @override
-  String? get unavailableReason => 'Jolt Physics needs dart:ffi, which the web does not have.';
+  String? get unavailableReason =>
+      'Jolt Physics needs dart:ffi, which the web does not have.';
 
   /// Always null here.
   String? get joltVersion => null;

@@ -260,8 +260,7 @@ class PhysicsBody {
   /// `mass <= 0` has meant "static" since before [bodyType] existed, and
   /// `PhysicsSystem` still expresses staticness that way, so that inference
   /// wins over an explicitly-set [bodyType].
-  BodyType get effectiveBodyType =>
-      mass <= 0 ? BodyType.static : bodyType;
+  BodyType get effectiveBodyType => mass <= 0 ? BodyType.static : bodyType;
 
   /// True when this body is fully simulated (moved by gravity and forces, and
   /// pushed by collisions).

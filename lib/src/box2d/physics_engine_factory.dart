@@ -1,14 +1,16 @@
 import '../physics_2d/physics_engine.dart';
-import '../physics_3d/jolt/jolt_physics_engine_stub.dart'
-    if (dart.library.ffi) '../physics_3d/jolt/jolt_physics_engine.dart';
+// Native by default (what the analyzer and the API docs see); the web's stubs
+// where there is no dart:ffi.
+import '../physics_3d/jolt/jolt_physics_engine.dart'
+    if (dart.library.js_interop) '../physics_3d/jolt/jolt_physics_engine_stub.dart';
 import '../physics_3d/physics_engine_3d.dart';
-import '_box2d_engine_stub.dart'
-    if (dart.library.io) '_box2d_engine_native.dart';
+import '_box2d_engine_native.dart'
+    if (dart.library.js_interop) '_box2d_engine_stub.dart';
 
 /// Platform-conditional factory for the physics engine backend.
 ///
 /// On native platforms (Android, iOS, Windows, macOS, Linux):
-///   returns [Box2DPhysicsEngine] — Box2D v3.0 via Dart FFI.
+///   returns [Box2DPhysicsEngine] — Box2D v3.2 via Dart FFI.
 ///
 /// On Flutter Web:
 ///   returns [PhysicsEngine] — pure-Dart fallback (no FFI on web).
@@ -39,8 +41,13 @@ abstract final class PhysicsEngineFactory {
   }
 
   /// Why [create3D] would throw here, or null when 3-D physics can run.
-  static String? get unavailable3DReason => JoltPhysicsEngine().unavailableReason;
+  ///
+  /// Finding out starts Jolt where it can run, with the default job system
+  /// (cores minus one threads): call [create3D] first when the thread count
+  /// matters.
+  static String? get unavailable3DReason =>
+      JoltPhysicsEngine().unavailableReason;
 
-  /// Whether [create3D] can make an engine here.
+  /// Whether [create3D] can make an engine here (see [unavailable3DReason]).
   static bool get supports3D => unavailable3DReason == null;
 }

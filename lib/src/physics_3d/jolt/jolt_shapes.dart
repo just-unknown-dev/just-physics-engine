@@ -103,8 +103,11 @@ final class JoltShapes {
   }
 
   /// A new native shape for [shape] that the caller owns (one reference);
-  /// null when Jolt refuses it.
-  static Pointer<JPH_Shape>? make(Shape3D shape) => using((arena) {
+  /// null when it is not [Shape3D.isValid] or Jolt refuses it.
+  static Pointer<JPH_Shape>? make(Shape3D shape) =>
+      shape.isValid ? _make(shape) : null;
+
+  static Pointer<JPH_Shape>? _make(Shape3D shape) => using((arena) {
     final made = switch (shape) {
       BoxShape3D(:final hx, :final hy, :final hz) => _box(arena, hx, hy, hz),
       SphereShape3D(:final radius) => _settled(
@@ -274,7 +277,9 @@ final class JoltShapes {
     final position = arena<JPH_Vec3>();
     final rotation = arena<JPH_Quat>();
     for (final part in parts) {
-      final placed = part is TransformedShape3D ? part : TransformedShape3D(part);
+      final placed = part is TransformedShape3D
+          ? part
+          : TransformedShape3D(part);
       final inner = make(placed.shape);
       if (inner == null) {
         JPH_ShapeSettings_Destroy(settings.cast());
@@ -286,12 +291,14 @@ final class JoltShapes {
         ..x = placed.x
         ..y = placed.y
         ..z = placed.z;
-      rotation.ref
-        ..x = placed.qx
-        ..y = placed.qy
-        ..z = placed.qz
-        ..w = placed.qw;
-      JPH_CompoundShapeSettings_AddShape2(settings.cast(), position, rotation, inner, 0);
+      _unit(rotation, placed);
+      JPH_CompoundShapeSettings_AddShape2(
+        settings.cast(),
+        position,
+        rotation,
+        inner,
+        0,
+      );
     }
     final compound = JPH_StaticCompoundShape_Create(settings).cast<JPH_Shape>();
     // The compound holds its parts now; our references go.
@@ -313,11 +320,7 @@ final class JoltShapes {
       ..y = shape.y
       ..z = shape.z;
     final rotation = arena<JPH_Quat>();
-    rotation.ref
-      ..x = shape.qx
-      ..y = shape.qy
-      ..z = shape.qz
-      ..w = shape.qw;
+    _unit(rotation, shape);
     final placed = JPH_RotatedTranslatedShape_Create(
       position,
       rotation,
@@ -325,5 +328,21 @@ final class JoltShapes {
     ).cast<JPH_Shape>();
     JPH_Shape_Destroy(inner);
     return placed;
+  }
+
+  /// [shape]'s rotation, made unit length, into [out]: Jolt takes it as it
+  /// is, and a compound keeps only its first three parts.
+  static void _unit(Pointer<JPH_Quat> out, TransformedShape3D shape) {
+    final length = math.sqrt(
+      shape.qx * shape.qx +
+          shape.qy * shape.qy +
+          shape.qz * shape.qz +
+          shape.qw * shape.qw,
+    );
+    out.ref
+      ..x = shape.qx / length
+      ..y = shape.qy / length
+      ..z = shape.qz / length
+      ..w = shape.qw / length;
   }
 }

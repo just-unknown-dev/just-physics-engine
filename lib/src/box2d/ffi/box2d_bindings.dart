@@ -12,8 +12,8 @@ import 'dart:ffi' as ffi;
 import '' as self;
 
 /// Create a Box2D world with a native thread pool injected into the task system.
-/// numThreads <= 0 → hardware_concurrency - 1.
-/// Returns packed int64 world handle; 0 on failure.
+/// numThreads <= 0 → cores - 1, at most 4.
+/// Returns packed int64 world handle; 0 on failure (every world slot taken).
 @ffi.Native<ffi.Int64 Function(ffi.Float, ffi.Float, ffi.Int32)>()
 external int b2w_createWorld(double gravityX, double gravityY, int numThreads);
 
@@ -32,7 +32,8 @@ external void b2w_step(int worldHandle, double timeStep, int subSteps);
 @ffi.Native<ffi.Void Function(ffi.Int64, ffi.Float, ffi.Float)>()
 external void b2w_setGravity(int worldHandle, double gx, double gy);
 
-/// Create a dynamic (simulated) body. Returns packed int64 body handle.
+/// Create a dynamic (simulated) body. Returns packed int64 body handle; 0
+/// when the world has gone.
 @ffi.Native<ffi.Int64 Function(ffi.Int64, ffi.Float, ffi.Float, ffi.Float)>()
 external int b2w_createDynamicBody(
   int worldHandle,
@@ -41,7 +42,8 @@ external int b2w_createDynamicBody(
   double angle,
 );
 
-/// Create a static (immovable) body. Returns packed int64 body handle.
+/// Create a static (immovable) body. Returns packed int64 body handle; 0
+/// when the world has gone.
 @ffi.Native<ffi.Int64 Function(ffi.Int64, ffi.Float, ffi.Float, ffi.Float)>()
 external int b2w_createStaticBody(
   int worldHandle,
@@ -194,8 +196,11 @@ external void b2w_addSegmentShape(
 
 /// Attach a chain-of-segments fixture.
 /// points: interleaved (x0,y0, x1,y1, ...) array of `count` vertices.
-/// If loop != 0 the last point connects back to the first.
-/// Returns a packed int64 chain handle; pass to b2w_destroyChain to remove it.
+/// If loop != 0 the last point connects back to the first. At least 4
+/// points; an open chain's first and last are ghosts that only shape its
+/// ends.
+/// Returns a packed int64 chain handle (0 for too few points or a dead body);
+/// pass to b2w_destroyChain to remove it.
 @ffi.Native<
   ffi.Int64 Function(
     ffi.Int64,
@@ -901,8 +906,12 @@ external void b2w_setBodyFilter64(
 /// NativeFinalizer requires a native function with signature void(void*).
 /// These wrappers receive the packed int64 handle reinterpreted as a void*
 /// token (set via Pointer<Void>.fromAddress(handle) on the Dart side), cast
-/// it back to int64_t, and call the real destroy function.
-/// Only used as safety-net GC finalizers — prefer explicit dispose().
+/// it back to int64_t, and queue the destroy: the GC may call them on any
+/// thread, so the next b2w_* call from Dart (a create, destroy or step)
+/// performs it. Only used as safety-net GC finalizers — prefer explicit
+/// dispose(). Use Box2D from one isolate per process. On a 32-bit platform the
+/// token keeps only a body handle's low 32 bits, so a body's finalizer does
+/// nothing there; the body goes with its world.
 @ffi.Native<ffi.Void Function(ffi.Pointer<ffi.Void>)>()
 external void b2w_finalizer_world(ffi.Pointer<ffi.Void> token);
 

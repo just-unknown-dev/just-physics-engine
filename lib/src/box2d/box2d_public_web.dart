@@ -1,3 +1,8 @@
+// The web's side of the Box2D classes (no dart:ffi): the same public API as
+// the native files, doing nothing — the pure-Dart engine runs instead — or,
+// where a native world is needed, throwing UnsupportedError. Keep the two in
+// step: code that compiles against the native classes must compile here.
+
 import 'dart:ui' show Offset;
 
 import '../physics_2d/physics_engine.dart';
@@ -50,6 +55,19 @@ class Box2DBody {
        prevY = posY,
        prevAngle = angle;
 
+  Box2DBody.ofType({
+    required int worldHandle,
+    required int bodyTypeIndex,
+    required double posX,
+    required double posY,
+    double angle = 0.0,
+  }) : currentX = posX,
+       currentY = posY,
+       currentAngle = angle,
+       prevX = posX,
+       prevY = posY,
+       prevAngle = angle;
+
   double prevX;
   double prevY;
   double prevAngle;
@@ -62,23 +80,29 @@ class Box2DBody {
 
   int get handle => 0;
 
+  void setTransform(double x, double y, double angle, {bool wake = true}) {
+    currentX = prevX = x;
+    currentY = prevY = y;
+    currentAngle = prevAngle = angle;
+  }
+
+  int get typeIndex => 0;
+
+  void setType(int bodyTypeIndex) {}
+
   void capturePrevious() {
     prevX = currentX;
     prevY = currentY;
     prevAngle = currentAngle;
   }
 
-  void destroy() =>
-      throw UnsupportedError('Box2DBody is not available on web — use PhysicsBody via PhysicsEngine instead.');
+  void destroy() {}
 
-  void applyForce(double fx, double fy) =>
-      throw UnsupportedError('Box2DBody.applyForce is not available on web.');
+  void applyForce(double fx, double fy) {}
 
-  void applyLinearImpulse(double ix, double iy) =>
-      throw UnsupportedError('Box2DBody.applyLinearImpulse is not available on web.');
+  void applyLinearImpulse(double ix, double iy) {}
 
-  void applyTorque(double t) =>
-      throw UnsupportedError('Box2DBody.applyTorque is not available on web.');
+  void applyTorque(double t) {}
 
   void setLinearVelocity(double vx, double vy) {
     velocityX = vx;
@@ -102,7 +126,57 @@ class Box2DJoint extends JointConstraint {
   void setTarget(double x, double y) {}
   void setWheelSpring(double stiffness, double damping) {}
   void setWheelMotor(double speed, double maxTorque, {bool enable = true}) {}
+  Offset get reactionForce => Offset.zero;
   double get reactionTorque => 0.0;
+}
+
+extension Box2DJointFactory on Object {
+  static Box2DJoint createRevolute(
+    int worldHandle,
+    int bodyAHandle,
+    int bodyBHandle,
+    Offset worldAnchor,
+  ) => throw UnsupportedError(_noJoints);
+
+  static Box2DJoint createPrismatic(
+    int worldHandle,
+    int bodyAHandle,
+    int bodyBHandle,
+    Offset worldAnchor,
+    Offset axis,
+  ) => throw UnsupportedError(_noJoints);
+
+  static Box2DJoint createDistance(
+    int worldHandle,
+    int bodyAHandle,
+    int bodyBHandle,
+    double minLen,
+    double maxLen,
+  ) => throw UnsupportedError(_noJoints);
+
+  static Box2DJoint createMouse(
+    int worldHandle,
+    int bodyBHandle,
+    Offset target,
+  ) => throw UnsupportedError(_noJoints);
+
+  static Box2DJoint createWeld(
+    int worldHandle,
+    int bodyAHandle,
+    int bodyBHandle,
+    Offset worldAnchor,
+  ) => throw UnsupportedError(_noJoints);
+
+  static Box2DJoint createWheel(
+    int worldHandle,
+    int bodyAHandle,
+    int bodyBHandle,
+    Offset worldAnchor,
+    Offset axis,
+  ) => throw UnsupportedError(_noJoints);
+
+  static const _noJoints =
+      'Box2D joints need a native world; the web runs the pure-Dart engine.';
 }
 
 class Box2DPhysicsEngine extends PhysicsEngine {
@@ -125,12 +199,49 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     'backend': 'dart_fallback_web_stub',
   };
 
+  Box2DJoint? createRevoluteJoint(
+    PhysicsBody bodyA,
+    PhysicsBody bodyB,
+    Offset worldAnchor,
+  ) => null;
+
+  Box2DJoint? createPrismaticJoint(
+    PhysicsBody bodyA,
+    PhysicsBody bodyB,
+    Offset worldAnchor,
+    Offset axis,
+  ) => null;
+
+  Box2DJoint? createDistanceJoint(
+    PhysicsBody bodyA,
+    PhysicsBody bodyB, {
+    required double minLength,
+    required double maxLength,
+  }) => null;
+
+  Box2DJoint? createMouseJoint(PhysicsBody bodyB, Offset target) => null;
+
+  Box2DJoint? createWeldJoint(
+    PhysicsBody bodyA,
+    PhysicsBody bodyB,
+    Offset worldAnchor,
+  ) => null;
+
   Box2DJoint? createWheelJoint(
     PhysicsBody bodyA,
     PhysicsBody bodyB,
     Offset worldAnchor,
     Offset axis,
   ) => null;
+
+  void destroyJoint(Box2DJoint joint) {}
+
+  void registerImpactCallback(
+    void Function(int bodyA, int bodyB, double speed) callback, {
+    double speedThreshold = 100.0,
+  }) {}
+
+  PhysicsBody? physicsBodyFromHandle(int handle) => null;
 }
 
 class PhysicsGameLoop {
