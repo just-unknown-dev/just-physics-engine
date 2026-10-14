@@ -66,23 +66,20 @@ class Box2DJoint extends JointConstraint {
     box2d.b2w_setDistanceLimits(_handle, minLen, maxLen);
   }
 
-  void setDistanceSpring(double stiffness, double damping) {
+  /// A spring pulling toward the rest length (the middle of the range):
+  /// [hertz] is how fast it swings, [dampingRatio] how soon it settles (0
+  /// never, 1 without overshoot). 0 Hz takes the spring away.
+  void setDistanceSpring(double hertz, double dampingRatio) {
     if (_destroyed) return;
-    box2d.b2w_setDistanceSpring(_handle, stiffness, damping);
-  }
-
-  // ── Mouse joint configuration ─────────────────────────────────────────────
-
-  void setTarget(double x, double y) {
-    if (_destroyed) return;
-    box2d.b2w_setMouseJointTarget(_handle, x, y);
+    box2d.b2w_setDistanceSpring(_handle, hertz, dampingRatio);
   }
 
   // ── Wheel joint configuration ─────────────────────────────────────────────
 
-  void setWheelSpring(double stiffness, double damping) {
+  /// The suspension: [hertz] and [dampingRatio] as for [setDistanceSpring].
+  void setWheelSpring(double hertz, double dampingRatio) {
     if (_destroyed) return;
-    box2d.b2w_setWheelSpring(_handle, stiffness, damping);
+    box2d.b2w_setWheelSpring(_handle, hertz, dampingRatio);
   }
 
   void setWheelMotor(double speed, double maxTorque, {bool enable = true}) {
@@ -173,20 +170,6 @@ extension Box2DJointFactory on Object {
       maxLen,
     );
     return Box2DJoint._wrap(JointType.distance, h);
-  }
-
-  static Box2DJoint createMouse(
-    int worldHandle,
-    int bodyBHandle,
-    Offset target,
-  ) {
-    final h = box2d.b2w_createMouseJoint(
-      worldHandle,
-      bodyBHandle,
-      target.dx,
-      target.dy,
-    );
-    return Box2DJoint._wrap(JointType.mouse, h);
   }
 
   static Box2DJoint createWeld(

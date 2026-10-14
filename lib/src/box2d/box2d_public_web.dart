@@ -122,9 +122,8 @@ class Box2DJoint extends JointConstraint {
   void setPrismaticLimits(double lower, double upper, {bool enable = true}) {}
   void setPrismaticMotor(double speed, double maxForce, {bool enable = true}) {}
   void setDistanceLimits(double minLen, double maxLen) {}
-  void setDistanceSpring(double stiffness, double damping) {}
-  void setTarget(double x, double y) {}
-  void setWheelSpring(double stiffness, double damping) {}
+  void setDistanceSpring(double hertz, double dampingRatio) {}
+  void setWheelSpring(double hertz, double dampingRatio) {}
   void setWheelMotor(double speed, double maxTorque, {bool enable = true}) {}
   Offset get reactionForce => Offset.zero;
   double get reactionTorque => 0.0;
@@ -152,12 +151,6 @@ extension Box2DJointFactory on Object {
     int bodyBHandle,
     double minLen,
     double maxLen,
-  ) => throw UnsupportedError(_noJoints);
-
-  static Box2DJoint createMouse(
-    int worldHandle,
-    int bodyBHandle,
-    Offset target,
   ) => throw UnsupportedError(_noJoints);
 
   static Box2DJoint createWeld(
@@ -218,8 +211,6 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     required double minLength,
     required double maxLength,
   }) => null;
-
-  Box2DJoint? createMouseJoint(PhysicsBody bodyB, Offset target) => null;
 
   Box2DJoint? createWeldJoint(
     PhysicsBody bodyA,

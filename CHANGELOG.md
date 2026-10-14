@@ -10,6 +10,8 @@
 - **Native Box2D now runs on Android, iOS, macOS and Linux**, which all silently ran the pure-Dart fallback before (see Changed): physics there now behaves as Box2D does. Android was checked on an emulator; iOS, macOS and Linux were not run.
 - **The pure-Dart backend behaves as Box2D does** in three places: friction mixes as the geometric mean, nothing bounces below 1 m/s, and a kinematic body no longer touches static or kinematic ones (see Changed).
 - **Every segment of an open `ChainShape` is solid on the native backend too.** Box2D treats an open chain's first and last points as ghosts, so the end segments had no collision there (and fewer than 4 points none at all); the wrapper now adds ghost points beyond the ends, as the pure-Dart engine already behaved.
+- `Box2DPhysicsEngine.createMouseJoint`, `Box2DJoint.setTarget` and `Box2DJointFactory.createMouse` are gone: Box2D v3 has no mouse joint, and they always returned null or did nothing. `addMouseJoint` gives the pure-Dart `MouseJoint` on every backend.
+- `Box2DJoint.setDistanceSpring` and `setWheelSpring` take `hertz` and `dampingRatio`, which is what Box2D always read them as.
 - `package:just_physics_engine/just_physics_engine.dart` exports the 3D types (`…3D`, `JoltPhysicsEngine`), and `physics_3d.dart` re-exports just_dart's `Vector3` and `Quaternion`: hide them where another package's names clash.
 
 ### Added
@@ -39,6 +41,7 @@
 - **The native Box2D classes are what the analyzer and the API docs see.** The library exports them by default and swaps in the web's stubs only where `dart.library.js_interop` is (JS and Wasm), so an IDE no longer reports native-only calls such as `registerImpactCallback` as undefined.
 - A `PolygonShape` of more than 8 vertices becomes several Box2D polygons on the native backend, so it keeps its whole outline (Box2D's polygons hold at most 8).
 - The published package ships no C code, and no stray coverage report.
+- **`registerImpactCallback` reports Box2D's hit events**: every contact that closed faster than the threshold in a step, with the speed it closed at. It used to compare the two bodies' velocities after the step, and only for contacts that had just begun.
 - The bundled Box2D is v3.2; the docs said v3.0.
 - Use Box2D and Jolt from one isolate per process: their native worlds are shared by the whole process.
 
@@ -54,6 +57,9 @@
 - Contact and sensor events for a shape destroyed before they were read name no body, instead of whichever body took its slot.
 - A new body never inherits the sensor flag of an earlier body that had the same handle.
 - `Box2DPhysicsEngine.dispose` clears the native impact callback before it closes the Dart callable it points at.
+- **A native distance joint's spring works.** `addDistanceJoint` with a stiffness set the spring's frequency and damping but never switched it on, so the joint stayed rigid, and a range between `minLength` and `maxLength` held the bodies rigidly at its middle, as its limit was off.
+- `addMouseJoint` on `Box2DPhysicsEngine` adds one mouse joint. It added two, and the one it did not return went on pulling toward the first target.
+- A linear impulse on a native body pushes at its centre of mass, as the pure-Dart engine does. It pushed at the body's origin, spinning a body whose shapes sit off it.
 - **3D: a character's body can no longer be destroyed or joined on its own**, which crashed Jolt natively (it was destroyed again with its character, or a joint went on holding it). Raycasts and overlaps return characters' bodies, so a "destroy what the blast hits" script could do it. A world now acts only on the bodies, joints and characters it made itself, which also passes over handles from another world (they used to reach into that world).
 - 3D: a `BodyPoses3D` read before a world's `dispose` stays readable after it; it used to point at freed native memory.
 - 3D: after `destroyAll`, a world still held reads as disposed, instead of calling Jolt through freed memory.

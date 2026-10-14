@@ -8,7 +8,6 @@ import 'package:flutter/foundation.dart' show debugPrint;
 
 import 'package:ffi/ffi.dart';
 import 'package:just_box_2d/ffi.dart' as box2d;
-import 'package:just_dart/just_dart.dart' show Vector2;
 
 // PhysicsBody, CollisionShape, CircleShape, RectangleShape, PolygonShape are
 // all part-files of physics_engine.dart — import the library, not the parts.
@@ -1178,15 +1177,6 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     return joint;
   }
 
-  Box2DJoint? createMouseJoint(PhysicsBody bodyB, Offset target) {
-    // Box2D v3.0 removed the native mouse joint; fall back to the pure-Dart
-    // MouseJoint which provides equivalent spring-damper drag behaviour.
-    // The returned joint is a JointConstraint, not a Box2DJoint — callers
-    // that downcast to Box2DJoint must handle null.
-    super.addMouseJoint(bodyB, Vector2(target.dx, target.dy));
-    return null;
-  }
-
   Box2DJoint? createWeldJoint(
     PhysicsBody bodyA,
     PhysicsBody bodyB,
@@ -1253,6 +1243,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     final mn = minLength ?? l;
     final mx = maxLength ?? l;
     final native = createDistanceJoint(a, b, minLength: mn, maxLength: mx);
+    // Box2D's spring is a frequency (hertz) and a damping ratio.
     if (native != null && stiffness > 0) {
       native.setDistanceSpring(stiffness, damping);
     }
@@ -1279,12 +1270,6 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   }
 
   @override
-  JointConstraint addMouseJoint(PhysicsBody b, Vector2 target) {
-    final native = createMouseJoint(b, Offset(target.x, target.y));
-    return native ?? super.addMouseJoint(b, target);
-  }
-
-  @override
   JointConstraint addWheelJoint(PhysicsBody a, PhysicsBody b, Offset axis) {
     final anchor = Offset(
       (a.position.x + b.position.x) / 2,
@@ -1300,15 +1285,16 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     removeJoint(joint);
   }
 
-  // ── NativeCallable.listener — cross-thread audio impact callback ──────────
+  // ── Impact callback ───────────────────────────────────────────────────────
 
-  /// Register a Dart callback to fire (on the main isolate) whenever a
-  /// collision's approach speed exceeds [speedThreshold].
+  /// Register a Dart callback for every contact whose bodies closed faster
+  /// than [speedThreshold] (units per second) in a step: Box2D's hit events.
   ///
-  /// [NativeCallable.listener] is used so the native Box2D worker threads can
-  /// safely post to the Dart event loop without blocking.
+  /// It arrives through a [NativeCallable.listener], on this isolate's event
+  /// loop after the step that saw it.
   ///
-  /// [callback] receives packed body handles (int) and the impact speed.
+  /// [callback] receives packed body handles (int) and the speed they closed
+  /// at.
   /// Use [physicsBodyFromHandle] to resolve handles to [PhysicsBody] objects.
   void registerImpactCallback(
     void Function(int bodyA, int bodyB, double speed) callback, {
