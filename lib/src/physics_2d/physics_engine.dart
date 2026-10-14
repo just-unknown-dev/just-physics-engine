@@ -284,11 +284,18 @@ class PhysicsEngine {
     }
   }
 
-  /// Remove a physics body
+  /// Remove a physics body, and the joints that hold it. The contacts and
+  /// overlaps it was in end without an event, as on the native backend.
   void removeBody(PhysicsBody body) {
     if (_bodySet.remove(body)) {
       _bodies.remove(body);
       _grid.removeBody(body);
+      bool holds(BodyPair p) => identical(p.a, body) || identical(p.b, body);
+      _activeContactPairs.removeWhere(holds);
+      _activeSensorPairs.removeWhere(holds);
+      _oneWayPassThroughPairs.removeWhere(holds);
+      _prevAwake.remove(body);
+      _joints.removeWhere((j) => j.bodies.contains(body));
     }
   }
 
@@ -553,25 +560,35 @@ class PhysicsEngine {
       ..addAll(currentContactPairs);
   }
 
-  /// Iterate sensor-enter events from the last step.
+  /// Iterate sensor-enter events from the last [update].
   ///
-  /// [fn] is called for each (bodyA, bodyB) pair that started overlapping.
-  void pollSensorBeginEvents(void Function(PhysicsBody a, PhysicsBody b) fn) {
+  /// [fn] gets the sensor first, then the body that came into it (two
+  /// sensors come in no set order), as on the native backend.
+  void pollSensorBeginEvents(
+    void Function(PhysicsBody sensor, PhysicsBody visitor) fn,
+  ) {
     for (final pair in _sensorBeginBuffer) {
-      fn(pair.a, pair.b);
+      final (sensor, visitor) = _sensorFirst(pair);
+      fn(sensor, visitor);
     }
   }
 
-  /// Iterate sensor-exit events from the last step.
-  ///
-  /// [fn] is called for each (bodyA, bodyB) pair that stopped overlapping.
-  void pollSensorEndEvents(void Function(PhysicsBody a, PhysicsBody b) fn) {
+  /// Iterate sensor-exit events from the last [update]: the sensor first,
+  /// then the body that left it.
+  void pollSensorEndEvents(
+    void Function(PhysicsBody sensor, PhysicsBody visitor) fn,
+  ) {
     for (final pair in _sensorEndBuffer) {
-      fn(pair.a, pair.b);
+      final (sensor, visitor) = _sensorFirst(pair);
+      fn(sensor, visitor);
     }
   }
 
-  /// Iterate solid-contact-begin events from the last step.
+  /// [pair]'s bodies, the sensor first.
+  static (PhysicsBody, PhysicsBody) _sensorFirst(BodyPair pair) =>
+      pair.a.isSensor ? (pair.a, pair.b) : (pair.b, pair.a);
+
+  /// Iterate solid-contact-begin events from the last [update].
   ///
   /// [fn] receives the two colliding [PhysicsBody] objects and the contact
   /// normal (nx, ny), matching [Box2DPhysicsEngine]'s native contact-begin
@@ -584,7 +601,7 @@ class PhysicsEngine {
     }
   }
 
-  /// Iterate solid-contact-end events from the last step.
+  /// Iterate solid-contact-end events from the last [update].
   ///
   /// [fn] is called for each non-sensor (bodyA, bodyB) pair that stopped
   /// overlapping. [Box2DPhysicsEngine] overrides this with the native
@@ -858,6 +875,11 @@ class PhysicsEngine {
     _activeSensorPairs.clear();
     _sensorBeginBuffer.clear();
     _sensorEndBuffer.clear();
+    _activeContactPairs.clear();
+    _contactBeginBuffer.clear();
+    _contactEndBuffer.clear();
+    _oneWayPassThroughPairs.clear();
+    _accumulator = 0.0;
     _joints.clear();
     _prevAwake.clear();
     _moveEventBuffer.clear();
@@ -956,7 +978,7 @@ class PhysicsEngine {
 
   final List<({PhysicsBody body, bool fellAsleep})> _moveEventBuffer = [];
 
-  /// Iterate body-move events from the last step.
+  /// Iterate body-move events from the last [update].
   ///
   /// Fires for every dynamic body that moved. [fellAsleep] is true if the body
   /// transitioned to sleep this step.
@@ -1001,13 +1023,29 @@ class PhysicsEngine {
 
   // ── Shape → ray intersection helpers ─────────────────────────────────────
 
+  /// [ray]'s nearest hit on any of [body]'s shapes, turned with it. A shape
+  /// the ray starts inside is passed over, as on the native backend.
   static RayBodyHit? _rayHitBody(Ray ray, PhysicsBody body) {
     final pos = body.position.toOffset();
-    final shape = body.shape;
+    RayBodyHit? best;
+    for (final unturned in [body.shape, ...body.additionalShapes]) {
+      final shape = _turnedShape(unturned, body.angle);
+      // AABB quick-reject using the slab method.
+      if (!_rayIntersectsAABB(ray, shape.getBounds(pos))) continue;
+      final hit = _rayHitShape(ray, pos, shape, body);
+      if (hit != null && (best == null || hit.distance < best.distance)) {
+        best = hit;
+      }
+    }
+    return best;
+  }
 
-    // AABB quick-reject using the slab method.
-    if (!_rayIntersectsAABB(ray, shape.getBounds(pos))) return null;
-
+  static RayBodyHit? _rayHitShape(
+    Ray ray,
+    Offset pos,
+    CollisionShape shape,
+    PhysicsBody body,
+  ) {
     if (shape is CapsuleShape) {
       return _rayHitCapsule(ray, pos, shape, body);
     } else if (shape is ChainShape) {
@@ -1016,10 +1054,130 @@ class PhysicsEngine {
       return _rayHitSegmentShape(ray, pos, shape, body);
     } else if (shape is CircleShape) {
       return _rayHitCircle(ray, shape.centerAt(pos), shape.radius, body);
+    } else if (shape is RoundedPolygonShape) {
+      return _rayHitRoundedPolygon(ray, pos, shape, body);
     } else if (shape is PolygonShape) {
       return _rayHitPolygonVerts(ray, shape.vertices, pos, body);
     }
     return null;
+  }
+
+  /// [shape] turned by [angle] about its body's position.
+  static CollisionShape _turnedShape(CollisionShape shape, double angle) {
+    if (angle == 0) return shape;
+    final c = math.cos(angle), s = math.sin(angle);
+    Offset turn(Offset p) => Offset(c * p.dx - s * p.dy, s * p.dx + c * p.dy);
+    return switch (shape) {
+      CircleShape() when shape.center == Offset.zero => shape,
+      CircleShape() => CircleShape(shape.radius, center: turn(shape.center)),
+      CapsuleShape() => CapsuleShape(
+        center1: turn(shape.center1),
+        center2: turn(shape.center2),
+        radius: shape.radius,
+      ),
+      RoundedPolygonShape() => RoundedPolygonShape([
+        for (final v in shape.vertices) turn(v),
+      ], shape.cornerRadius),
+      PolygonShape() => PolygonShape([for (final v in shape.vertices) turn(v)]),
+      SegmentShape() => SegmentShape(
+        turn(shape.point1),
+        turn(shape.point2),
+        thickness: shape.thickness,
+      ),
+      ChainShape() => ChainShape(
+        [for (final v in shape.vertices) turn(v)],
+        loop: shape.loop,
+        thickness: shape.thickness,
+      ),
+      _ => shape,
+    };
+  }
+
+  /// Whether [p] is inside the convex polygon [verts] placed at [pos].
+  static bool _containsConvex(List<Offset> verts, Offset pos, Offset p) {
+    if (verts.length < 3) return false;
+    var sign = 0;
+    for (var i = 0; i < verts.length; i++) {
+      final a = verts[i] + pos, b = verts[(i + 1) % verts.length] + pos;
+      final cross =
+          (b.dx - a.dx) * (p.dy - a.dy) - (b.dy - a.dy) * (p.dx - a.dx);
+      if (cross == 0) continue;
+      final s = cross > 0 ? 1 : -1;
+      if (sign == 0) {
+        sign = s;
+      } else if (s != sign) {
+        return false;
+      }
+    }
+    return sign != 0;
+  }
+
+  /// [ray] against a polygon grown by its corner radius: each side moved out
+  /// by the radius, and a circle at each corner.
+  static RayBodyHit? _rayHitRoundedPolygon(
+    Ray ray,
+    Offset pos,
+    RoundedPolygonShape shape,
+    PhysicsBody body,
+  ) {
+    final r = shape.cornerRadius;
+    final verts = [for (final v in shape.vertices) v + pos];
+    if (r <= 0 || verts.length < 2) {
+      return _rayHitPolygonVerts(ray, shape.vertices, pos, body);
+    }
+    // Starting inside: passed over.
+    if (_containsConvex(shape.vertices, pos, ray.origin)) return null;
+    final n = verts.length;
+    for (var i = 0; i < n; i++) {
+      final c = CapsuleShape.closestPointOnSegment(
+        ray.origin,
+        verts[i],
+        verts[(i + 1) % n],
+      );
+      if ((ray.origin - c).distanceSquared < r * r) return null;
+    }
+
+    var centroid = Offset.zero;
+    for (final v in verts) {
+      centroid += v;
+    }
+    centroid /= n.toDouble();
+
+    RayBodyHit? best;
+    for (var i = 0; i < n; i++) {
+      final a = verts[i], b = verts[(i + 1) % n];
+      final e = b - a;
+      final len = e.distance;
+      if (len < 1e-8) continue;
+      var normal = Offset(-e.dy / len, e.dx / len);
+      if (normal.dx * (a.dx - centroid.dx) + normal.dy * (a.dy - centroid.dy) <
+          0) {
+        normal = -normal;
+      }
+      // Only a side the ray comes at from outside.
+      final facing =
+          normal.dx * ray.direction.dx + normal.dy * ray.direction.dy;
+      if (facing >= 0) continue;
+      final a2 = a + normal * r; // the side, moved out
+      final denom = ray.direction.dx * e.dy - ray.direction.dy * e.dx;
+      if (denom.abs() < 1e-10) continue;
+      final dpx = a2.dx - ray.origin.dx, dpy = a2.dy - ray.origin.dy;
+      final t = (dpx * e.dy - dpy * e.dx) / denom;
+      final s = (dpx * ray.direction.dy - dpy * ray.direction.dx) / denom;
+      if (t < 0 || t > ray.maxDistance || s < 0 || s > 1) continue;
+      if (best != null && t >= best.distance) continue;
+      best = RayBodyHit(
+        body: body,
+        point: ray.at(t),
+        normal: normal,
+        distance: t,
+      );
+    }
+    for (final v in verts) {
+      final h = _rayHitCircle(ray, v, r, body);
+      if (h != null && (best == null || h.distance < best.distance)) best = h;
+    }
+    return best;
   }
 
   static bool _rayIntersectsAABB(Ray ray, Rect rect) {
@@ -1070,6 +1228,8 @@ class PhysicsEngine {
     final ocy = ray.origin.dy - center.dy;
     final b = ocx * ray.direction.dx + ocy * ray.direction.dy;
     final c = ocx * ocx + ocy * ocy - radius * radius;
+    // Starting inside: passed over.
+    if (c < 0) return null;
     final disc = b * b - c;
     if (disc < 0) return null;
     final sqrtD = math.sqrt(disc);
@@ -1094,6 +1254,8 @@ class PhysicsEngine {
     Offset pos,
     PhysicsBody body,
   ) {
+    // Starting inside: passed over.
+    if (_containsConvex(verts, pos, ray.origin)) return null;
     double closestT = ray.maxDistance;
     Offset? closestNormal;
 
@@ -1147,6 +1309,10 @@ class PhysicsEngine {
     final p1 = Offset(pos.dx + cap.center1.dx, pos.dy + cap.center1.dy);
     final p2 = Offset(pos.dx + cap.center2.dx, pos.dy + cap.center2.dy);
     final r = cap.radius;
+
+    // Starting inside: passed over.
+    final inner = CapsuleShape.closestPointOnSegment(ray.origin, p1, p2);
+    if ((ray.origin - inner).distanceSquared < r * r) return null;
 
     RayBodyHit? best;
 
@@ -1257,8 +1423,10 @@ class PhysicsEngine {
   /// Sweep a circle of [radius] from [origin] by [motion] and return the first
   /// body hit, or null if nothing is in the way.
   ///
-  /// This is an approximate Minkowski-sum sweep: the body's shape is expanded by
-  /// [radius] and then a ray is cast along [motion] against the expanded shapes.
+  /// Box2D's shape cast against every shape of every active body (turned
+  /// with its body), so it stops where the circle touches, to within Box2D's
+  /// linear slop (half a unit). A circle that starts out touching a body
+  /// hits it at a [ShapeCastResult.toi] of 0.
   ShapeCastResult? castCircle(
     Offset origin,
     double radius,
@@ -1267,48 +1435,37 @@ class PhysicsEngine {
   }) {
     if (motion == Offset.zero) return null;
     final motionDist = motion.distance;
-    final ray = Ray(origin: origin, direction: motion, maxDistance: motionDist);
+    final circle = ShapeProxy2D([origin], radius);
+    final from = Rect.fromCircle(center: origin, radius: radius);
+    final sweep = from.expandToInclude(from.shift(motion));
 
     ShapeCastResult? best;
     for (final body in bodies) {
       if (!body.isActive) continue;
       if (exclude != null && exclude.contains(body)) continue;
-
-      final pos = body.position.toOffset();
-      final shape = body.shape;
-
-      RayBodyHit? hit;
-      if (shape is CircleShape) {
-        hit = _rayHitCircle(
-          ray,
-          shape.centerAt(pos),
-          shape.radius + radius,
-          body,
+      if (!_turnedBoundsOf(body).overlaps(sweep)) continue;
+      for (final proxy in _shapeProxiesOf(body, Offset.zero)) {
+        final hit = castShape2D(
+          proxy,
+          circle,
+          motion,
+          linearSlop: moverLinearSlop,
+          maxFraction: best?.toi ?? 1.0,
         );
-      } else if (shape is PolygonShape) {
-        // Expand polygon outward by radius (approximate: use SAT-inflated bounds)
-        hit = _rayHitPolygonVerts(ray, shape.vertices, pos, body);
-        // Re-test with an AABB inflated by radius for better rejection
-        final inflated = shape.getBounds(pos).inflate(radius);
-        if (!_rayIntersectsAABB(ray, inflated)) hit = null;
-      } else if (shape is CapsuleShape) {
-        final inflated = CapsuleShape(
-          center1: shape.center1,
-          center2: shape.center2,
-          radius: shape.radius + radius,
-        );
-        hit = _rayHitCapsule(ray, pos, inflated, body);
-      } else {
-        hit = _rayHitBody(ray, body);
-      }
-
-      if (hit != null && (best == null || hit.distance < best.distance)) {
+        if (hit == null || (best != null && hit.fraction >= best.toi)) {
+          continue;
+        }
+        var normal = hit.normal;
+        if (hit.fraction == 0) {
+          final d = ShapeDistance2D.between(proxy, circle);
+          normal = d.overlaps ? Offset.zero : d.normal;
+        }
         best = ShapeCastResult(
-          body: hit.body,
+          body: body,
           point: hit.point,
-          normal: hit.normal,
-          toi: motionDist > 0 ? hit.distance / motionDist : 0.0,
-          distance: hit.distance,
+          normal: normal,
+          toi: hit.fraction,
+          distance: hit.fraction * motionDist,
         );
       }
     }
@@ -1342,31 +1499,35 @@ class PhysicsEngine {
 
   // ── Overlap queries ───────────────────────────────────────────────────────
 
-  /// Return all active bodies whose bounding box overlaps [rect].
+  /// Return all active bodies whose bounding box — round all their shapes,
+  /// turned with the body — overlaps [rect]. The native backend answers with
+  /// Box2D's boxes, which it keeps a little larger than the shapes (by a
+  /// tenth of a metre), so a body just outside [rect] can come too.
   List<PhysicsBody> queryAABB(Rect rect) {
     final result = <PhysicsBody>[];
     for (final body in bodies) {
       if (!body.isActive) continue;
-      if (body.shape.getBounds(body.position.toOffset()).overlaps(rect)) {
-        result.add(body);
-      }
+      if (_turnedBoundsOf(body).overlaps(rect)) result.add(body);
     }
     return result;
   }
 
-  /// Return all active bodies overlapping a circle at [center] with [radius].
+  /// Return all active bodies with a shape (turned with its body)
+  /// overlapping a circle at [center] with [radius].
   List<PhysicsBody> queryCircle(Offset center, double radius) {
     final aabb = Rect.fromCircle(center: center, radius: radius);
+    final circle = ShapeProxy2D([center], radius);
     final result = <PhysicsBody>[];
     for (final body in bodies) {
       if (!body.isActive) continue;
-      final pos = body.position.toOffset();
-      if (!body.shape.getBounds(pos).overlaps(aabb)) continue;
-      // Precise circle check using collision manifold against a dummy circle.
-      final shape = body.shape;
-      final tempCircle = CircleShape(radius);
-      final manifold = shape.getManifold(pos, tempCircle, center);
-      if (manifold.isColliding) result.add(body);
+      if (!_turnedBoundsOf(body).overlaps(aabb)) continue;
+      for (final proxy in _shapeProxiesOf(body, Offset.zero)) {
+        final d = ShapeDistance2D.between(proxy, circle);
+        if (d.overlaps || d.distance < proxy.radius + radius) {
+          result.add(body);
+          break;
+        }
+      }
     }
     return result;
   }

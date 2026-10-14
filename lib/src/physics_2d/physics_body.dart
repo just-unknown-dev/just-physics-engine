@@ -123,6 +123,12 @@ class PhysicsBody {
   /// react to something changing under it without being touched — a sensor
   /// standing still, a body whose gravity a script turns off and on — wants
   /// it. True by default.
+  ///
+  /// On the pure-Dart engine a body only sleeps once nothing accelerates it,
+  /// gravity included, so a body under gravity never sleeps there: with no
+  /// islands to wake it, a crate asleep on a platform would hang in the air
+  /// when the platform moved away. Box2D sleeps bodies at rest whatever
+  /// pulls on them, and wakes them when what holds them moves.
   bool canSleep;
 
   /// Object Sleeping: if true, physics integration happens.

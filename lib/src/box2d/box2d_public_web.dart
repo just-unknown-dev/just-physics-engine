@@ -23,7 +23,8 @@ class Box2DWorld {
 
   int get handle => 0;
 
-  int step(double dt) => 0;
+  int step(double dt, {void Function()? beforeStep, void Function()? onStep}) =>
+      0;
 
   void setGravity(double gx, double gy) {}
 
@@ -242,7 +243,11 @@ class PhysicsGameLoop {
 
   double get alpha => world.alpha;
 
-  int advance(double dt) => world.step(dt);
+  int advance(
+    double dt, {
+    void Function()? beforeStep,
+    void Function()? onStep,
+  }) => world.step(dt, beforeStep: beforeStep, onStep: onStep);
 }
 
 abstract final class TransformInterpolator {

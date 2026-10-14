@@ -817,7 +817,9 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
         } else {
           b.position.addScaled(b.linearVelocity, dt);
         }
-        if (collisions && b.linearVelocity.lengthSquared > 0) {
+        // A sensor makes no contact, so it wakes nothing (Jolt wakes bodies
+        // only as it makes contacts).
+        if (collisions && !b.isSensor && b.linearVelocity.lengthSquared > 0) {
           _wakeTouched(b, all);
         }
         // Still for long enough, it sleeps, as in Jolt.
@@ -850,11 +852,13 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
     if (collisions) _findContacts(all);
   }
 
-  /// Wakes the sleeping dynamic bodies a moving [b] touches.
+  /// Wakes the sleeping dynamic bodies a moving [b] touches; a sensor
+  /// makes no contact, so it is never woken this way.
   void _wakeTouched(FakeBody3D b, List<FakeBody3D> all) {
     const slop = 0.01;
     for (final o in all) {
       if (o.awake ||
+          o.isSensor ||
           o.type != BodyType3D.dynamic ||
           !_collide(b.layer, o.layer) ||
           !_canTouch(b, o)) {
@@ -919,6 +923,9 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
     }
   }
 
+  /// Whether [b] is awake, and a body that moves.
+  static bool _moves(FakeBody3D b) => b.awake && b.type != BodyType3D.static;
+
   void _findContacts(List<FakeBody3D> all) {
     final now = <(int, int), (bool, FakeBody3D, FakeBody3D)>{};
     const slop = 0.01;
@@ -937,6 +944,9 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
     for (final MapEntry(key: pair, value: (sensor, a, b)) in now.entries) {
       final known = _touching.containsKey(pair);
       if (known && !(settings.reportContactStay && !sensor)) continue;
+      // Jolt goes on with a contact only while one of its bodies is awake
+      // and moves: a pair asleep together stays quiet.
+      if (known && !_moves(a) && !_moves(b)) continue;
       final point = Vector3(
         (math.max(a.minX, b.minX) + math.min(a.maxX, b.maxX)) / 2,
         (math.max(a.minY, b.minY) + math.min(a.maxY, b.maxY)) / 2,

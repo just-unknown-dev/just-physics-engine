@@ -116,7 +116,9 @@ class Box2DJoint extends JointConstraint {
       Box2DJoint._(type, handle);
 }
 
-/// Mixin providing joint creation methods for [Box2DPhysicsEngine].
+/// Native joints made from raw handles: what [Box2DPhysicsEngine]'s
+/// `create*Joint` methods use. Prefer those, which take [PhysicsBody]
+/// objects and track the joint.
 ///
 /// All methods require the native world and body handles to be valid.
 extension Box2DJointFactory on Object {

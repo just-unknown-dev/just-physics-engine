@@ -11,7 +11,7 @@ Primary entry point and common API surface.
 Constructors:
 
 - `factory PhysicsEngine()`
-- `PhysicsEngine.pureDart()`
+- `PhysicsEngine.pureDart({bool fixedTimestep = true})` — fixed 1/60 s sub-steps, the leftover kept as `alpha`
 
 `PhysicsEngine()` creates the best backend for the current platform:
 
@@ -39,7 +39,8 @@ Key members:
 - `int get bodyCount`
 - `Map<String, dynamic> get stats`
 - `bool debugRender`
-- `Vector2 gravity`
+- `final Vector2 gravity` — change it with `setGravity`, which the native world hears too
+- `double get alpha` — the fixed-step leftover, for drawing between steps
 - `void cachePolygonShape(String cacheId, List<Offset> vertices)`
 - `List<Offset>? getCachedPolygonShape(String cacheId)`
 
@@ -60,6 +61,22 @@ How two bodies' materials combine at a contact, the same on both backends:
 
 Two static bodies are never paired, on either backend: they cannot move, so they raise no contacts or sensor events between themselves.
 
+Events, read after `update` — that `update`'s own, however many fixed steps it ran, on both backends:
+
+- `void pollContactBeginEvents(void Function(PhysicsBody a, PhysicsBody b, double nx, double ny) fn)`, `void pollContactEndEvents(void Function(PhysicsBody a, PhysicsBody b) fn)`
+- `void pollSensorBeginEvents(void Function(PhysicsBody sensor, PhysicsBody visitor) fn)`, `pollSensorEndEvents` — the sensor first
+- `void pollBodyMoveEvents(void Function(PhysicsBody body, {required bool fellAsleep}) fn)`
+
+Queries see every shape of a body, turned with the body as Box2D turns it (the pure-Dart engine's own collisions do not turn shapes):
+
+- `RayBodyHit? castRay(Ray ray, {Set<PhysicsBody>? exclude})`, `List<RayBodyHit> castRayAll(...)` — nearest first, one hit per body; a shape the ray starts inside is passed over
+- `ShapeCastResult? castCircle(Offset origin, double radius, Offset motion, {Set<PhysicsBody>? exclude})` — Box2D's shape cast, stopping where the circle touches (to half a unit); one that starts out touching hits at `toi` 0
+- `List<PhysicsBody> queryAABB(Rect rect)`, `queryCircle(Offset center, double radius)`, `queryPoint(Offset point)` — on the native backend `queryAABB` answers with Box2D's boxes, kept a tenth of a metre larger than the shapes
+
+Joints — `addRevoluteJoint`, `addDistanceJoint`, `addWeldJoint`, `addPrismaticJoint`, `addWheelJoint`, `addMouseJoint`, `removeJoint`, `joints` (each `JointConstraint` names its `bodies`). The Box2D backend makes native joints, all but the mouse joint, a Dart joint whose force reaches the native body. `removeJoint` destroys a native joint, and `removeBody` takes a body's joints with it. A slider's or a wheel's travel, and a hinge's angle, count from where the joint was made, as in Box2D. The pure-Dart engine moves bodies only: a body hinged away from its centre swings round the anchor, drawn turning as it swings.
+
+`torque` turns a body by its `inertia` on the pure-Dart engine, and by its shapes' rotational inertia (Box2D's) on the native one.
+
 ## `Box2DPhysicsEngine` (native backend)
 
 Extends `PhysicsEngine` with Box2D-backed simulation.
@@ -72,13 +89,11 @@ Constructor:
 
 Important extras:
 
-- `void pollContactBeginEvents(void Function(PhysicsBody a, PhysicsBody b, double nx, double ny) fn)`
 - `Box2DJoint? createRevoluteJoint(a, b, worldAnchor)`, `createPrismaticJoint(a, b, worldAnchor, axis)`, `createDistanceJoint(a, b, {minLength, maxLength})`, `createWeldJoint(a, b, worldAnchor)`, `createWheelJoint(a, b, worldAnchor, axis)`, `void destroyJoint(Box2DJoint joint)`
 - `void registerImpactCallback(void Function(int bodyA, int bodyB, double speed) callback, {double speedThreshold = 100.0})`: Box2D's hit events, every contact that closed faster than the threshold
 
 Box2D v3 has no mouse joint: `addMouseJoint` gives the pure-Dart `MouseJoint` on every backend. A native distance or wheel joint's spring is a frequency in hertz and a damping ratio (`Box2DJoint.setDistanceSpring`, `setWheelSpring`).
 - `PhysicsBody? physicsBodyFromHandle(int handle)`
-- `double get alpha`
 
 `stats` includes backend details (`box2d_v3` or fallback), contact count, and fixed-step metrics.
 
@@ -139,8 +154,8 @@ Implementations:
 - `PolygonShape(List<Offset> vertices)` — convex; on the native backend one with more than 8 vertices is made of several Box2D polygons, so it keeps its whole outline
 - `RoundedPolygonShape(List<Offset> vertices, double cornerRadius)`
 - `RectangleShape(double width, double height)`
-- `CapsuleShape(...)`, `SegmentShape(Offset point1, Offset point2, {double thickness = 2.0})`
-- `ChainShape(List<Offset> vertices, {bool loop = false, double thickness = 2.0})` — every segment solid on both backends (an open chain needs 2 points, a loop 3)
+- `CapsuleShape(...)`, `SegmentShape(Offset point1, Offset point2, {double thickness = 2.0})` — collides as the capsule `thickness` round it, on both backends
+- `ChainShape(List<Offset> vertices, {bool loop = false, double thickness = 2.0})` — every segment solid from both sides on both backends, `thickness` round it (natively a capsule per segment, or for a `thickness` of 0 Box2D's own chain, put in both ways round); an open chain needs 2 points, a loop 3
 
 `CircleShape` members:
 

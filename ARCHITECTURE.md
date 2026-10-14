@@ -82,9 +82,9 @@ Per-body flags in the wrapper:
 - The wrapper keeps a sensor flag per body handle, read when shape fixtures are created. Handles are reused (a new world, or a freed slot), so `addBody` writes the flag for every body — solid ones too — before adding shapes, and `b2w_destroyBody` erases it. Otherwise a solid body could inherit `true` from a destroyed sensor.
 - Bullet, sleep (`b2w_setBodySleepEnabled`), damping and the other body settings are set at `addBody` and again by the matching `setBody*` engine methods at runtime.
 
-Shapes: `CircleShape.center` is passed to Box2D as the circle's local centre, so it rotates with the body. The pure-Dart backend does not rotate shapes; it offsets the circle by `center` unrotated.
+Shapes: `CircleShape.center` is passed to Box2D as the circle's local centre, so it rotates with the body. The pure-Dart backend does not rotate shapes in its collisions; it offsets the circle by `center` unrotated (its queries and the mover do turn shapes, as Box2D does). A segment, and each segment of a chain, with a thickness goes in as a capsule (Box2D's lines have none); a chain with none goes in as two Box2D chains, one each way round, as a Box2D chain is solid on one side. Every shape has density 1: Box2D gives static and kinematic bodies no mass whatever it is, and `b2w_setBodyMass` sets a dynamic body's.
 
-Character movers: `b2w_moverCollide` and `b2w_moverCast` in `box2d_wrapper.cpp` walk the broad phase (`b2World_OverlapAABB`) and run Box2D's own `b2ShapeDistance` and `b2ShapeCast` per shape, with the same rules as the Dart side: sensors and the mover's own body passed over, a one-way shape solid from one side only (its flags are the shape user data the pre-solve callback reads), a chain segment one-sided. Box2D's `b2World_CollideMover`/`CastMover` take only a capsule and cannot pass over one-way shapes or one body, so they are not used.
+Character movers: `b2w_moverCollide` and `b2w_moverCast` in `box2d_wrapper.cpp` walk the broad phase (`b2World_OverlapAABB`) and run Box2D's own `b2ShapeDistance` and `b2ShapeCast` per shape, with the same rules as the Dart side: sensors and the mover's own body passed over, a one-way shape solid from one side only (its flags are the shape user data the pre-solve callback reads), a chain segment one-sided (a chain with no thickness goes into Box2D both ways round, so it stops a mover from either side, as on the Dart side). Box2D's `b2World_CollideMover`/`CastMover` take only a capsule and cannot pass over one-way shapes or one body, so they are not used.
 
 ## 4) Platform Selection and Fallback
 
@@ -115,6 +115,9 @@ Pure-Dart backend:
 Box2D backend:
 
 - Uses fixed timestep `1/60` with accumulator and sub-steps.
+- Reads each fixed step's contact, sensor and move events right after it (`Box2DWorld.step`'s `onStep`) and keeps a frame's until the next `update`: Box2D holds the last step's only.
+- Brings each native body's type, gravity scale and mass up to date whenever they change (`_pushSettings`), from the engine's setters or the `PhysicsBody` fields.
+- Hands `applyForce`'s accumulated forces to Box2D as impulses (acceleration × step) before a step, as the pure-Dart engine integrates them, and runs Dart joints (the mouse joint) before every native step (`Box2DWorld.step`'s `beforeStep`).
 - Exposes interpolation alpha (`accumulator / fixedDt`) for render smoothing.
 
 ## Memory and Resource Ownership

@@ -15,10 +15,10 @@ import 'box2d_body.dart';
 /// Call [interpolate] once per render pass (before the RenderSystem draws),
 /// passing the current alpha from [PhysicsGameLoop.alpha].
 ///
-/// Note: This class lives in just_physics_engine because it only depends on
-/// [PhysicsBody] and [Box2DBody]. The ECS write-back (to TransformComponent)
-/// is handled in just_game_engine's PhysicsBridgeSystem, which receives the
-/// interpolated values via the [write] callback.
+/// It is for [Box2DBody] objects of your own, on a [Box2DWorld] you step
+/// yourself: set each body's `prev*` before a step and `current*` after it.
+/// [Box2DPhysicsEngine] keeps its own bodies' poses; with it, use its
+/// [PhysicsEngine.alpha] between the [PhysicsBody] positions instead.
 abstract final class TransformInterpolator {
   /// Interpolate all bodies in [bodyMap] and write results via [write].
   ///

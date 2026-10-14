@@ -21,7 +21,7 @@ class BodyPair {
 /// pressure from Map reallocation.
 class SpatialGrid {
   final double cellSize;
-  final Map<int, List<PhysicsBody>> cells = {};
+  final Map<int, List<PhysicsBody>> _cells = {};
 
   /// Pool of previously allocated cell lists, reused on next rebuild.
   final List<List<PhysicsBody>> _listPool = [];
@@ -49,11 +49,11 @@ class SpatialGrid {
 
   /// Clear all cells, returning their lists to the pool for reuse.
   void clear() {
-    for (final list in cells.values) {
+    for (final list in _cells.values) {
       list.clear();
       _listPool.add(list);
     }
-    cells.clear();
+    _cells.clear();
     _trackedBodies.clear();
     _seenBodies.clear();
     _lastDirtyBodyCount = 0;
@@ -144,7 +144,7 @@ class SpatialGrid {
     for (int x = range.minX; x <= range.maxX; x++) {
       for (int y = range.minY; y <= range.maxY; y++) {
         final hash = _hash(x, y);
-        (cells[hash] ?? (cells[hash] = _acquireList())).add(body);
+        (_cells[hash] ?? (_cells[hash] = _acquireList())).add(body);
       }
     }
   }
@@ -153,12 +153,12 @@ class SpatialGrid {
     for (int x = range.minX; x <= range.maxX; x++) {
       for (int y = range.minY; y <= range.maxY; y++) {
         final hash = _hash(x, y);
-        final bucket = cells[hash];
+        final bucket = _cells[hash];
         if (bucket == null) continue;
 
         bucket.remove(body);
         if (bucket.isEmpty) {
-          cells.remove(hash);
+          _cells.remove(hash);
           _listPool.add(bucket);
         }
       }
@@ -172,7 +172,7 @@ class SpatialGrid {
   List<BodyPair> getPotentialCollisions() {
     _pairBuffer.clear();
     _seenPairs.clear();
-    for (final bin in cells.values) {
+    for (final bin in _cells.values) {
       if (bin.length > 1) {
         for (int i = 0; i < bin.length; i++) {
           for (int j = i + 1; j < bin.length; j++) {
@@ -194,7 +194,7 @@ class SpatialGrid {
 
   int get dirtyBodyCount => _lastDirtyBodyCount;
 
-  int get trackedCellCount => cells.length;
+  int get trackedCellCount => _cells.length;
 
   int get trackedBodyCount => _trackedBodies.length;
 }

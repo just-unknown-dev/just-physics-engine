@@ -29,7 +29,8 @@ final class JoltPhysicsEngine implements PhysicsEngine3D {
   String? get unavailableReason => Jolt.start(workerThreads: workerThreads);
 
   /// Jolt's version, `major.minor.patch`; null when it is not available.
-  String? get joltVersion => Jolt.version;
+  /// Like everything here, it starts Jolt with [workerThreads] threads.
+  String? get joltVersion => unavailableReason == null ? Jolt.version : null;
 
   @override
   PhysicsWorld3D createWorld(PhysicsWorldSettings3D settings) {
@@ -40,10 +41,10 @@ final class JoltPhysicsEngine implements PhysicsEngine3D {
 
   @override
   void destroyAll() {
-    Jolt.destroyAll();
+    if (unavailableReason == null) Jolt.destroyAll();
     JoltWorld.forgetAll();
   }
 
   /// How many native worlds are alive in this process (for leak checks).
-  int get liveWorlds => Jolt.liveWorlds;
+  int get liveWorlds => unavailableReason == null ? Jolt.liveWorlds : 0;
 }

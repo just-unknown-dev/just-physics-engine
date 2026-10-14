@@ -179,6 +179,10 @@ class PolygonShape extends CollisionShape {
     double minPenetration = double.infinity;
     double bestNx = 0, bestNy = 0;
 
+    // Each axis's overlap is signed (see _overlapOnAxis), so the normal points
+    // from A to B wherever the shapes sit on their bodies — a polygon can be
+    // well away from its body's origin.
+
     // Test axes from polyA
     for (int i = 0; i < polyA.vertices.length; i++) {
       final j = (i + 1) % polyA.vertices.length;
@@ -192,10 +196,10 @@ class PolygonShape extends CollisionShape {
 
       final overlap = _overlapOnAxis(polyA, posA, polyB, posB, nx, ny);
       if (overlap == null) return CollisionManifold.empty();
-      if (overlap < minPenetration) {
-        minPenetration = overlap;
-        bestNx = nx;
-        bestNy = ny;
+      if (overlap.abs() < minPenetration) {
+        minPenetration = overlap.abs();
+        bestNx = overlap < 0 ? -nx : nx;
+        bestNy = overlap < 0 ? -ny : ny;
       }
     }
 
@@ -211,20 +215,15 @@ class PolygonShape extends CollisionShape {
 
       final overlap = _overlapOnAxis(polyA, posA, polyB, posB, nx, ny);
       if (overlap == null) return CollisionManifold.empty();
-      if (overlap < minPenetration) {
-        minPenetration = overlap;
-        bestNx = nx;
-        bestNy = ny;
+      if (overlap.abs() < minPenetration) {
+        minPenetration = overlap.abs();
+        bestNx = overlap < 0 ? -nx : nx;
+        bestNy = overlap < 0 ? -ny : ny;
       }
     }
 
-    // Ensure normal points from A to B
-    final centerDx = posB.dx - posA.dx;
-    final centerDy = posB.dy - posA.dy;
-    if (bestNx * centerDx + bestNy * centerDy < 0) {
-      bestNx = -bestNx;
-      bestNy = -bestNy;
-    }
+    // No edge with a length on either: not a shape to collide with.
+    if (minPenetration == double.infinity) return CollisionManifold.empty();
 
     return CollisionManifold(
       isColliding: true,
@@ -276,9 +275,9 @@ class PolygonShape extends CollisionShape {
         ny,
       );
       if (overlap == null) return CollisionManifold.empty();
-      minPenetration = overlap;
-      bestNx = nx;
-      bestNy = ny;
+      minPenetration = overlap.abs();
+      bestNx = overlap < 0 ? -nx : nx;
+      bestNy = overlap < 0 ? -ny : ny;
     }
 
     // Test polygon edge axes.
@@ -301,19 +300,14 @@ class PolygonShape extends CollisionShape {
       );
       if (overlap == null) return CollisionManifold.empty();
 
-      if (overlap < minPenetration) {
-        minPenetration = overlap;
-        bestNx = nx;
-        bestNy = ny;
+      if (overlap.abs() < minPenetration) {
+        minPenetration = overlap.abs();
+        bestNx = overlap < 0 ? -nx : nx;
+        bestNy = overlap < 0 ? -ny : ny;
       }
     }
 
-    final centerDx = polyPos.dx - center.dx;
-    final centerDy = polyPos.dy - center.dy;
-    if (bestNx * centerDx + bestNy * centerDy < 0) {
-      bestNx = -bestNx;
-      bestNy = -bestNy;
-    }
+    if (minPenetration == double.infinity) return CollisionManifold.empty();
 
     return CollisionManifold(
       isColliding: true,
@@ -369,11 +363,12 @@ class PolygonShape extends CollisionShape {
       final maxB = math.max(proj1, proj2) + cap.radius;
 
       if (minA > maxB || minB > maxA) return CollisionManifold.empty();
-      final overlap = math.min(maxA - minB, maxB - minA);
+      final forward = maxA - minB, back = maxB - minA;
+      final overlap = math.min(forward, back);
       if (overlap < minPen) {
         minPen = overlap;
-        bestNx = nx;
-        bestNy = ny;
+        bestNx = forward <= back ? nx : -nx;
+        bestNy = forward <= back ? ny : -ny;
       }
     }
 
@@ -400,21 +395,16 @@ class PolygonShape extends CollisionShape {
       final maxB = math.max(proj1, proj2) + cap.radius;
 
       if (minA > maxB || minB > maxA) return CollisionManifold.empty();
-      final overlap = math.min(maxA - minB, maxB - minA);
+      final forward = maxA - minB, back = maxB - minA;
+      final overlap = math.min(forward, back);
       if (overlap < minPen) {
         minPen = overlap;
-        bestNx = nx;
-        bestNy = ny;
+        bestNx = forward <= back ? nx : -nx;
+        bestNy = forward <= back ? ny : -ny;
       }
     }
 
-    // Ensure normal points from polygon (A) to capsule (B).
-    final cx = posB.dx - posA.dx;
-    final cy = posB.dy - posA.dy;
-    if (bestNx * cx + bestNy * cy < 0) {
-      bestNx = -bestNx;
-      bestNy = -bestNy;
-    }
+    if (minPen == double.infinity) return CollisionManifold.empty();
 
     return CollisionManifold(
       isColliding: true,
@@ -425,6 +415,8 @@ class PolygonShape extends CollisionShape {
 
   /// Projects both polygons onto the axis (nx, ny) and returns the overlap,
   /// or null if the projections are separated (no collision on this axis).
+  /// The overlap is signed: positive when B comes out along the axis (the
+  /// shorter way), negative when against it.
   /// All arithmetic is inline — zero heap allocation.
   double? _overlapOnAxis(
     PolygonShape polyA,
@@ -449,11 +441,15 @@ class PolygonShape extends CollisionShape {
     }
 
     if (minA > maxB || minB > maxA) return null;
-    return math.min(maxA - minB, maxB - minA);
+    final forward = maxA - minB;
+    final back = maxB - minA;
+    return forward <= back ? forward : -back;
   }
 
   /// Projects the polygon and a circle onto the axis (nx, ny) and returns
-  /// the overlap, or null if separated. Zero heap allocation.
+  /// the overlap, or null if separated. Signed as [_overlapOnAxis] with the
+  /// circle as A: positive when the polygon comes out along the axis.
+  /// Zero heap allocation.
   double? _overlapOnAxisCircle(
     PolygonShape poly,
     Offset polyPos,
@@ -474,7 +470,9 @@ class PolygonShape extends CollisionShape {
     final maxC = centerProj + radius;
 
     if (minP > maxC || minC > maxP) return null;
-    return math.min(maxP - minC, maxC - minP);
+    final forward = maxC - minP;
+    final back = maxP - minC;
+    return forward <= back ? forward : -back;
   }
 }
 
@@ -550,9 +548,22 @@ class CapsuleShape extends CollisionShape {
       return _capsuleVsCircle(posA, other, posB);
     } else if (other is CapsuleShape) {
       return _capsuleVsCapsule(posA, other, posB);
+    } else if (other is SegmentShape) {
+      return _capsuleVsCapsule(
+        posA,
+        CapsuleShape(
+          center1: other.point1,
+          center2: other.point2,
+          radius: other.thickness,
+        ),
+        posB,
+      );
     } else if (other is PolygonShape) {
-      // Delegate to the polygon side and flip the normal.
-      final m = other._satPolygonVsCapsule(posB, other, posA, this);
+      // Delegate to the polygon side and flip the normal (a rounded
+      // polygon's own test takes its corner radius in).
+      final m = other is RoundedPolygonShape
+          ? other.getManifold(posB, this, posA)
+          : other._satPolygonVsCapsule(posB, other, posA, this);
       if (!m.isColliding) return CollisionManifold.empty();
       return CollisionManifold(
         isColliding: true,
@@ -703,9 +714,12 @@ class CapsuleShape extends CollisionShape {
 
 /// A line-segment collision shape for static terrain and one-way platforms.
 ///
-/// The [thickness] gives the segment a small radius so that fast-moving bodies
-/// don't tunnel through it. For static geometry only — dynamic segment bodies
-/// are not physically meaningful.
+/// Bodies collide with the capsule [thickness] round it, on both backends
+/// (Box2D gets a capsule of that radius). It does not stop a fast body
+/// passing through in one step on the pure-Dart engine, whose collision is
+/// discrete: a body moving more than its own radius plus [thickness] in a
+/// step can come out the other side. For static geometry only — dynamic
+/// segment bodies are not physically meaningful.
 class SegmentShape extends CollisionShape {
   final Offset point1;
   final Offset point2;
@@ -749,7 +763,10 @@ class SegmentShape extends CollisionShape {
 /// A chain of connected line segments for complex terrain and loop-the-loops.
 ///
 /// When [loop] is true, the last vertex connects back to the first.
-/// Each segment uses [thickness] as a radius (like [SegmentShape]).
+/// Each segment uses [thickness] as a radius (like [SegmentShape]), and is
+/// solid from both sides on both backends. Box2D gets a capsule per segment,
+/// or for a [thickness] of 0 its own chain, put in once each way round
+/// (a Box2D chain is solid on one side only).
 class ChainShape extends CollisionShape {
   final List<Offset> vertices;
   final bool loop;
@@ -858,12 +875,23 @@ class RoundedPolygonShape extends PolygonShape {
     } else if (other is PolygonShape) {
       return _roundedPolyVsPolygon(posA, other, posB);
     } else if (other is CapsuleShape) {
-      return _satPolygonVsCapsule(posA, this, posB, other);
+      // The corner radius moves onto the capsule: the polygon's core against
+      // a capsule that much rounder.
+      return _satPolygonVsCapsule(
+        posA,
+        this,
+        posB,
+        CapsuleShape(
+          center1: other.center1,
+          center2: other.center2,
+          radius: other.radius + cornerRadius,
+        ),
+      );
     } else if (other is SegmentShape) {
       final cap = CapsuleShape(
         center1: other.point1,
         center2: other.point2,
-        radius: other.thickness,
+        radius: other.thickness + cornerRadius,
       );
       return _satPolygonVsCapsule(posA, this, posB, cap);
     } else if (other is ChainShape) {
@@ -907,8 +935,10 @@ class RoundedPolygonShape extends PolygonShape {
     PolygonShape other,
     Offset posB,
   ) {
-    // SAT where the rounded polygon's axis projections are inflated by cornerRadius.
+    // SAT where each polygon's axis projections are inflated by its corner
+    // radius (the other one may be rounded too).
     final r = cornerRadius;
+    final rB = other is RoundedPolygonShape ? other.cornerRadius : 0.0;
     double minPen = double.infinity;
     double bestNx = 0, bestNy = 0;
     bool separated = false;
@@ -944,16 +974,19 @@ class RoundedPolygonShape extends PolygonShape {
         if (p < minB) minB = p;
         if (p > maxB) maxB = p;
       }
+      minB -= rB;
+      maxB += rB;
 
       if (minA > maxB || minB > maxA) {
         separated = true;
         return;
       }
-      final overlap = math.min(maxA - minB, maxB - minA);
+      final forward = maxA - minB, back = maxB - minA;
+      final overlap = math.min(forward, back);
       if (overlap < minPen) {
         minPen = overlap;
-        bestNx = nx;
-        bestNy = ny;
+        bestNx = forward <= back ? nx : -nx;
+        bestNy = forward <= back ? ny : -ny;
       }
     }
 
@@ -975,13 +1008,8 @@ class RoundedPolygonShape extends PolygonShape {
       testAxis(-ey / len, ex / len);
     }
 
-    if (separated) return CollisionManifold.empty();
-
-    final cx = posB.dx - posA.dx;
-    final cy = posB.dy - posA.dy;
-    if (bestNx * cx + bestNy * cy < 0) {
-      bestNx = -bestNx;
-      bestNy = -bestNy;
+    if (separated || minPen == double.infinity) {
+      return CollisionManifold.empty();
     }
 
     return CollisionManifold(

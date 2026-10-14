@@ -64,9 +64,11 @@ class Box2DWorld implements Finalizable {
   /// Advance the simulation using a fixed-timestep accumulator.
   ///
   /// Caps the accumulator at 5 fixed steps to prevent the spiral-of-death
-  /// after long pauses (e.g. debugger breakpoints).
+  /// after long pauses (e.g. debugger breakpoints). [beforeStep] runs before
+  /// each fixed step, and [onStep] after it: Box2D's events are that step's
+  /// only until the next one.
   /// Returns the number of fixed steps fired this call.
-  int step(double dt) {
+  int step(double dt, {void Function()? beforeStep, void Function()? onStep}) {
     _throwIfDisposed();
     _accumulator += dt;
     const maxAccum = _fixedDt * 5.0;
@@ -74,9 +76,11 @@ class Box2DWorld implements Finalizable {
 
     int steps = 0;
     while (_accumulator >= _fixedDt) {
+      beforeStep?.call();
       box2d.b2w_step(_handle, _fixedDt, subSteps);
       _accumulator -= _fixedDt;
       steps++;
+      onStep?.call();
     }
     return steps;
   }

@@ -23,7 +23,11 @@ void main() {
     expect(
       () => engine.createWorld(PhysicsWorldSettings3D()),
       throwsA(
-        isA<Physics3DUnsupportedError>().having((e) => e.message, 'message', contains('not here')),
+        isA<Physics3DUnsupportedError>().having(
+          (e) => e.message,
+          'message',
+          contains('not here'),
+        ),
       ),
     );
   });

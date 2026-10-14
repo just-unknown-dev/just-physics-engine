@@ -533,54 +533,50 @@ final class CharacterMover2D {
 
 double _moverDot(Offset a, Offset b) => a.dx * b.dx + a.dy * b.dy;
 
-/// The proxies of [body]'s shapes, relative to [origin], each with the
-/// ends of the chain segment it is (for the one-sided test), if it is one.
-List<(ShapeProxy2D, Offset?, Offset?)> _moverProxiesOf(
-  PhysicsBody body,
-  Offset origin,
-) {
+/// The GJK proxies of [body]'s shapes, relative to [origin], turned with
+/// the body as Box2D turns them — the mover and the queries see shapes so
+/// on both backends, though the pure-Dart engine's own collisions do not
+/// turn them. A segment, and each segment of a chain, is the capsule its
+/// thickness makes, as both backends collide it.
+List<ShapeProxy2D> _shapeProxiesOf(PhysicsBody body, Offset origin) {
   final c = math.cos(body.angle), s = math.sin(body.angle);
   final px = body.position.x - origin.dx, py = body.position.y - origin.dy;
   Offset at(Offset p) =>
       Offset(c * p.dx - s * p.dy + px, s * p.dx + c * p.dy + py);
-  final out = <(ShapeProxy2D, Offset?, Offset?)>[];
+  final out = <ShapeProxy2D>[];
   void add(CollisionShape shape) {
     switch (shape) {
       case CircleShape():
-        out.add((ShapeProxy2D([at(shape.center)], shape.radius), null, null));
+        out.add(ShapeProxy2D([at(shape.center)], shape.radius));
       case CapsuleShape():
-        out.add((
+        out.add(
           ShapeProxy2D([at(shape.center1), at(shape.center2)], shape.radius),
-          null,
-          null,
-        ));
+        );
       case RoundedPolygonShape():
-        out.add((
+        out.add(
           ShapeProxy2D([
             for (final v in shape.vertices) at(v),
           ], shape.cornerRadius),
-          null,
-          null,
-        ));
+        );
       case PolygonShape():
-        out.add((
-          ShapeProxy2D([for (final v in shape.vertices) at(v)], 0),
-          null,
-          null,
-        ));
+        if (shape.vertices.isNotEmpty) {
+          out.add(ShapeProxy2D([for (final v in shape.vertices) at(v)], 0));
+        }
       case SegmentShape():
-        // Box2D's segments have no thickness; nor do the mover's.
-        out.add((
-          ShapeProxy2D([at(shape.point1), at(shape.point2)], 0),
-          null,
-          null,
-        ));
+        out.add(
+          ShapeProxy2D([at(shape.point1), at(shape.point2)], shape.thickness),
+        );
       case ChainShape():
         final v = shape.vertices;
-        final n = shape.loop ? v.length : v.length - 1;
+        if (v.length < 2) break;
+        final n = shape.loop && v.length > 2 ? v.length : v.length - 1;
         for (var i = 0; i < n; i++) {
-          final a = at(v[i]), b = at(v[(i + 1) % v.length]);
-          out.add((ShapeProxy2D([a, b], 0), a, b));
+          out.add(
+            ShapeProxy2D([
+              at(v[i]),
+              at(v[(i + 1) % v.length]),
+            ], shape.thickness),
+          );
         }
       default:
         break;
@@ -604,9 +600,9 @@ Offset? _moverSolidSide(PhysicsBody body) {
   };
 }
 
-/// [body]'s bounds turned as it is: the box round its unturned bounds
-/// turned about its position (the proxies turn; its bounds do not).
-Rect _moverBoundsOf(PhysicsBody body) {
+/// [body]'s bounds round all its shapes, turned as it is: the box round its
+/// unturned bounds turned about its position.
+Rect _turnedBoundsOf(PhysicsBody body) {
   final position = body.position.toOffset();
   final bounds = body.getCompoundBounds(position);
   if (body.angle == 0) return bounds;
@@ -628,7 +624,7 @@ extension on PhysicsEngine {
   Iterable<PhysicsBody> _moverCandidates(Rect box, MoverFilter filter) sync* {
     for (final body in bodies) {
       if (!filter.passes(body)) continue;
-      if (!_moverBoundsOf(body).overlaps(box)) continue;
+      if (!_turnedBoundsOf(body).overlaps(box)) continue;
       yield body;
     }
   }
@@ -647,7 +643,7 @@ extension on PhysicsEngine {
     final planes = <MoverPlane>[];
     for (final body in _moverCandidates(box, filter)) {
       final solid = _moverSolidSide(body);
-      for (final (proxy, _, _) in _moverProxiesOf(body, position)) {
+      for (final proxy in _shapeProxiesOf(body, position)) {
         final d = ShapeDistance2D.between(proxy, mover);
         final totalRadius = proxy.radius + mover.radius;
         if (d.overlaps || d.distance > totalRadius) continue;
@@ -691,7 +687,7 @@ extension on PhysicsEngine {
       final solid = _moverSolidSide(body);
       // A one-way platform stops only a mover coming at it from its solid side.
       if (solid != null && _moverDot(translation, solid) >= 0) continue;
-      for (final (proxy, a, b) in _moverProxiesOf(body, position)) {
+      for (final proxy in _shapeProxiesOf(body, position)) {
         if (solid != null) {
           // Partway through it already (rising through, or carried into
           // it): passed over, as collideMover passes over it.
@@ -700,18 +696,6 @@ extension on PhysicsEngine {
               proxy.radius + mover.radius - d.distance > _moverOneWayDepth) {
             continue;
           }
-        }
-        if (a != null && b != null) {
-          // A chain is one-sided: a mover behind a segment passes it.
-          final edge = b - a;
-          var cx = 0.0, cy = 0.0;
-          for (final p in mover.points) {
-            cx += p.dx;
-            cy += p.dy;
-          }
-          final r =
-              Offset(cx / mover.points.length, cy / mover.points.length) - a;
-          if (r.dx * edge.dy - r.dy * edge.dx < 0) continue;
         }
         final hit = castShape2D(
           proxy,

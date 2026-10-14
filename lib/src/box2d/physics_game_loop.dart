@@ -30,6 +30,11 @@ class PhysicsGameLoop {
   /// Advance physics by [dt] seconds.
   ///
   /// Delegates to [Box2DWorld.step] which accumulates time internally and
-  /// fires as many 1/60 s fixed steps as needed.
-  int advance(double dt) => world.step(dt);
+  /// fires as many 1/60 s fixed steps as needed, calling [beforeStep] before
+  /// each and [onStep] after it.
+  int advance(
+    double dt, {
+    void Function()? beforeStep,
+    void Function()? onStep,
+  }) => world.step(dt, beforeStep: beforeStep, onStep: onStep);
 }

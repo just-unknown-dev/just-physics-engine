@@ -21,7 +21,9 @@ topics:
 
 environment:
   sdk: ^3.11.0
-  flutter: ">=3.41.0"
+  # 3.47 is the first Flutter that lets meta reach 1.19, which
+  # native_toolchain_c 0.19.3 (just_box_2d's and just_jolt's hooks) needs.
+  flutter: ">=3.47.0"
 
 dependencies:
   ffi: ^2.1.0

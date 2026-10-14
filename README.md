@@ -24,7 +24,7 @@ This package is part of the Just Game Engine workspace, but can be used independ
 ### Requirements
 
 - Dart SDK `^3.11.0`
-- Flutter `>=3.41.0`
+- Flutter `>=3.47.0`
 
 ### Add Dependency
 
@@ -292,7 +292,7 @@ void main() {
         build: false
   ```
 - Dart SDK: `^3.11.0`
-- Flutter: `>=3.41.0`
+- Flutter: `>=3.47.0`
 - Platforms: Android, iOS, Linux, macOS, Web, Windows
 - Native platforms use the Box2D FFI backend (Box2D v3.2, through just_box_2d): the library is found by its code asset id, not by file name. This package itself is plain Dart and compiles no C.
 - Web and WASM targets use the pure-Dart backend.

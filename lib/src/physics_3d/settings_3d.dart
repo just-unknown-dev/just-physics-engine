@@ -68,7 +68,7 @@ final class BodySettings3D {
   /// Discrete or continuous collision.
   final MotionQuality3D motionQuality;
 
-  /// Collision layer, 0–15 (see the engine's `PhysicsLayers`).
+  /// Collision layer, 0–15 (see [PhysicsWorldSettings3D.layerMasks]).
   final int layer;
 
   /// Whether it only reports what enters and leaves it, never colliding.
@@ -258,7 +258,8 @@ final class CharacterSettings3D {
   final int layer;
 
   /// Whether the rest of the world can see it: sensors detect it and rays
-  /// hit it. Without it a character is invisible to everything but itself.
+  /// hit it. Without it sensors and rays pass it by, though other
+  /// characters still collide with it.
   /// The body belongs to the character: it cannot be destroyed or joined
   /// on its own.
   final bool innerBody;
@@ -296,7 +297,7 @@ final class PhysicsWorldSettings3D {
 
   /// The collision grid, one row per layer: bit `b` of `layerMasks[a]` is
   /// set when layer `a` collides with layer `b`. A pair collides only when
-  /// both rows say so. The engine's `PhysicsLayers.maskOf` gives the rows.
+  /// both rows say so.
   final List<int> layerMasks;
 
   /// The most bodies it can hold.

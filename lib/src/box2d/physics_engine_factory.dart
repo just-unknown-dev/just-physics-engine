@@ -7,19 +7,16 @@ import '../physics_3d/physics_engine_3d.dart';
 import '_box2d_engine_native.dart'
     if (dart.library.js_interop) '_box2d_engine_stub.dart';
 
-/// Platform-conditional factory for the physics engine backend.
+/// The platform's physics engines.
 ///
-/// On native platforms (Android, iOS, Windows, macOS, Linux):
-///   returns [Box2DPhysicsEngine] — Box2D v3.2 via Dart FFI.
+/// [create] gives the 2-D engine: [Box2DPhysicsEngine] (Box2D v3.2 through
+/// just_box_2d) on native platforms, which falls back to the pure-Dart
+/// engine where the library is not built, and the pure-Dart [PhysicsEngine]
+/// on the web. [create3D] gives the 3-D engine, Jolt Physics, where it can
+/// run; [supports3D] and [unavailable3DReason] ask first.
 ///
-/// On Flutter Web:
-///   returns [PhysicsEngine] — pure-Dart fallback (no FFI on web).
-///
-/// Usage (the only required change in just_game_engine):
 /// ```dart
-/// // Before:  physics = PhysicsEngine();
-/// // After:
-/// physics = PhysicsEngineFactory.create();
+/// final physics = PhysicsEngineFactory.create()..initialize();
 /// ```
 abstract final class PhysicsEngineFactory {
   /// Create the best available physics engine for the current platform.

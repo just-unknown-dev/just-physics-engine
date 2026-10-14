@@ -65,14 +65,35 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   Pointer<Float>? _transformBuffer;
   int _bufferCapacity = 0;
 
-  // ── Dart-side sensor event accumulators ──────────────────────────────────
-  // Populated during update() immediately after b2w_step so events are never
-  // lost due to ticker ordering between the game loop and the demo ticker.
+  /// What was last pushed into each native body: its type, gravity scale
+  /// and mass (see [_pushSettings]).
+  final Map<PhysicsBody, ({int type, double gravityScale, double mass})>
+  _pushed = {};
 
+  /// The two bodies of each native joint: a removed body takes its joints
+  /// out of [joints], as Box2D destroys them with it.
+  final Map<Box2DJoint, (PhysicsBody, PhysicsBody)> _jointBodies = {};
+
+  // ── Events, read after every native step ──────────────────────────────────
+  // Box2D keeps only the last step's events, and a frame runs zero to five
+  // steps. Each step's events are read right after it ([_gatherStepEvents])
+  // and kept until the next update(), as the pure-Dart engine keeps its own:
+  // none lost when a frame runs two steps, none repeated when it runs none.
+
+  final List<(PhysicsBody, PhysicsBody, double, double)> _contactBeginBuf = [];
+  final List<(PhysicsBody, PhysicsBody)> _contactEndBuf = [];
   final List<({PhysicsBody sensor, PhysicsBody visitor})>
   _nativeSensorBeginBuf = [];
   final List<({PhysicsBody sensor, PhysicsBody visitor})> _nativeSensorEndBuf =
       [];
+
+  /// The bodies that moved, each with whether it fell asleep in the last
+  /// step it moved in.
+  final Map<PhysicsBody, bool> _moveBuf = {};
+
+  Pointer<Int64>? _eventBodies; // two handles
+  Pointer<Float>? _eventNormal; // nx, ny
+  Pointer<Int32>? _eventAsleep;
 
   // ── NativeCallable for cross-thread impact audio callback ──────────────────
 
@@ -108,6 +129,8 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
   @override
   void initialize() {
+    // Already running: keep the world, its bodies and buffers.
+    if (_nativeReady) return;
     // Reset buffer state so a second initialize() call (after dispose()) does
     // not skip re-allocation and cause a null assertion in _syncTransformsFromNative.
     _bufferCapacity = 0;
@@ -152,6 +175,16 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     _stepStopwatch
       ..reset()
       ..start();
+    _contactBeginBuf.clear();
+    _contactEndBuf.clear();
+    _nativeSensorBeginBuf.clear();
+    _nativeSensorEndBuf.clear();
+    _moveBuf.clear();
+
+    // The interpolator's previous pose is the one before this frame's steps;
+    // a frame that runs none keeps the pair it has.
+    final stepping =
+        _world!.alpha + deltaTime / PhysicsEngine.fixedDeltaTime >= 1.0;
 
     // Push this frame's ECS-set velocity into the native body before
     // stepping. PhysicsBody.velocity is a plain Dart field — writing it
@@ -175,7 +208,8 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     for (final entry in _bodyMap.entries) {
       final body = entry.key;
       final b2Body = entry.value;
-      b2Body.capturePrevious();
+      if (stepping) b2Body.capturePrevious();
+      _pushSettings(body, b2Body);
       // Sleeping bodies are skipped entirely. b2Body_SetLinearVelocity wakes
       // the body it is called on, so an unconditional push means a body can
       // never stay asleep on this backend — it would wake on the very next
@@ -194,81 +228,166 @@ class Box2DPhysicsEngine extends PhysicsEngine {
           box2d.b2w_setAngularVelocity(b2Body.handle, body.angularVelocity);
           b2Body.angularVelocity = body.angularVelocity;
         }
-        if (body.acceleration.x != 0.0 || body.acceleration.y != 0.0) {
-          box2d.b2w_applyForce(
-            b2Body.handle,
-            body.acceleration.x * body.mass,
-            body.acceleration.y * body.mass,
-          );
-          body.acceleration.setZero();
-        }
-        if (body.torque != 0.0) {
-          box2d.b2w_applyTorque(b2Body.handle, body.torque);
-          body.torque = 0.0;
-        }
+        // The pure-Dart engine uses a frame's forces up in its first step: on
+        // a frame with no step they wait for the next one.
+        if (stepping) _pushForces(body, b2Body);
       }
     }
 
-    _lastStepCount = _loop!.advance(deltaTime);
+    _lastStepCount = _loop!.advance(
+      deltaTime,
+      beforeStep: _runDartJoints,
+      onStep: _gatherStepEvents,
+    );
     _syncTransformsFromNative();
-    _lastContactCount = box2d.b2w_getContactBeginCount(_world!.handle);
-    _pumpNativeSensorEvents();
+    _lastContactCount = _contactBeginBuf.length;
 
     _stepStopwatch.stop();
     _lastStepMs = _stepStopwatch.elapsedMicroseconds / 1000.0;
   }
 
-  /// Drain native sensor events into Dart-side buffers immediately after
-  /// b2w_step, so events survive until [pollSensorBeginEvents] is called
-  /// regardless of ticker ordering.
-  void _pumpNativeSensorEvents() {
-    _nativeSensorBeginBuf.clear();
-    _nativeSensorEndBuf.clear();
+  /// Hands [body]'s accumulated force and torque to [b2Body] for the next
+  /// step. The force goes in as the change of velocity it makes over the
+  /// step (acceleration × dt, as an impulse), before the step moves the
+  /// body — as the pure-Dart engine integrates it. Box2D holding a force
+  /// across its sub-steps instead adds energy to a stiff spring (a mouse
+  /// joint swung further every time).
+  void _pushForces(PhysicsBody body, Box2DBody b2Body) {
+    if (body.acceleration.x != 0.0 || body.acceleration.y != 0.0) {
+      const dt = PhysicsEngine.fixedDeltaTime;
+      box2d.b2w_applyLinearImpulse(
+        b2Body.handle,
+        body.acceleration.x * body.mass * dt,
+        body.acceleration.y * body.mass * dt,
+      );
+      body.acceleration.setZero();
+    }
+    if (body.torque != 0.0) {
+      box2d.b2w_applyTorque(b2Body.handle, body.torque);
+      body.torque = 0.0;
+    }
+  }
 
-    final beginCount = box2d.b2w_getSensorBeginCount(_world!.handle);
-    if (beginCount > 0) {
-      final outSensor = calloc<Int64>();
-      final outVisitor = calloc<Int64>();
-      try {
-        for (int i = 0; i < beginCount; i++) {
-          box2d.b2w_getSensorBeginEvent(
-            _world!.handle,
-            i,
-            outSensor,
-            outVisitor,
-          );
-          final pSensor = _handleToBody[outSensor.value];
-          final pVisitor = _handleToBody[outVisitor.value];
-          if (pSensor != null && pVisitor != null) {
-            _nativeSensorBeginBuf.add((sensor: pSensor, visitor: pVisitor));
-          }
-        }
-      } finally {
-        calloc
-          ..free(outSensor)
-          ..free(outVisitor);
+  /// Before each native step, the joints with no native counterpart (the
+  /// mouse joint, and one made for a body this engine does not hold), as
+  /// the pure-Dart engine runs its joints every step; the forces they apply
+  /// go to their native bodies for that step.
+  void _runDartJoints() {
+    for (final joint in joints) {
+      if (joint is Box2DJoint) continue;
+      final held = [
+        for (final body in joint.bodies)
+          if (_bodyMap[body] case final b2Body?) (body, b2Body),
+      ];
+      // Where they are now: a frame's second step starts where its first
+      // left them.
+      for (final (body, b2Body) in held) {
+        _readNative(body, b2Body);
+      }
+      joint.applyConstraint(PhysicsEngine.fixedDeltaTime);
+      for (final (body, b2Body) in held) {
+        _pushForces(body, b2Body);
       }
     }
+  }
 
-    final endCount = box2d.b2w_getSensorEndCount(_world!.handle);
-    if (endCount > 0) {
-      final outSensor = calloc<Int64>();
-      final outVisitor = calloc<Int64>();
-      try {
-        for (int i = 0; i < endCount; i++) {
-          box2d.b2w_getSensorEndEvent(_world!.handle, i, outSensor, outVisitor);
-          final pSensor = _handleToBody[outSensor.value];
-          final pVisitor = _handleToBody[outVisitor.value];
-          if (pSensor != null && pVisitor != null) {
-            _nativeSensorEndBuf.add((sensor: pSensor, visitor: pVisitor));
-          }
-        }
-      } finally {
-        calloc
-          ..free(outSensor)
-          ..free(outVisitor);
+  Pointer<Int64>? _oneHandle;
+  Pointer<Float>? _onePose; // 7 floats, as _syncTransformsFromNative reads
+
+  /// [body]'s pose and velocity from [b2Body], between steps.
+  void _readNative(PhysicsBody body, Box2DBody b2Body) {
+    final handle = _oneHandle ??= calloc<Int64>();
+    final pose = _onePose ??= calloc<Float>(7);
+    handle.value = b2Body.handle;
+    box2d.b2w_bulkExtractTransforms(handle, pose, 1);
+    body.position.setValues(pose[0], pose[1]);
+    body.angle = pose[2];
+    body.velocity.setValues(pose[3], pose[4]);
+  }
+
+  /// Reads one native step's events into the frame's buffers (see
+  /// [_contactBeginBuf]).
+  void _gatherStepEvents() {
+    final w = _world!.handle;
+    final a = _eventBodies ??= calloc<Int64>(2);
+    final b = a + 1;
+    final normal = _eventNormal ??= calloc<Float>(2);
+    final asleep = _eventAsleep ??= calloc<Int32>();
+
+    for (var i = 0, n = box2d.b2w_getContactBeginCount(w); i < n; i++) {
+      box2d.b2w_getContactBeginEvent(w, i, a, b, normal, normal + 1);
+      final pa = _handleToBody[a.value], pb = _handleToBody[b.value];
+      if (pa != null && pb != null) {
+        _contactBeginBuf.add((pa, pb, normal[0], normal[1]));
       }
     }
+    for (var i = 0, n = box2d.b2w_getContactEndCount(w); i < n; i++) {
+      box2d.b2w_getContactEndEvent(w, i, a, b);
+      final pa = _handleToBody[a.value], pb = _handleToBody[b.value];
+      if (pa != null && pb != null) _contactEndBuf.add((pa, pb));
+    }
+    for (var i = 0, n = box2d.b2w_getSensorBeginCount(w); i < n; i++) {
+      box2d.b2w_getSensorBeginEvent(w, i, a, b);
+      final sensor = _handleToBody[a.value], visitor = _handleToBody[b.value];
+      if (sensor != null && visitor != null) {
+        _nativeSensorBeginBuf.add((sensor: sensor, visitor: visitor));
+      }
+    }
+    for (var i = 0, n = box2d.b2w_getSensorEndCount(w); i < n; i++) {
+      box2d.b2w_getSensorEndEvent(w, i, a, b);
+      final sensor = _handleToBody[a.value], visitor = _handleToBody[b.value];
+      if (sensor != null && visitor != null) {
+        _nativeSensorEndBuf.add((sensor: sensor, visitor: visitor));
+      }
+    }
+    for (var i = 0, n = box2d.b2w_getBodyMoveEventCount(w); i < n; i++) {
+      box2d.b2w_getBodyMoveEvent(w, i, a, asleep);
+      final body = _handleToBody[a.value];
+      if (body == null) continue;
+      _moveBuf
+        ..remove(body) // reported once, in the order it last moved
+        ..[body] = asleep.value != 0;
+    }
+  }
+
+  /// Brings [b2Body]'s type, gravity scale and mass up to [body]'s — plain
+  /// fields a game may write at any time — touching only what changed.
+  ///
+  /// Box2D derives mass from shape area × density, not from
+  /// [PhysicsBody.mass], so the configured mass is set on top. Dynamic
+  /// bodies only: Box2D gates gravity on inverse mass, not on body type, so
+  /// a positive mass on a kinematic body would make it fall.
+  void _pushSettings(PhysicsBody body, Box2DBody b2Body) {
+    final type = body.effectiveBodyType;
+    final scale = body.effectiveGravityScale;
+    final mass = type == BodyType.dynamic ? body.mass : 0.0;
+    final last = _pushed[body];
+    if (last != null &&
+        last.type == type.index &&
+        last.gravityScale == scale &&
+        last.mass == mass) {
+      return;
+    }
+    final h = b2Body.handle;
+    final retyped = last != null && last.type != type.index;
+    if (retyped) {
+      // Expensive: Box2D rebuilds the body's contacts and sums its mass
+      // from the shapes again (so the mass below is set again too).
+      b2Body.setType(type.index);
+      // A sleeping kinematic body ignores the velocity it is given, and the
+      // pure-Dart engine never puts one to sleep.
+      box2d.b2w_setBodySleepEnabled(
+        h,
+        type == BodyType.kinematic || !body.canSleep ? 0 : 1,
+      );
+    }
+    if (last == null ? scale != 1.0 : (retyped || last.gravityScale != scale)) {
+      box2d.b2w_setBodyGravityScale(h, scale);
+    }
+    if (mass > 0 && (last == null || retyped || last.mass != mass)) {
+      box2d.b2w_setBodyMass(h, mass);
+    }
+    _pushed[body] = (type: type.index, gravityScale: scale, mass: mass);
   }
 
   /// Add a [PhysicsBody] to the simulation.
@@ -328,13 +447,6 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     if (body.fixedRotation) {
       box2d.b2w_setBodyFixedRotation(b2Body.handle, 1);
     }
-    if (body.effectiveGravityScale != 1.0) {
-      // Native default is already 1.0 — only call out when it differs, to
-      // avoid an unnecessary FFI round-trip per body. effectiveGravityScale
-      // folds together the useGravity switch and the per-body multiplier that
-      // variable jump height is built on.
-      box2d.b2w_setBodyGravityScale(b2Body.handle, body.effectiveGravityScale);
-    }
     if (!body.isAwake) {
       // Native bodies default to awake — only call out when starting asleep.
       // _syncTransformsFromNative() reads the resulting state back every
@@ -344,18 +456,10 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
     _addShapeFixture(b2Body, body);
 
-    if (type == BodyType.dynamic) {
-      // Box2D derives mass from shape area × density (always 1.0/0.0 above),
-      // not from PhysicsBody.mass — override it so force/impulse magnitudes
-      // and collision response match what the caller configured.
-      //
-      // DYNAMIC ONLY. Box2D gates gravity on inverse mass, not on body type
-      // (solver.c: `gravityScale = sim->invMass > 0 ? sim->gravityScale : 0`),
-      // so forcing a positive mass onto a kinematic body gives it a non-zero
-      // inverse mass and it starts free-falling — silently turning every
-      // moving platform into a falling one.
-      box2d.b2w_setBodyMass(b2Body.handle, body.mass);
-    }
+    // Gravity scale (it folds together useGravity and the per-body
+    // multiplier variable jump height is built on) and the configured mass,
+    // after the shapes Box2D sums its own from.
+    _pushSettings(body, b2Body);
 
     // Collision filter can be applied post-creation.
     box2d.b2w_setBodyFilter(
@@ -380,7 +484,9 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     if (body.angularDamping != 0.0) {
       box2d.b2w_setBodyAngularDamping(b2Body.handle, body.angularDamping);
     }
-    if (!body.canSleep) {
+    // A sleeping kinematic body ignores the velocity it is given, and the
+    // pure-Dart engine never puts one to sleep.
+    if (!body.canSleep || type == BodyType.kinematic) {
       box2d.b2w_setBodySleepEnabled(b2Body.handle, 0);
     }
 
@@ -414,20 +520,9 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     final b2Body = _bodyMap[body];
     if (b2Body == null) return;
 
-    final target = body.effectiveBodyType;
-    // b2Body_SetType rebuilds contacts and recomputes mass properties, so it
-    // is far too expensive to call every frame — and PhysicsSystem re-pushes
-    // every other body field on every frame, which makes an unguarded setter
-    // exactly that. Skip when nothing actually changed.
-    if (b2Body.typeIndex == target.index) return;
-
-    b2Body.setType(target.index);
-    // Changing type RESETS the mass override back to shape area x density,
-    // so the configured mass has to be re-applied or the body silently gets
-    // a different weight than the caller asked for.
-    if (target == BodyType.dynamic) {
-      box2d.b2w_setBodyMass(b2Body.handle, body.mass);
-    }
+    // Only on a change: b2Body_SetType is expensive, and PhysicsSystem
+    // re-pushes every body field every frame.
+    _pushSettings(body, b2Body);
   }
 
   @override
@@ -436,7 +531,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     if (!_nativeReady) return;
     final b2Body = _bodyMap[body];
     if (b2Body == null) return;
-    box2d.b2w_setBodyGravityScale(b2Body.handle, body.effectiveGravityScale);
+    _pushSettings(body, b2Body);
   }
 
   @override
@@ -522,7 +617,10 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     if (!_nativeReady) return;
     final b2Body = _bodyMap[body];
     if (b2Body == null) return;
-    box2d.b2w_setBodySleepEnabled(b2Body.handle, canSleep ? 1 : 0);
+    box2d.b2w_setBodySleepEnabled(
+      b2Body.handle,
+      canSleep && body.effectiveBodyType != BodyType.kinematic ? 1 : 0,
+    );
     if (!canSleep) box2d.b2w_setBodyAwake(b2Body.handle, 1);
   }
 
@@ -582,12 +680,12 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   // Out-parameter buffers are allocated once per engine rather than per cast —
   // a calloc/free pair on every ground probe is real cost at 60 Hz.
 
-  /// Maximum hits one [castRayAll]/[queryAABB] call can report.
-  ///
-  /// Box2D reports one hit per *shape*, so a compound body can occupy several
-  /// slots. Beyond this the cast is terminated early rather than growing the
-  /// buffer mid-query.
-  static const int _maxQueryHits = 32;
+  /// How many hits one native [castRayAll]/[queryAABB] call has room for.
+  /// Box2D reports one hit per *shape*, so a compound body can take several;
+  /// a call that fills the room is asked again with twice as much, up to
+  /// [_maxQueryCapacity].
+  int _queryCapacity = 32;
+  static const int _maxQueryCapacity = 4096;
 
   Pointer<Int64>? _queryBodyBuffer; // _maxQueryHits handles
   Pointer<Float>? _queryDataBuffer; // _maxQueryHits * 5 floats
@@ -595,10 +693,27 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   Pointer<Float>? _rayFloatOut; // [px, py, nx, ny, fraction]
 
   void _ensureQueryBuffers() {
-    _queryBodyBuffer ??= calloc<Int64>(_maxQueryHits);
-    _queryDataBuffer ??= calloc<Float>(_maxQueryHits * 5);
+    _queryBodyBuffer ??= calloc<Int64>(_queryCapacity);
+    _queryDataBuffer ??= calloc<Float>(_queryCapacity * 5);
     _rayBodyOut ??= calloc<Int64>();
     _rayFloatOut ??= calloc<Float>(5);
+  }
+
+  /// Whether a query that wrote [count] hits may have run out of room: if
+  /// so the buffers grow, and the caller asks again.
+  bool _queryFull(int count) {
+    if (count < _queryCapacity || _queryCapacity >= _maxQueryCapacity) {
+      return false;
+    }
+    final qb = _queryBodyBuffer;
+    final qd = _queryDataBuffer;
+    _queryBodyBuffer = null;
+    _queryDataBuffer = null;
+    if (qb != null) calloc.free(qb);
+    if (qd != null) calloc.free(qd);
+    _queryCapacity *= 2;
+    _ensureQueryBuffers();
+    return true;
   }
 
   void _freeQueryBuffers() {
@@ -623,11 +738,27 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     if (mp != null) calloc.free(mp);
     if (ml != null) calloc.free(ml);
     if (mb != null) calloc.free(mb);
+    final eb = _eventBodies;
+    final en = _eventNormal;
+    final ea = _eventAsleep;
+    final oh = _oneHandle;
+    final op = _onePose;
+    _eventBodies = null;
+    _eventNormal = null;
+    _eventAsleep = null;
+    _oneHandle = null;
+    _onePose = null;
+    if (eb != null) calloc.free(eb);
+    if (en != null) calloc.free(en);
+    if (ea != null) calloc.free(ea);
+    if (oh != null) calloc.free(oh);
+    if (op != null) calloc.free(op);
   }
 
   /// Box2D's query filter cannot express "skip these specific bodies", only
   /// category/mask. So when [exclude] is non-empty we have to collect all hits
   /// and filter in Dart; otherwise the cheaper closest-hit call is enough.
+  /// Either way a shape the ray starts inside is passed over.
   @override
   RayBodyHit? castRay(Ray ray, {Set<PhysicsBody>? exclude}) {
     if (!_nativeReady) return super.castRay(ray, exclude: exclude);
@@ -678,30 +809,39 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     final origin = ray.origin;
     final translation = ray.direction * ray.maxDistance;
 
-    final count = box2d.b2w_castRayAll(
-      _world!.handle,
-      origin.dx,
-      origin.dy,
-      translation.dx,
-      translation.dy,
-      _allCategories,
-      _allCategories,
-      _queryBodyBuffer!,
-      _queryDataBuffer!,
-      _maxQueryHits,
-    );
+    int count;
+    do {
+      count = box2d.b2w_castRayAll(
+        _world!.handle,
+        origin.dx,
+        origin.dy,
+        translation.dx,
+        translation.dy,
+        _allCategories,
+        _allCategories,
+        _queryBodyBuffer!,
+        _queryDataBuffer!,
+        _queryCapacity,
+      );
+    } while (_queryFull(count));
 
+    // One hit per shape, in the tree's order: nearest first, then only a
+    // body's nearest hit. A shape the ray starts inside is passed over, as
+    // [castRay] passes it (Box2D reports it at fraction 0 with no normal).
     final data = _queryDataBuffer!;
+    final order = List<int>.generate(count, (i) => i)
+      ..sort((i, j) => data[i * 5 + 4].compareTo(data[j * 5 + 4]));
     final hits = <RayBodyHit>[];
-    // Box2D reports one hit per shape, so a compound body appears once per
-    // fixture — keep only its nearest hit.
     final seen = <PhysicsBody>{};
-    for (var i = 0; i < count; i++) {
+    for (final i in order) {
+      final base = i * 5;
+      if (data[base + 4] == 0 && data[base + 2] == 0 && data[base + 3] == 0) {
+        continue;
+      }
       final body = _handleToBody[_queryBodyBuffer![i]];
       if (body == null) continue;
       if (exclude != null && exclude.contains(body)) continue;
       if (!seen.add(body)) continue;
-      final base = i * 5;
       hits.add(
         RayBodyHit(
           body: body,
@@ -711,9 +851,6 @@ class Box2DPhysicsEngine extends PhysicsEngine {
         ),
       );
     }
-
-    // Native order is BVH traversal order, not distance order.
-    hits.sort((a, b) => a.distance.compareTo(b.distance));
     return hits;
   }
 
@@ -773,15 +910,26 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       _maxMoverPlanes,
     );
     final f = _moverPlanes!;
-    return [
-      for (var i = 0; i < n; i++)
-        MoverPlane(
-          normal: Offset(f[5 * i], f[5 * i + 1]),
-          offset: f[5 * i + 2],
-          point: Offset(f[5 * i + 3] + position.dx, f[5 * i + 4] + position.dy),
-          body: _handleToBody[_moverBodies![i]],
-        ),
-    ];
+    final planes = <MoverPlane>[];
+    for (var i = 0; i < n; i++) {
+      final plane = MoverPlane(
+        normal: Offset(f[5 * i], f[5 * i + 1]),
+        offset: f[5 * i + 2],
+        point: Offset(f[5 * i + 3] + position.dx, f[5 * i + 4] + position.dy),
+        body: _handleToBody[_moverBodies![i]],
+      );
+      // A chain with no thickness is in Box2D twice, once each way round
+      // (see _addSingleShape), so the same plane can come twice.
+      final twice = planes.any(
+        (p) =>
+            p.body == plane.body &&
+            (p.normal - plane.normal).distanceSquared < 1e-8 &&
+            (p.offset - plane.offset).abs() < 1e-4 &&
+            (p.point - plane.point).distanceSquared < 1e-6,
+      );
+      if (!twice) planes.add(plane);
+    }
+    return planes;
   }
 
   @override
@@ -815,17 +963,20 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     if (!_nativeReady) return super.queryAABB(rect);
 
     _ensureQueryBuffers();
-    final count = box2d.b2w_queryAABB(
-      _world!.handle,
-      rect.left,
-      rect.top,
-      rect.right,
-      rect.bottom,
-      _allCategories,
-      _allCategories,
-      _queryBodyBuffer!,
-      _maxQueryHits,
-    );
+    int count;
+    do {
+      count = box2d.b2w_queryAABB(
+        _world!.handle,
+        rect.left,
+        rect.top,
+        rect.right,
+        rect.bottom,
+        _allCategories,
+        _allCategories,
+        _queryBodyBuffer!,
+        _queryCapacity,
+      );
+    } while (_queryFull(count));
 
     final result = <PhysicsBody>[];
     for (var i = 0; i < count; i++) {
@@ -844,12 +995,26 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     final b2Body = _bodyMap.remove(body);
     if (b2Body == null) return;
     _handleToBody.remove(b2Body.handle);
+    _pushed.remove(body);
+    // Box2D destroys the body's joints with it; they, and the Dart joints on
+    // it, leave [joints] too.
+    for (final joint in joints) {
+      final pair = _jointBodies[joint];
+      final holds = pair != null
+          ? pair.$1 == body || pair.$2 == body
+          : joint.bodies.contains(body);
+      if (holds) removeJoint(joint);
+    }
     b2Body.destroy();
   }
 
   @override
   void renderDebug(Canvas canvas, Size size) {
     if (!debugRender) return;
+    if (!_nativeReady) {
+      super.renderDebug(canvas, size);
+      return;
+    }
 
     final strokePaint = Paint()
       ..color = const Color(0xFF00FF88)
@@ -933,7 +1098,9 @@ class Box2DPhysicsEngine extends PhysicsEngine {
           ...super
               .stats, // pure-Dart keys with zero values when native is running
           'bodyCount': _bodyMap.length,
-          'awakeBodies': _bodyMap.length, // all native bodies are active
+          'awakeBodies': _bodyMap.keys
+              .where((b) => !b.isStatic && b.isAwake)
+              .length,
           'lastStepCount': _lastStepCount,
           'lastStepMs': _lastStepMs,
           'contactCount': _lastContactCount,
@@ -966,16 +1133,11 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
   // ── Contact event polling ─────────────────────────────────────────────────
   //
-  // CONTRACT: call [pollContactBeginEvents] exactly once per frame, after
-  // [update] and before the next [update] call. The native buffer is cleared
-  // at the start of each step, so events not polled within the same frame are
-  // permanently lost.
-  //
-  // In just_game_engine this is called from Box2DCollisionSystem (priority 88),
-  // which runs after physics (priority 90) and before rendering (priority < 50).
-  // Any caller must maintain the same relative ordering.
+  // Every step's events are read right after it and kept until the next
+  // [update] (see [_gatherStepEvents]), as the pure-Dart engine keeps its
+  // own: poll them after [update], before the next one.
 
-  /// Iterate all begin-touch contact events from the last step.
+  /// Iterate all begin-touch contact events from the last [update].
   ///
   /// [fn] receives the two colliding [PhysicsBody] objects and the contact
   /// normal (nx, ny). Calls [fn] only for pairs where both bodies are tracked.
@@ -987,39 +1149,13 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       super.pollContactBeginEvents(fn);
       return;
     }
-    final count = box2d.b2w_getContactBeginCount(_world!.handle);
-    if (count == 0) return;
-
-    final outA = calloc<Int64>();
-    final outB = calloc<Int64>();
-    final outNx = calloc<Float>();
-    final outNy = calloc<Float>();
-    try {
-      for (int i = 0; i < count; i++) {
-        box2d.b2w_getContactBeginEvent(
-          _world!.handle,
-          i,
-          outA,
-          outB,
-          outNx,
-          outNy,
-        );
-        final pA = _handleToBody[outA.value];
-        final pB = _handleToBody[outB.value];
-        if (pA != null && pB != null) {
-          fn(pA, pB, outNx.value.toDouble(), outNy.value.toDouble());
-        }
-      }
-    } finally {
-      calloc
-        ..free(outA)
-        ..free(outB)
-        ..free(outNx)
-        ..free(outNy);
+    for (final (a, b, nx, ny) in _contactBeginBuf) {
+      fn(a, b, nx, ny);
     }
   }
 
-  /// Iterate all end-touch (separation) contact events from the last step.
+  /// Iterate all end-touch (separation) contact events from the last
+  /// [update].
   ///
   /// Unlike [pollContactBeginEvents] this has no contact normal — Box2D's
   /// end-touch event only reports which bodies stopped touching.
@@ -1029,24 +1165,8 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       super.pollContactEndEvents(fn);
       return;
     }
-    final count = box2d.b2w_getContactEndCount(_world!.handle);
-    if (count == 0) return;
-
-    final outA = calloc<Int64>();
-    final outB = calloc<Int64>();
-    try {
-      for (int i = 0; i < count; i++) {
-        box2d.b2w_getContactEndEvent(_world!.handle, i, outA, outB);
-        final pA = _handleToBody[outA.value];
-        final pB = _handleToBody[outB.value];
-        if (pA != null && pB != null) {
-          fn(pA, pB);
-        }
-      }
-    } finally {
-      calloc
-        ..free(outA)
-        ..free(outB);
+    for (final (a, b) in _contactEndBuf) {
+      fn(a, b);
     }
   }
 
@@ -1060,23 +1180,8 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       super.pollBodyMoveEvents(fn);
       return;
     }
-    final count = box2d.b2w_getBodyMoveEventCount(_world!.handle);
-    if (count == 0) return;
-
-    final outBody = calloc<Int64>();
-    final outSleep = calloc<Int32>();
-    try {
-      for (int i = 0; i < count; i++) {
-        box2d.b2w_getBodyMoveEvent(_world!.handle, i, outBody, outSleep);
-        final body = _handleToBody[outBody.value];
-        if (body != null) {
-          fn(body, fellAsleep: outSleep.value != 0);
-        }
-      }
-    } finally {
-      calloc
-        ..free(outBody)
-        ..free(outSleep);
+    for (final MapEntry(key: body, value: fellAsleep) in _moveBuf.entries) {
+      fn(body, fellAsleep: fellAsleep);
     }
   }
 
@@ -1132,6 +1237,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       worldAnchor,
     );
     addJoint(joint);
+    _jointBodies[joint] = (bodyA, bodyB);
     return joint;
   }
 
@@ -1153,6 +1259,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       axis,
     );
     addJoint(joint);
+    _jointBodies[joint] = (bodyA, bodyB);
     return joint;
   }
 
@@ -1174,6 +1281,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       maxLength,
     );
     addJoint(joint);
+    _jointBodies[joint] = (bodyA, bodyB);
     return joint;
   }
 
@@ -1193,6 +1301,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       worldAnchor,
     );
     addJoint(joint);
+    _jointBodies[joint] = (bodyA, bodyB);
     return joint;
   }
 
@@ -1214,6 +1323,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       axis,
     );
     addJoint(joint);
+    _jointBodies[joint] = (bodyA, bodyB);
     return joint;
   }
 
@@ -1270,11 +1380,16 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   }
 
   @override
+  JointConstraint addPrismaticJoint(PhysicsBody a, PhysicsBody b, Offset axis) {
+    final anchor = Offset(b.position.x, b.position.y);
+    final native = createPrismaticJoint(a, b, anchor, axis);
+    return native ?? super.addPrismaticJoint(a, b, axis);
+  }
+
+  @override
   JointConstraint addWheelJoint(PhysicsBody a, PhysicsBody b, Offset axis) {
-    final anchor = Offset(
-      (a.position.x + b.position.x) / 2,
-      (a.position.y + b.position.y) / 2,
-    );
+    // The wheel turns about its own centre, as the pure-Dart wheel does.
+    final anchor = Offset(b.position.x, b.position.y);
     final native = createWheelJoint(a, b, anchor, axis);
     return native ?? super.addWheelJoint(a, b, axis);
   }
@@ -1283,6 +1398,16 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   void destroyJoint(Box2DJoint joint) {
     joint.destroy();
     removeJoint(joint);
+  }
+
+  /// Removes [joint]; a native one is destroyed, so its bodies come apart.
+  @override
+  void removeJoint(JointConstraint joint) {
+    if (joint is Box2DJoint) {
+      joint.destroy();
+      _jointBodies.remove(joint);
+    }
+    super.removeJoint(joint);
   }
 
   // ── Impact callback ───────────────────────────────────────────────────────
@@ -1317,7 +1442,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
   /// Render interpolation alpha from the current frame (for ECS bridge use).
   @override
-  double get alpha => _loop?.alpha ?? 1.0;
+  double get alpha => _nativeReady ? _loop!.alpha : super.alpha;
 
   // ── Dispose ───────────────────────────────────────────────────────────────
 
@@ -1345,6 +1470,13 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     }
     _bodyMap.clear();
     _handleToBody.clear();
+    _pushed.clear();
+    _jointBodies.clear();
+    _contactBeginBuf.clear();
+    _contactEndBuf.clear();
+    _nativeSensorBeginBuf.clear();
+    _nativeSensorEndBuf.clear();
+    _moveBuf.clear();
 
     // Free zero-copy buffers. calloc.free() is required — Pointer has no .free().
     final hb = _handleBuffer;
@@ -1374,10 +1506,11 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   // ── Private helpers ───────────────────────────────────────────────────────
 
   void _addShapeFixture(Box2DBody b2Body, PhysicsBody body) {
-    // Zero density for static and kinematic bodies: Box2D would otherwise
-    // derive a positive mass from shape area, and a positive inverse mass is
-    // what makes it apply gravity (see the note in addBody).
-    final density = body.effectiveBodyType == BodyType.dynamic ? 1.0 : 0.0;
+    // Box2D gives static and kinematic bodies no mass whatever their shapes'
+    // density, so every shape has density 1: a body that turns dynamic later
+    // then has its shapes' mass and rotational inertia, which
+    // b2w_setBodyMass rescales to the configured mass.
+    const density = 1.0;
     _addSingleShape(
       b2Body.handle,
       body.shape,
@@ -1426,30 +1559,55 @@ class Box2DPhysicsEngine extends PhysicsEngine {
         restitution,
       );
     } else if (shape is SegmentShape) {
-      box2d.b2w_addSegmentShape(
+      // The pure-Dart engine collides a segment as a capsule [thickness]
+      // round it, so this one does too.
+      _addLine(
         handle,
-        shape.point1.dx,
-        shape.point1.dy,
-        shape.point2.dx,
-        shape.point2.dy,
+        shape.point1,
+        shape.point2,
+        shape.thickness,
         density,
         friction,
         restitution,
       );
     } else if (shape is ChainShape) {
+      if (shape.thickness > 0) {
+        // A capsule per segment, [thickness] round it, as the pure-Dart
+        // engine collides each one: solid from both sides, and smooth where
+        // two meet (their round ends overlap).
+        final v = shape.vertices;
+        final n = shape.loop && v.length > 2 ? v.length : v.length - 1;
+        for (var i = 0; i < n; i++) {
+          _addLine(
+            handle,
+            v[i],
+            v[(i + 1) % v.length],
+            shape.thickness,
+            density,
+            friction,
+            restitution,
+          );
+        }
+        return;
+      }
+      // A Box2D chain collides on one side only, the right of its direction.
+      // The pure-Dart engine's collides on both, so the chain goes in twice,
+      // once each way round.
       final pts = _chainPoints(shape);
       if (pts == null) return;
       final ptr = calloc<Float>(pts.length);
       try {
-        ptr.asTypedList(pts.length).setAll(0, pts);
-        box2d.b2w_addChainShape(
-          handle,
-          ptr,
-          pts.length ~/ 2,
-          shape.loop ? 1 : 0,
-          friction,
-          restitution,
-        );
+        for (final points in [pts, _reversedPoints(pts)]) {
+          ptr.asTypedList(pts.length).setAll(0, points);
+          box2d.b2w_addChainShape(
+            handle,
+            ptr,
+            pts.length ~/ 2,
+            shape.loop ? 1 : 0,
+            friction,
+            restitution,
+          );
+        }
       } finally {
         calloc.free(ptr);
       }
@@ -1504,6 +1662,54 @@ class Box2DPhysicsEngine extends PhysicsEngine {
         calloc.free(ptr);
       }
     }
+  }
+
+  /// A line from [p1] to [p2]: a capsule [radius] round it, or a bare
+  /// segment when [radius] is 0.
+  static void _addLine(
+    int handle,
+    Offset p1,
+    Offset p2,
+    double radius,
+    double density,
+    double friction,
+    double restitution,
+  ) {
+    if (radius > 0) {
+      box2d.b2w_addCapsuleShape(
+        handle,
+        p1.dx,
+        p1.dy,
+        p2.dx,
+        p2.dy,
+        radius,
+        density,
+        friction,
+        restitution,
+      );
+    } else {
+      box2d.b2w_addSegmentShape(
+        handle,
+        p1.dx,
+        p1.dy,
+        p2.dx,
+        p2.dy,
+        density,
+        friction,
+        restitution,
+      );
+    }
+  }
+
+  /// [points] (x, y pairs) in the opposite order.
+  static Float32List _reversedPoints(Float32List points) {
+    final n = points.length ~/ 2;
+    final out = Float32List(points.length);
+    for (var i = 0; i < n; i++) {
+      out[i * 2] = points[(n - 1 - i) * 2];
+      out[i * 2 + 1] = points[(n - 1 - i) * 2 + 1];
+    }
+    return out;
   }
 
   /// [shape]'s points as Box2D takes a chain: at least 4, and an open

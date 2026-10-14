@@ -3,28 +3,130 @@ part of 'physics_engine.dart';
 /// Enumeration of joint types.
 enum JointType { distance, mouse, weld, revolute, prismatic, wheel }
 
-/// Base class for all Dart-fallback joint constraints.
+/// Base class for all joint constraints.
 ///
-/// Joints are applied by [PhysicsEngine] after collision resolution each step.
-/// Subclasses implement [applyConstraint] to enforce their specific constraint.
+/// The pure-Dart engine applies each joint once per sub-step, after
+/// collisions. A joint moves its bodies back toward what it allows (half the
+/// error each step) and takes away the relative velocity it forbids, so
+/// gravity cannot pile up against it. The engine is translational — shapes
+/// do not turn in collisions — so joints move bodies, and set the angle a
+/// body is drawn at where they decide it (a hinged body turns as it swings).
+/// [Box2DPhysicsEngine] solves its own joints natively.
 abstract class JointConstraint {
   final JointType type;
 
   JointConstraint(this.type);
 
+  /// The bodies the joint holds; empty where it does not say.
+  List<PhysicsBody> get bodies => const [];
+
   /// Apply the constraint for one physics step.
   void applyConstraint(double dt);
 }
 
+/// How much of a joint's position error the pure-Dart engine takes away in
+/// a step.
+const double _jointCorrection = 0.5;
+
+/// How close to a limit counts as at it: Box2D's linear slop (half a unit).
+const double _jointSlop = 0.5;
+
+/// Whether both of a joint's bodies take part in the simulation.
+bool _jointLive(PhysicsBody a, PhysicsBody b) => a.isActive && b.isActive;
+
+/// [b] moved away from [a] along ([nx], [ny]) by [amount] (negative: toward
+/// it), shared by their solver masses.
+void _jointSeparate(
+  PhysicsBody a,
+  PhysicsBody b,
+  double nx,
+  double ny,
+  double amount,
+) {
+  final ia = a.solverInverseMass, ib = b.solverInverseMass;
+  final k = ia + ib;
+  if (k == 0) return;
+  final s = amount / k;
+  a.position.x -= nx * s * ia;
+  a.position.y -= ny * s * ia;
+  b.position.x += nx * s * ib;
+  b.position.y += ny * s * ib;
+}
+
+/// An impulse [lambda] along ([nx], [ny]): [b] pushed along it, [a] against.
+void _jointPush(
+  PhysicsBody a,
+  PhysicsBody b,
+  double nx,
+  double ny,
+  double lambda,
+) {
+  final ia = a.solverInverseMass, ib = b.solverInverseMass;
+  a.velocity.x -= nx * lambda * ia;
+  a.velocity.y -= ny * lambda * ia;
+  b.velocity.x += nx * lambda * ib;
+  b.velocity.y += ny * lambda * ib;
+}
+
+/// Takes away [b]'s velocity relative to ([pvx], [pvy]) — the velocity of the
+/// point of [a] it is held to — shared by their solver masses.
+void _jointHold(PhysicsBody a, PhysicsBody b, double pvx, double pvy) {
+  final ia = a.solverInverseMass, ib = b.solverInverseMass;
+  final k = ia + ib;
+  if (k == 0) return;
+  final rvx = b.velocity.x - pvx, rvy = b.velocity.y - pvy;
+  a.velocity.x += rvx * ia / k;
+  a.velocity.y += rvy * ia / k;
+  b.velocity.x -= rvx * ib / k;
+  b.velocity.y -= rvy * ib / k;
+}
+
+/// Inverse rotational inertia as the joints use it: none for a body that is
+/// not dynamic, or cannot turn.
+double _jointInverseInertia(PhysicsBody b) =>
+    b.isDynamic && !b.fixedRotation ? b.inverseInertia : 0.0;
+
+/// A spin impulse driving `ωB − ωA` toward [speed], at most [maxTorque] × dt.
+void _jointSpinMotor(
+  PhysicsBody a,
+  PhysicsBody b,
+  double speed,
+  double maxTorque,
+  double dt,
+) {
+  final ia = _jointInverseInertia(a), ib = _jointInverseInertia(b);
+  final k = ia + ib;
+  if (k == 0) return;
+  final most = maxTorque * dt;
+  final impulse = ((speed - (b.angularVelocity - a.angularVelocity)) / k).clamp(
+    -most,
+    most,
+  );
+  a.angularVelocity -= impulse * ia;
+  b.angularVelocity += impulse * ib;
+}
+
+/// ([x], [y]) turned by [angle].
+(double, double) _jointTurn(double x, double y, double angle) {
+  final c = math.cos(angle), s = math.sin(angle);
+  return (c * x - s * y, s * x + c * y);
+}
+
 // ── Distance Joint ─────────────────────────────────────────────────────────
 
-/// Maintains a target distance (range [minLength, maxLength]) between two bodies.
+/// Keeps two bodies' centres [minLength] to [maxLength] apart.
 ///
-/// An optional spring (stiffness, damping) makes the constraint soft; set
-/// stiffness to 0 for a rigid distance limit.
+/// Equal lengths make a rigid rod; a range is a rope, free inside it and
+/// stopped at its ends. A [stiffness] above 0 makes it a spring instead:
+/// outside the range it pulls back with an acceleration of [stiffness] ×
+/// the distance out, and [damping] × the speed apart slows it, whatever the
+/// masses.
 class DistanceJoint extends JointConstraint {
   final PhysicsBody bodyA;
   final PhysicsBody bodyB;
+
+  @override
+  List<PhysicsBody> get bodies => [bodyA, bodyB];
 
   double minLength;
   double maxLength;
@@ -45,47 +147,43 @@ class DistanceJoint extends JointConstraint {
 
   @override
   void applyConstraint(double dt) {
+    if (!_jointLive(bodyA, bodyB)) return;
+    final k = bodyA.solverInverseMass + bodyB.solverInverseMass;
+    if (k == 0) return;
     final dx = bodyB.position.x - bodyA.position.x;
     final dy = bodyB.position.y - bodyA.position.y;
     final dist = math.sqrt(dx * dx + dy * dy);
     if (dist < 1e-8) return;
+    final nx = dx / dist, ny = dy / dist;
+    final relVel =
+        (bodyB.velocity.x - bodyA.velocity.x) * nx +
+        (bodyB.velocity.y - bodyA.velocity.y) * ny;
 
-    final nx = dx / dist;
-    final ny = dy / dist;
+    // How far outside the range: positive too far apart, negative too close.
+    final violation = dist < minLength
+        ? dist - minLength
+        : dist > maxLength
+        ? dist - maxLength
+        : 0.0;
 
-    double violation = 0.0;
-    if (dist < minLength) {
-      violation = dist - minLength;
-    } else if (dist > maxLength) {
-      violation = dist - maxLength;
-    }
-
-    final totalInvMass = bodyA.inverseMass + bodyB.inverseMass;
-    if (totalInvMass < 1e-10) return;
-
-    if (violation.abs() > 1e-6) {
-      const baumgarte = 0.25;
-      final correction = violation * baumgarte / totalInvMass;
-      bodyA.position.x += nx * correction * bodyA.inverseMass;
-      bodyA.position.y += ny * correction * bodyA.inverseMass;
-      bodyB.position.x -= nx * correction * bodyB.inverseMass;
-      bodyB.position.y -= ny * correction * bodyB.inverseMass;
-    }
-
-    // Soft spring impulse: positive violation means too far → pull together.
-    // impulse > 0: move A in +nx (toward B), move B in -nx (toward A).
     if (stiffness > 0) {
-      final relVelN =
-          (bodyB.velocity.x - bodyA.velocity.x) * nx +
-          (bodyB.velocity.y - bodyA.velocity.y) * ny;
-      final springForce = stiffness * violation;
-      final dampForce = damping * relVelN;
-      final impulse = (springForce - dampForce) * dt / totalInvMass;
-      bodyA.velocity.x += nx * impulse * bodyA.inverseMass;
-      bodyA.velocity.y += ny * impulse * bodyA.inverseMass;
-      bodyB.velocity.x -= nx * impulse * bodyB.inverseMass;
-      bodyB.velocity.y -= ny * impulse * bodyB.inverseMass;
+      _jointPush(
+        bodyA,
+        bodyB,
+        nx,
+        ny,
+        -(stiffness * violation + damping * relVel) * dt / k,
+      );
+      return;
     }
+
+    if (violation != 0) {
+      _jointSeparate(bodyA, bodyB, nx, ny, -violation * _jointCorrection);
+    }
+    // At an end, the speed that would carry it further out goes.
+    final outward = dist >= maxLength - _jointSlop && relVel > 0;
+    final inward = dist <= minLength + _jointSlop && relVel < 0;
+    if (outward || inward) _jointPush(bodyA, bodyB, nx, ny, -relVel / k);
   }
 }
 
@@ -93,9 +191,13 @@ class DistanceJoint extends JointConstraint {
 
 /// Pulls a body toward a target point using a spring force.
 ///
-/// Typical use: dragging bodies with a pointer.
+/// Typical use: dragging bodies with a pointer. It is a Dart joint on both
+/// backends: on the native one its force goes into the native body.
 class MouseJoint extends JointConstraint {
   final PhysicsBody body;
+
+  @override
+  List<PhysicsBody> get bodies => [body];
 
   /// World-space target position (update each frame to drag the body).
   final Vector2 target;
@@ -121,7 +223,7 @@ class MouseJoint extends JointConstraint {
 
   @override
   void applyConstraint(double dt) {
-    if (body.mass <= 0) return;
+    if (!body.isDynamic || !body.isActive) return;
     final dx = target.x - body.position.x;
     final dy = target.y - body.position.y;
 
@@ -145,85 +247,90 @@ class MouseJoint extends JointConstraint {
 
 // ── Weld Joint ─────────────────────────────────────────────────────────────
 
-/// Rigidly locks two bodies together by strongly correcting their relative
-/// position and velocity each step.
+/// Holds bodyB where it was against bodyA when the joint was made, turning
+/// with bodyA, at the same angle to it.
 class WeldJoint extends JointConstraint {
   final PhysicsBody bodyA;
   final PhysicsBody bodyB;
 
-  // Relative offset of bodyB from bodyA (captured at creation time).
+  @override
+  List<PhysicsBody> get bodies => [bodyA, bodyB];
+
+  // bodyB's offset from bodyA in bodyA's frame, and the angle between them,
+  // when made.
   final double _relX;
   final double _relY;
   final double _relAngle;
 
-  WeldJoint({required this.bodyA, required this.bodyB})
-    : _relX = bodyB.position.x - bodyA.position.x,
-      _relY = bodyB.position.y - bodyA.position.y,
-      _relAngle = bodyB.angle - bodyA.angle,
-      super(JointType.weld);
+  factory WeldJoint({required PhysicsBody bodyA, required PhysicsBody bodyB}) {
+    final (x, y) = _jointTurn(
+      bodyB.position.x - bodyA.position.x,
+      bodyB.position.y - bodyA.position.y,
+      -bodyA.angle,
+    );
+    return WeldJoint._(bodyA, bodyB, x, y, bodyB.angle - bodyA.angle);
+  }
+
+  WeldJoint._(this.bodyA, this.bodyB, this._relX, this._relY, this._relAngle)
+    : super(JointType.weld);
 
   @override
   void applyConstraint(double dt) {
-    final totalInvMass = bodyA.inverseMass + bodyB.inverseMass;
-    if (totalInvMass < 1e-10) return;
+    if (!_jointLive(bodyA, bodyB)) return;
+    final (ox, oy) = _jointTurn(_relX, _relY, bodyA.angle);
+    final tx = bodyA.position.x + ox, ty = bodyA.position.y + oy;
 
-    // Target position for bodyB based on bodyA's current transform.
-    final ca = math.cos(bodyA.angle);
-    final sa = math.sin(bodyA.angle);
-    final targetX = bodyA.position.x + ca * _relX - sa * _relY;
-    final targetY = bodyA.position.y + sa * _relX + ca * _relY;
+    final ex = bodyB.position.x - tx, ey = bodyB.position.y - ty;
+    final err = math.sqrt(ex * ex + ey * ey);
+    if (err > 1e-9) {
+      _jointSeparate(bodyA, bodyB, ex / err, ey / err, -err * _jointCorrection);
+    }
+    // The velocity of the point of bodyA it is welded to: bodyA's own, and
+    // its spin about it.
+    final w = bodyA.angularVelocity;
+    _jointHold(
+      bodyA,
+      bodyB,
+      bodyA.velocity.x - w * oy,
+      bodyA.velocity.y + w * ox,
+    );
 
-    final errX = targetX - bodyB.position.x;
-    final errY = targetY - bodyB.position.y;
-
-    const baumgarte = 0.5;
-    final corrX = errX * baumgarte / totalInvMass;
-    final corrY = errY * baumgarte / totalInvMass;
-
-    bodyA.position.x -= corrX * bodyA.inverseMass;
-    bodyA.position.y -= corrY * bodyA.inverseMass;
-    bodyB.position.x += corrX * bodyB.inverseMass;
-    bodyB.position.y += corrY * bodyB.inverseMass;
-
-    // Velocity correction (remove relative velocity)
-    final rvx = bodyB.velocity.x - bodyA.velocity.x;
-    final rvy = bodyB.velocity.y - bodyA.velocity.y;
-    final imp = 0.8 / totalInvMass;
-    bodyA.velocity.x += rvx * bodyA.inverseMass * imp;
-    bodyA.velocity.y += rvy * bodyA.inverseMass * imp;
-    bodyB.velocity.x -= rvx * bodyB.inverseMass * imp;
-    bodyB.velocity.y -= rvy * bodyB.inverseMass * imp;
-
-    // Angular weld: correct angle
-    final targetAngle = bodyA.angle + _relAngle;
-    final angleErr = targetAngle - bodyB.angle;
-    bodyA.angle +=
-        angleErr *
-        bodyA.inverseMass /
-        (bodyA.inverseMass + bodyB.inverseMass) *
-        0.5;
-    bodyB.angle -=
-        angleErr *
-        bodyB.inverseMass /
-        (bodyA.inverseMass + bodyB.inverseMass) *
-        0.5;
+    // Turned together.
+    if (bodyB.isDynamic || !bodyA.isDynamic) {
+      bodyB.angle = bodyA.angle + _relAngle;
+      bodyB.angularVelocity = bodyA.angularVelocity;
+    } else {
+      bodyA.angle = bodyB.angle - _relAngle;
+      bodyA.angularVelocity = bodyB.angularVelocity;
+    }
   }
 }
 
 // ── Prismatic Joint ────────────────────────────────────────────────────────
 
-/// Constrains two bodies to slide along a fixed world-space axis while
-/// preventing relative rotation and off-axis movement.
+/// Lets bodyB slide along an axis from where it was when the joint was
+/// made, as Box2D's prismatic joint does: off the axis it is held where it
+/// was, and the two do not turn against each other.
 ///
-/// Optional limits clamp the sliding range. An optional motor drives the
-/// relative velocity along the axis up to a maximum force.
+/// The axis is fixed in bodyA's frame (it turns with bodyA). Limits
+/// ([lowerLimit], [upperLimit]) are how far it may slide from where it
+/// started; a motor drives the sliding speed, pushing with up to
+/// [maxMotorForce].
 class PrismaticJoint extends JointConstraint {
   final PhysicsBody bodyA;
   final PhysicsBody bodyB;
 
-  /// Unit vector (world-space) defining the allowed slide direction.
+  @override
+  List<PhysicsBody> get bodies => [bodyA, bodyB];
+
+  // The unit axis in bodyA's frame.
   final double _axisX;
   final double _axisY;
+
+  // bodyB's offset from bodyA, across the axis and along it, when made.
+  final double _across0;
+  final double _along0;
+  final double _relAngle;
 
   bool limitEnabled = false;
   double lowerLimit = 0.0;
@@ -232,82 +339,134 @@ class PrismaticJoint extends JointConstraint {
   double motorSpeed = 0.0;
   double maxMotorForce = 0.0;
 
-  PrismaticJoint({
-    required this.bodyA,
-    required this.bodyB,
+  factory PrismaticJoint({
+    required PhysicsBody bodyA,
+    required PhysicsBody bodyB,
     required Offset axis,
-  }) : _axisX = axis.dx,
-       _axisY = axis.dy,
-       super(JointType.prismatic);
+  }) {
+    final len = axis.distance;
+    final (ax, ay) = len < 1e-9
+        ? (1.0, 0.0)
+        : _jointTurn(axis.dx / len, axis.dy / len, -bodyA.angle);
+    final (dx, dy) = _jointTurn(
+      bodyB.position.x - bodyA.position.x,
+      bodyB.position.y - bodyA.position.y,
+      -bodyA.angle,
+    );
+    return PrismaticJoint._(
+      bodyA,
+      bodyB,
+      ax,
+      ay,
+      -dx * ay + dy * ax,
+      dx * ax + dy * ay,
+      bodyB.angle - bodyA.angle,
+    );
+  }
+
+  PrismaticJoint._(
+    this.bodyA,
+    this.bodyB,
+    this._axisX,
+    this._axisY,
+    this._across0,
+    this._along0,
+    this._relAngle,
+  ) : super(JointType.prismatic);
+
+  /// How far bodyB has slid along the axis since the joint was made.
+  double get translation {
+    final (ax, ay) = _jointTurn(_axisX, _axisY, bodyA.angle);
+    return (bodyB.position.x - bodyA.position.x) * ax +
+        (bodyB.position.y - bodyA.position.y) * ay -
+        _along0;
+  }
 
   @override
   void applyConstraint(double dt) {
-    final totalInvMass = bodyA.inverseMass + bodyB.inverseMass;
-    if (totalInvMass < 1e-10) return;
+    if (!_jointLive(bodyA, bodyB)) return;
+    final k = bodyA.solverInverseMass + bodyB.solverInverseMass;
+    if (k == 0) return;
+    final (ax, ay) = _jointTurn(_axisX, _axisY, bodyA.angle);
+    final px = -ay, py = ax;
 
-    // Perpendicular axis: constrain off-axis relative displacement.
-    final perpX = -_axisY;
-    final perpY = _axisX;
-
+    // Off the axis: held where it was.
     final dx = bodyB.position.x - bodyA.position.x;
     final dy = bodyB.position.y - bodyA.position.y;
-    final perpErr = dx * perpX + dy * perpY;
+    final across = dx * px + dy * py - _across0;
+    if (across.abs() > 1e-9) {
+      _jointSeparate(bodyA, bodyB, px, py, -across * _jointCorrection);
+    }
+    final rvx = bodyB.velocity.x - bodyA.velocity.x;
+    final rvy = bodyB.velocity.y - bodyA.velocity.y;
+    _jointPush(bodyA, bodyB, px, py, -(rvx * px + rvy * py) / k);
 
-    const baumgarte = 0.3;
-    final correction = perpErr * baumgarte / totalInvMass;
-    bodyA.position.x += perpX * correction * bodyA.inverseMass;
-    bodyA.position.y += perpY * correction * bodyA.inverseMass;
-    bodyB.position.x -= perpX * correction * bodyB.inverseMass;
-    bodyB.position.y -= perpY * correction * bodyB.inverseMass;
-
-    // Limit: clamp displacement along the axis.
-    if (limitEnabled) {
-      final slide = dx * _axisX + dy * _axisY;
-      double axisErr = 0.0;
-      if (slide < lowerLimit) axisErr = slide - lowerLimit;
-      if (slide > upperLimit) axisErr = slide - upperLimit;
-      if (axisErr.abs() > 1e-6) {
-        final axisCorr = axisErr * baumgarte / totalInvMass;
-        bodyA.position.x += _axisX * axisCorr * bodyA.inverseMass;
-        bodyA.position.y += _axisY * axisCorr * bodyA.inverseMass;
-        bodyB.position.x -= _axisX * axisCorr * bodyB.inverseMass;
-        bodyB.position.y -= _axisY * axisCorr * bodyB.inverseMass;
-      }
+    if (bodyB.isDynamic || !bodyA.isDynamic) {
+      bodyB.angle = bodyA.angle + _relAngle;
+      bodyB.angularVelocity = bodyA.angularVelocity;
+    } else {
+      bodyA.angle = bodyB.angle - _relAngle;
+      bodyA.angularVelocity = bodyB.angularVelocity;
     }
 
-    // Motor: drive relative velocity along the axis.
+    // Along it: the motor, then the limits.
+    var along = rvx * ax + rvy * ay;
     if (motorEnabled) {
-      final relVel =
-          (bodyB.velocity.x - bodyA.velocity.x) * _axisX +
-          (bodyB.velocity.y - bodyA.velocity.y) * _axisY;
-      var force = (motorSpeed - relVel) / totalInvMass;
-      force = force.clamp(-maxMotorForce, maxMotorForce);
-      final impulse = force * dt;
-      bodyA.velocity.x -= _axisX * impulse * bodyA.inverseMass;
-      bodyA.velocity.y -= _axisY * impulse * bodyA.inverseMass;
-      bodyB.velocity.x += _axisX * impulse * bodyB.inverseMass;
-      bodyB.velocity.y += _axisY * impulse * bodyB.inverseMass;
+      final most = maxMotorForce * dt;
+      final lambda = ((motorSpeed - along) / k).clamp(-most, most);
+      _jointPush(bodyA, bodyB, ax, ay, lambda);
+      along += lambda * k;
+    }
+    if (limitEnabled) {
+      final slide = dx * ax + dy * ay - _along0;
+      if (slide < lowerLimit) {
+        _jointSeparate(
+          bodyA,
+          bodyB,
+          ax,
+          ay,
+          (lowerLimit - slide) * _jointCorrection,
+        );
+      } else if (slide > upperLimit) {
+        _jointSeparate(
+          bodyA,
+          bodyB,
+          ax,
+          ay,
+          (upperLimit - slide) * _jointCorrection,
+        );
+      }
+      final atLower = slide <= lowerLimit + _jointSlop && along < 0;
+      final atUpper = slide >= upperLimit - _jointSlop && along > 0;
+      if (atLower || atUpper) _jointPush(bodyA, bodyB, ax, ay, -along / k);
     }
   }
 }
 
 // ── Wheel Joint ────────────────────────────────────────────────────────────
 
-/// Constrains bodyB to slide along a suspension axis relative to bodyA
-/// (like [PrismaticJoint]) with a soft spring instead of hard limits, plus an
-/// optional rotational motor that drives bodyB's spin — mirroring Box2D's
-/// wheel joint, which uses a translational spring for suspension and a
-/// rotational motor for wheel drive (not a linear motor along the axis).
+/// A wheel on a suspension, as Box2D's wheel joint: bodyB moves along an
+/// axis on a spring about where it was when the joint was made, is held
+/// where it was across the axis, and turns freely — a motor spins it.
 ///
-/// This is a simplified position-constraint implementation; for high-accuracy
-/// wheel joints, use the Box2D FFI backend.
+/// The axis is fixed in bodyA's frame. The spring's [springStiffness] is an
+/// acceleration per unit out, and [springDamping] per unit of speed,
+/// whatever the masses (Box2D's wheel spring is a frequency in hertz and a
+/// damping ratio instead).
 class WheelJoint extends JointConstraint {
   final PhysicsBody bodyA;
   final PhysicsBody bodyB;
 
-  /// Unit vector (world-space) defining the suspension axis.
+  @override
+  List<PhysicsBody> get bodies => [bodyA, bodyB];
+
+  // The unit axis in bodyA's frame.
   final double _axisX;
   final double _axisY;
+
+  // bodyB's offset from bodyA, across the axis and along it, when made.
+  final double _across0;
+  final double _along0;
 
   /// Suspension spring stiffness. 0 = no spring force (axis is unconstrained
   /// beyond the perpendicular lock — matches Box2D's default disabled spring).
@@ -318,10 +477,38 @@ class WheelJoint extends JointConstraint {
   double motorSpeed = 0.0;
   double maxMotorTorque = 0.0;
 
-  WheelJoint({required this.bodyA, required this.bodyB, required Offset axis})
-    : _axisX = axis.dx,
-      _axisY = axis.dy,
-      super(JointType.wheel);
+  factory WheelJoint({
+    required PhysicsBody bodyA,
+    required PhysicsBody bodyB,
+    required Offset axis,
+  }) {
+    final len = axis.distance;
+    final (ax, ay) = len < 1e-9
+        ? (0.0, 1.0)
+        : _jointTurn(axis.dx / len, axis.dy / len, -bodyA.angle);
+    final (dx, dy) = _jointTurn(
+      bodyB.position.x - bodyA.position.x,
+      bodyB.position.y - bodyA.position.y,
+      -bodyA.angle,
+    );
+    return WheelJoint._(
+      bodyA,
+      bodyB,
+      ax,
+      ay,
+      -dx * ay + dy * ax,
+      dx * ax + dy * ay,
+    );
+  }
+
+  WheelJoint._(
+    this.bodyA,
+    this.bodyB,
+    this._axisX,
+    this._axisY,
+    this._across0,
+    this._along0,
+  ) : super(JointType.wheel);
 
   /// Set the suspension spring (matches [Box2DJoint.setWheelSpring] for a
   /// consistent API across backends).
@@ -339,71 +526,70 @@ class WheelJoint extends JointConstraint {
 
   @override
   void applyConstraint(double dt) {
-    final totalInvMass = bodyA.inverseMass + bodyB.inverseMass;
-    if (totalInvMass < 1e-10) return;
+    if (!_jointLive(bodyA, bodyB)) return;
+    final k = bodyA.solverInverseMass + bodyB.solverInverseMass;
+    if (k == 0) return;
+    final (ax, ay) = _jointTurn(_axisX, _axisY, bodyA.angle);
+    final px = -ay, py = ax;
 
-    // Perpendicular axis: rigidly constrain off-axis relative displacement so
-    // bodyB stays on the suspension line through bodyA (like PrismaticJoint).
-    final perpX = -_axisY;
-    final perpY = _axisX;
-
+    // Across the axis: held where it was.
     final dx = bodyB.position.x - bodyA.position.x;
     final dy = bodyB.position.y - bodyA.position.y;
-    final perpErr = dx * perpX + dy * perpY;
+    final across = dx * px + dy * py - _across0;
+    if (across.abs() > 1e-9) {
+      _jointSeparate(bodyA, bodyB, px, py, -across * _jointCorrection);
+    }
+    final rvx = bodyB.velocity.x - bodyA.velocity.x;
+    final rvy = bodyB.velocity.y - bodyA.velocity.y;
+    _jointPush(bodyA, bodyB, px, py, -(rvx * px + rvy * py) / k);
 
-    const baumgarte = 0.3;
-    final correction = perpErr * baumgarte / totalInvMass;
-    bodyA.position.x += perpX * correction * bodyA.inverseMass;
-    bodyA.position.y += perpY * correction * bodyA.inverseMass;
-    bodyB.position.x -= perpX * correction * bodyB.inverseMass;
-    bodyB.position.y -= perpY * correction * bodyB.inverseMass;
-
-    // Suspension spring along the axis — pulls bodyB back toward bodyA's
-    // anchor (zero axis displacement) with damping, like a shock absorber.
+    // Along it: the suspension spring, about where it started.
     if (springStiffness > 0) {
-      final slide = dx * _axisX + dy * _axisY;
-      final relVel =
-          (bodyB.velocity.x - bodyA.velocity.x) * _axisX +
-          (bodyB.velocity.y - bodyA.velocity.y) * _axisY;
-      final springForce = -springStiffness * slide;
-      final dampForce = -springDamping * relVel;
-      final impulse = (springForce + dampForce) * dt / totalInvMass;
-      bodyA.velocity.x -= _axisX * impulse * bodyA.inverseMass;
-      bodyA.velocity.y -= _axisY * impulse * bodyA.inverseMass;
-      bodyB.velocity.x += _axisX * impulse * bodyB.inverseMass;
-      bodyB.velocity.y += _axisY * impulse * bodyB.inverseMass;
+      final slide = dx * ax + dy * ay - _along0;
+      final along = rvx * ax + rvy * ay;
+      _jointPush(
+        bodyA,
+        bodyB,
+        ax,
+        ay,
+        -(springStiffness * slide + springDamping * along) * dt / k,
+      );
     }
 
-    // Rotational drive motor — spins bodyB (the wheel) relative to bodyA
-    // (the chassis), matching Box2D's wheel-joint motor semantics.
     if (motorEnabled) {
-      final relAngVel = bodyB.angularVelocity - bodyA.angularVelocity;
-      var torque = maxMotorTorque * (motorSpeed - relAngVel).clamp(-1.0, 1.0);
-      final inertiaSum = bodyA.inverseInertia + bodyB.inverseInertia;
-      if (inertiaSum > 1e-10) {
-        torque = torque.clamp(-maxMotorTorque, maxMotorTorque);
-        bodyA.angularVelocity -= torque * bodyA.inverseInertia * dt;
-        bodyB.angularVelocity += torque * bodyB.inverseInertia * dt;
-      }
+      _jointSpinMotor(bodyA, bodyB, motorSpeed, maxMotorTorque, dt);
     }
   }
 }
 
 // ── Revolute Joint ─────────────────────────────────────────────────────────
 
-/// Constrains two bodies to rotate around a shared world-space anchor point.
+/// A hinge: the two bodies turn about a shared anchor.
 ///
-/// This is a simplified position-constraint implementation; for high-accuracy
-/// revolute joints, use the Box2D FFI backend.
+/// A body hinged away from its centre swings round the anchor at the
+/// distance it started at, and is drawn turning as it swings; one hinged at
+/// its centre stays on the anchor and spins freely. The anchor is fixed in
+/// bodyA's frame. Limits ([lowerLimit], [upperLimit]) and the motor act on
+/// the angle between the bodies, from what it was when the joint was made,
+/// as Box2D's revolute joint.
 class RevoluteJoint extends JointConstraint {
   final PhysicsBody bodyA;
   final PhysicsBody bodyB;
 
-  // Anchor offset in local body space (captured at creation).
-  final double _anchorAX;
-  final double _anchorAY;
-  final double _anchorBX;
-  final double _anchorBY;
+  @override
+  List<PhysicsBody> get bodies => [bodyA, bodyB];
+
+  // The anchor in bodyA's frame.
+  final double _anchorX;
+  final double _anchorY;
+
+  /// How far bodyB's centre is from the anchor.
+  final double _radius;
+
+  // bodyB's direction from the anchor, in bodyA's frame, and the angle
+  // between the bodies, when made.
+  final double _swing0;
+  final double _relAngle0;
 
   bool limitEnabled = false;
   double lowerLimit = 0.0;
@@ -412,80 +598,176 @@ class RevoluteJoint extends JointConstraint {
   double motorSpeed = 0.0;
   double maxMotorTorque = 0.0;
 
-  RevoluteJoint({
-    required this.bodyA,
-    required this.bodyB,
+  factory RevoluteJoint({
+    required PhysicsBody bodyA,
+    required PhysicsBody bodyB,
     required Offset worldAnchor,
-  }) : _anchorAX = worldAnchor.dx - bodyA.position.x,
-       _anchorAY = worldAnchor.dy - bodyA.position.y,
-       _anchorBX = worldAnchor.dx - bodyB.position.x,
-       _anchorBY = worldAnchor.dy - bodyB.position.y,
-       super(JointType.revolute);
+  }) {
+    final (lx, ly) = _jointTurn(
+      worldAnchor.dx - bodyA.position.x,
+      worldAnchor.dy - bodyA.position.y,
+      -bodyA.angle,
+    );
+    final bx = bodyB.position.x - worldAnchor.dx;
+    final by = bodyB.position.y - worldAnchor.dy;
+    return RevoluteJoint._(
+      bodyA,
+      bodyB,
+      lx,
+      ly,
+      math.sqrt(bx * bx + by * by),
+      math.atan2(by, bx) - bodyA.angle,
+      bodyB.angle - bodyA.angle,
+    );
+  }
+
+  RevoluteJoint._(
+    this.bodyA,
+    this.bodyB,
+    this._anchorX,
+    this._anchorY,
+    this._radius,
+    this._swing0,
+    this._relAngle0,
+  ) : super(JointType.revolute);
+
+  /// The angle between the bodies, from what it was when the joint was made
+  /// (Box2D's joint angle).
+  double get jointAngle => bodyB.angle - bodyA.angle - _relAngle0;
 
   @override
   void applyConstraint(double dt) {
-    final totalInvMass = bodyA.inverseMass + bodyB.inverseMass;
-    if (totalInvMass < 1e-10) return;
+    if (!_jointLive(bodyA, bodyB)) return;
+    final k = bodyA.solverInverseMass + bodyB.solverInverseMass;
+    final (ox, oy) = _jointTurn(_anchorX, _anchorY, bodyA.angle);
+    final anchorX = bodyA.position.x + ox, anchorY = bodyA.position.y + oy;
+    // The anchor's velocity: bodyA's own, and its spin about it.
+    final w = bodyA.angularVelocity;
+    final pvx = bodyA.velocity.x - w * oy, pvy = bodyA.velocity.y + w * ox;
 
-    // World-space anchor on A
-    final caA = math.cos(bodyA.angle);
-    final saA = math.sin(bodyA.angle);
-    final wAx = bodyA.position.x + caA * _anchorAX - saA * _anchorAY;
-    final wAy = bodyA.position.y + saA * _anchorAX + caA * _anchorAY;
-
-    // World-space anchor on B
-    final caB = math.cos(bodyB.angle);
-    final saB = math.sin(bodyB.angle);
-    final wBx = bodyB.position.x + caB * _anchorBX - saB * _anchorBY;
-    final wBy = bodyB.position.y + saB * _anchorBX + caB * _anchorBY;
-
-    final errX = wAx - wBx;
-    final errY = wAy - wBy;
-
-    const baumgarte = 0.3;
-    final corrX = errX * baumgarte / totalInvMass;
-    final corrY = errY * baumgarte / totalInvMass;
-
-    bodyA.position.x -= corrX * bodyA.inverseMass;
-    bodyA.position.y -= corrY * bodyA.inverseMass;
-    bodyB.position.x += corrX * bodyB.inverseMass;
-    bodyB.position.y += corrY * bodyB.inverseMass;
-
-    // Limit: clamp the relative angle between bodyA and bodyB.
-    if (limitEnabled) {
-      final relAngle = bodyB.angle - bodyA.angle;
-      double angleErr = 0.0;
-      if (relAngle < lowerLimit) angleErr = relAngle - lowerLimit;
-      if (relAngle > upperLimit) angleErr = relAngle - upperLimit;
-      final inertiaSum = bodyA.inverseInertia + bodyB.inverseInertia;
-      if (angleErr.abs() > 1e-6 && inertiaSum > 1e-10) {
-        const baumgarteAngle = 0.3;
-        final angleCorr = angleErr * baumgarteAngle / inertiaSum;
-        bodyA.angle += angleCorr * bodyA.inverseInertia;
-        bodyB.angle -= angleCorr * bodyB.inverseInertia;
-
-        // Kill relative angular velocity driving further past the limit.
-        final relAngVel = bodyB.angularVelocity - bodyA.angularVelocity;
-        final pastLower = relAngle < lowerLimit && relAngVel < 0;
-        final pastUpper = relAngle > upperLimit && relAngVel > 0;
-        if (pastLower || pastUpper) {
-          final velImp = relAngVel / inertiaSum;
-          bodyA.angularVelocity += velImp * bodyA.inverseInertia;
-          bodyB.angularVelocity -= velImp * bodyB.inverseInertia;
-        }
-      }
+    if (_radius < _jointSlop) {
+      _pinned(dt, k, anchorX, anchorY, pvx, pvy);
+    } else if (k > 0) {
+      _swinging(dt, k, anchorX, anchorY, pvx, pvy);
     }
+  }
 
-    // Motor torque
+  /// bodyB hinged at its centre: held on the anchor, turning freely.
+  void _pinned(
+    double dt,
+    double k,
+    double anchorX,
+    double anchorY,
+    double pvx,
+    double pvy,
+  ) {
+    if (k > 0) {
+      final ex = bodyB.position.x - anchorX, ey = bodyB.position.y - anchorY;
+      final err = math.sqrt(ex * ex + ey * ey);
+      if (err > 1e-9) {
+        _jointSeparate(
+          bodyA,
+          bodyB,
+          ex / err,
+          ey / err,
+          -err * _jointCorrection,
+        );
+      }
+      _jointHold(bodyA, bodyB, pvx, pvy);
+    }
     if (motorEnabled) {
-      final relAngVel = bodyB.angularVelocity - bodyA.angularVelocity;
-      var torque = maxMotorTorque * (motorSpeed - relAngVel).clamp(-1.0, 1.0);
-      final inertiaSum = bodyA.inverseInertia + bodyB.inverseInertia;
-      if (inertiaSum > 1e-10) {
-        torque = torque.clamp(-maxMotorTorque, maxMotorTorque);
-        bodyA.angularVelocity -= torque * bodyA.inverseInertia * dt;
-        bodyB.angularVelocity += torque * bodyB.inverseInertia * dt;
+      _jointSpinMotor(bodyA, bodyB, motorSpeed, maxMotorTorque, dt);
+    }
+    if (!limitEnabled) return;
+    final angle = jointAngle;
+    final spin = bodyB.angularVelocity - bodyA.angularVelocity;
+    double? limit;
+    if (angle < lowerLimit && spin <= 0) limit = lowerLimit;
+    if (angle > upperLimit && spin >= 0) limit = upperLimit;
+    if (limit == null) return;
+    if (_jointInverseInertia(bodyB) > 0) {
+      bodyB.angle = bodyA.angle + _relAngle0 + limit;
+      bodyB.angularVelocity = bodyA.angularVelocity;
+    } else if (_jointInverseInertia(bodyA) > 0) {
+      bodyA.angle = bodyB.angle - _relAngle0 - limit;
+      bodyA.angularVelocity = bodyB.angularVelocity;
+    }
+  }
+
+  /// bodyB hinged away from its centre: it swings round the anchor at
+  /// [_radius], turned as it swings.
+  void _swinging(
+    double dt,
+    double k,
+    double anchorX,
+    double anchorY,
+    double pvx,
+    double pvy,
+  ) {
+    var dx = bodyB.position.x - anchorX, dy = bodyB.position.y - anchorY;
+    var dist = math.sqrt(dx * dx + dy * dy);
+    if (dist < 1e-8) {
+      // On the anchor: out again the way it started.
+      final (sx, sy) = _jointTurn(1, 0, _swing0 + bodyA.angle);
+      dx = sx * 1e-6;
+      dy = sy * 1e-6;
+      dist = 1e-6;
+    }
+    var nx = dx / dist, ny = dy / dist;
+    _jointSeparate(bodyA, bodyB, nx, ny, (_radius - dist) * _jointCorrection);
+    var rvx = bodyB.velocity.x - pvx, rvy = bodyB.velocity.y - pvy;
+    _jointPush(bodyA, bodyB, nx, ny, -(rvx * nx + rvy * ny) / k);
+
+    // Where it is on its swing, and how fast it goes round.
+    dx = bodyB.position.x - anchorX;
+    dy = bodyB.position.y - anchorY;
+    dist = math.max(math.sqrt(dx * dx + dy * dy), 1e-6);
+    nx = dx / dist;
+    ny = dy / dist;
+    final tx = -ny, ty = nx;
+    rvx = bodyB.velocity.x - pvx;
+    rvy = bodyB.velocity.y - pvy;
+    var round = rvx * tx + rvy * ty;
+    var swing = _wrap(math.atan2(dy, dx) - bodyA.angle - _swing0);
+
+    if (motorEnabled && maxMotorTorque > 0) {
+      // A torque about the anchor is a force round it of torque / radius.
+      final most = maxMotorTorque / dist * dt;
+      final want = (motorSpeed + bodyA.angularVelocity) * dist;
+      final lambda = ((want - round) / k).clamp(-most, most);
+      _jointPush(bodyA, bodyB, tx, ty, lambda);
+      round += lambda * k;
+    }
+    if (limitEnabled) {
+      double? limit;
+      if (swing < lowerLimit) limit = lowerLimit;
+      if (swing > upperLimit) limit = upperLimit;
+      if (limit != null && bodyB.isDynamic) {
+        // Back onto its swing at the limit.
+        final (sx, sy) = _jointTurn(1, 0, _swing0 + bodyA.angle + limit);
+        bodyB.position.x = anchorX + sx * _radius;
+        bodyB.position.y = anchorY + sy * _radius;
+        swing = limit;
+      }
+      final atLower = swing <= lowerLimit && round < 0;
+      final atUpper = swing >= upperLimit && round > 0;
+      if (atLower || atUpper) {
+        _jointPush(bodyA, bodyB, tx, ty, -round / k);
+        round = 0;
       }
     }
+
+    // Turned as it swings.
+    if (bodyB.isDynamic) {
+      bodyB.angle = bodyA.angle + _relAngle0 + swing;
+      bodyB.angularVelocity = bodyA.angularVelocity + round / _radius;
+    }
+  }
+
+  /// [a] into (−π, π].
+  static double _wrap(double a) {
+    var r = a % (2 * math.pi);
+    if (r > math.pi) r -= 2 * math.pi;
+    return r;
   }
 }

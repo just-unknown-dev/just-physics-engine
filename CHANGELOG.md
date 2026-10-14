@@ -1,4 +1,4 @@
-## 1.4.0 - 2026-10-13
+## 1.4.0 - 2026-10-15
 
 3D physics on Jolt, a 2D character mover, and native Box2D on every native platform — Jolt and Box2D each in a package of their own, just_jolt and the new just_box_2d.
 
@@ -6,12 +6,18 @@
 
 - `PhysicsEngine3D` is now the 3D engine interface; the experimental placeholder class of that name (`initialize`, `update`, `dispose`) is gone.
 - `CollisionShape.area` is a new abstract getter: a shape class written outside this package must implement it.
+- **Needs Flutter 3.47.0 or later.** just_box_2d's and just_jolt's build hooks use `native_toolchain_c` 0.19.3, which needs `meta` ^1.19.0, and every Flutter before 3.47 pins `meta` 1.18 or older, so an app on one does not resolve.
 - **Native Box2D moved to the new just_box_2d package** (^0.1.0). This package compiles no C and has no build hook of its own; just_box_2d's hook needs `hooks` ^2 (with `code_assets` `>=1.2.0 <3.0.0` and `native_toolchain_c` ^0.19.3), so an app that pins `hooks` ^1 elsewhere will not resolve. It builds by default; `hooks: user_defines: just_box_2d: build: false` in an app's pubspec turns it off, and every platform runs the pure-Dart engine.
 - **Native Box2D now runs on Android, iOS, macOS and Linux**, which all silently ran the pure-Dart fallback before (see Changed): physics there now behaves as Box2D does. Android was checked on an emulator; iOS, macOS and Linux were not run.
 - **The pure-Dart backend behaves as Box2D does** in three places: friction mixes as the geometric mean, nothing bounces below 1 m/s, and a kinematic body no longer touches static or kinematic ones (see Changed).
 - **Every segment of an open `ChainShape` is solid on the native backend too.** Box2D treats an open chain's first and last points as ghosts, so the end segments had no collision there (and fewer than 4 points none at all); the wrapper now adds ghost points beyond the ends, as the pure-Dart engine already behaved.
 - `Box2DPhysicsEngine.createMouseJoint`, `Box2DJoint.setTarget` and `Box2DJointFactory.createMouse` are gone: Box2D v3 has no mouse joint, and they always returned null or did nothing. `addMouseJoint` gives the pure-Dart `MouseJoint` on every backend.
 - `Box2DJoint.setDistanceSpring` and `setWheelSpring` take `hertz` and `dampingRatio`, which is what Box2D always read them as.
+- **Pure-Dart sliders and wheels count from where they were made**, as Box2D's do: a `PrismaticJoint` holds bodyB across its axis where it started (it pulled it onto a line through bodyA's centre) and its limits are travel from there; a `WheelJoint`'s spring rests where the wheel started (it pulled the wheel into bodyA's centre). Both axes turn with bodyA, and are made unit length. A `RevoluteJoint`'s limits act on the angle from what it was when made (`jointAngle`).
+- `pollSensorBeginEvents` and `pollSensorEndEvents` give the sensor first on the pure-Dart engine too, as the native one always has.
+- **Lines are as thick, and as solid, on both backends.** Natively a segment, and each segment of a chain, is now the capsule its `thickness` makes (Box2D got a bare line), and a chain is solid from both sides (a Box2D chain is solid on one): a body resting on a line sits `thickness` higher natively than it did.
+- **Queries see every shape of a body, turned with it**, on the pure-Dart engine too (`castRay`, `castRayAll`, `castCircle`, `queryAABB`, `queryCircle`), and a ray passes the shape it starts inside on both backends (the pure-Dart engine reported the far side).
+- `SpatialGrid.cells` is private.
 - `package:just_physics_engine/just_physics_engine.dart` exports the 3D types (`…3D`, `JoltPhysicsEngine`), and `physics_3d.dart` re-exports just_dart's `Vector3` and `Quaternion`: hide them where another package's names clash.
 
 ### Added
@@ -28,6 +34,8 @@
 - `CollisionShape.area`: how much ground a shape covers (0 for a segment or a chain), for weighing a body by its shape.
 - The web's Box2D classes have the whole native API (the joint creators, `destroyJoint`, `registerImpactCallback`, `physicsBodyFromHandle`, `Box2DBody.ofType`, …), doing nothing there, so code written against them compiles for the web. `Box2DBody`'s `destroy` and force methods on the web now do nothing instead of throwing.
 - Box2D comes from **just_box_2d**: Box2D v3.2 and the `b2w_*` C layer, built from source by its own hook, usable without this package.
+- `JointConstraint.bodies`, `PrismaticJoint.translation` and `RevoluteJoint.jointAngle`.
+- `Box2DPhysicsEngine.addPrismaticJoint` makes a native slider; it made a Dart one the native step never applied.
 
 ### Changed
 
@@ -44,6 +52,10 @@
 - **`registerImpactCallback` reports Box2D's hit events**: every contact that closed faster than the threshold in a step, with the speed it closed at. It used to compare the two bodies' velocities after the step, and only for contacts that had just begun.
 - The bundled Box2D is v3.2; the docs said v3.0.
 - Use Box2D and Jolt from one isolate per process: their native worlds are shared by the whole process.
+- **The pure-Dart joints hold.** Each takes away the relative velocity it forbids as well as correcting position, so gravity no longer stretches a rope or a rod without end (a 100-unit rope reached 409 units in ten seconds); a body hinged away from its centre swings round the anchor, drawn turning (it hung as if welded); joints move dynamic bodies only (a kinematic platform holding a lamp sank). A distance spring is soft, with no hard stop, and its damping slows it — the damping pushed the wrong way, adding energy.
+- `castCircle` is Box2D's shape cast against every shape; it cast a ray from the circle's centre at polygons, segments and chains, ignoring the radius.
+- `Box2DPhysicsEngine` brings a native body's type, gravity scale and mass up to date whenever they change, set through the engine or written on the `PhysicsBody`, and every native shape has density 1, so a body that turns dynamic has its shapes' mass and inertia.
+- A body under gravity never sleeps on the pure-Dart engine — it has no islands to wake a body whose support moves away — and `PhysicsBody.canSleep` now says so.
 
 ### Fixed
 
@@ -58,7 +70,19 @@
 - A new body never inherits the sensor flag of an earlier body that had the same handle.
 - `Box2DPhysicsEngine.dispose` clears the native impact callback before it closes the Dart callable it points at.
 - **A native distance joint's spring works.** `addDistanceJoint` with a stiffness set the spring's frequency and damping but never switched it on, so the joint stayed rigid, and a range between `minLength` and `maxLength` held the bodies rigidly at its middle, as its limit was off.
-- `addMouseJoint` on `Box2DPhysicsEngine` adds one mouse joint. It added two, and the one it did not return went on pulling toward the first target.
+- **Native contact, sensor and body-move events are each `update`'s own.** Box2D keeps only the last step's events: a frame that ran two steps lost the first one's (a landing missed, and no jump; a sensor exit missed, and "in water" for ever), and a frame that ran none reported the last frame's again (double damage, double pickups) — below 60 fps and above it.
+- **Dart joints act on the native backend.** `addMouseJoint` (it added two mouse joints, and neither did anything there) and a joint made for a body the native engine does not hold now reach the native body through its force and velocity. `removeJoint` destroys a native joint, so its bodies come apart (they stayed hinged); `removeBody` takes the body's joints out of `joints`. `addWheelJoint` turns the wheel about its own centre natively; it turned it about the midpoint, and the wheel wobbled.
+- **Forces act on the native backend as the pure-Dart engine integrates them**: a frame's `applyForce` goes in as the change of velocity it makes (an impulse of force × step) before the step moves the body, and waits for a frame that steps. Box2D held it across its sub-steps, which adds energy to anything spring-like built on forces (the mouse joint swung further every time), and a frame with no step gave it twice.
+- A native body turned dynamic from static or kinematic falls, and turns: its gravity scale is set again (a static one made without gravity hung in the air), and it has its shapes' rotational inertia.
+- A native kinematic body never falls asleep; one asleep ignored the velocity it was given.
+- Native `castRayAll` keeps each body's nearest hit (it kept whichever came first), and it and `queryAABB` find every body: both stopped at 32 shapes, static ones first, so a body beyond a row of tiles was never found.
+- Native `castRay` with `exclude` passes a shape the ray starts inside, as without it; it reported that shape at distance 0 with no normal.
+- A second `initialize()` on `Box2DPhysicsEngine` keeps its world; it leaked its buffers and threw every frame. Without the native library debug drawing and `alpha` are the pure-Dart engine's (drawing was blank), and `stats['awakeBodies']` counts awake bodies only.
+- The native backend's previous pose for interpolation is the one before the frame's steps; a frame that ran none made it the current one.
+- **Pure-Dart contact normals point from A to B wherever a polygon sits on its body.** They were judged from the bodies' origins, so a polygon away from its own (a collider offset, a compound body, terrain in world coordinates) pushed bodies into itself, and crates fell through it.
+- Pure-Dart capsules collide with segments (one added before a segment fell through it), and a rounded polygon's corner radius counts against capsules, segments and other rounded polygons.
+- A pure-Dart polygon with no edge length collides with nothing; it turned bodies to NaN and stopped the world.
+- Removing a pure-Dart body ends its contacts without events (they named the removed body), takes its joints and the record kept of it; `dispose` clears contact state too, so an engine used again reports nothing of its last world.
 - A linear impulse on a native body pushes at its centre of mass, as the pure-Dart engine does. It pushed at the body's origin, spinning a body whose shapes sit off it.
 - **3D: a character's body can no longer be destroyed or joined on its own**, which crashed Jolt natively (it was destroyed again with its character, or a joint went on holding it). Raycasts and overlaps return characters' bodies, so a "destroy what the blast hits" script could do it. A world now acts only on the bodies, joints and characters it made itself, which also passes over handles from another world (they used to reach into that world).
 - 3D: a `BodyPoses3D` read before a world's `dispose` stays readable after it; it used to point at freed native memory.
@@ -70,6 +94,8 @@
 - 3D: `MeshShape3D` is for static bodies only — Jolt refuses kinematic ones too; the docs said otherwise. Handles can come back once what they named is destroyed (Jolt reuses body ids); the docs said they never did.
 - 3D: a dead character reads as zeros, in the air.
 - `FakePhysicsEngine3D` follows Jolt where tests notice: meshes on static bodies only, invalid shapes and a full world give 0 (a character in a full world comes without its body), a layer outside 0–15 is ignored (it threw on the next step), a contact needs a dynamic body (or a kinematic body and a sensor), a moving body wakes the sleeping bodies it touches while bodies at rest together sleep together, a turned shape's bounds follow its rotation, a rotation of no length reads as none, kinematic bodies sleep, a character's body moves only with its character, activation events come when asked for, a character on a rising platform is lifted instead of pushed under it, `dispose` drops pending events and `step(0)` does nothing. `JoltWorld.step(0)` does nothing too.
+- `FakePhysicsEngine3D` sleeps as Jolt does: a moving kinematic sensor wakes nothing, a sensor is never woken by what touches it, and a pair asleep together reports no `contactStay`.
+- 3D: `JoltPhysicsEngine.joltVersion`, `liveWorlds` and `destroyAll` start Jolt with the engine's `workerThreads`; they started it with the default.
 - The character mover: it steps up only while it still stands after the move, as Jolt's character walks stairs, so stepping no longer cancels a jump; the pure-Dart mover no longer walks through a turned body (its broad phase ignored body rotation); a mover partway through a one-way platform is no longer caught by it on the way through (it crept, then dropped); an `up` of any length is made unit length; a `MoverPlane.pushLimit` below 0 counts as 0 instead of throwing.
 
 ### Removed
