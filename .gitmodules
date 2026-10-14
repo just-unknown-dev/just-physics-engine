@@ -1,3 +1,0 @@
-[submodule "src/native/third_party/just_box_2d"]
-	path = src/native/third_party/just_box_2d
-	url = https://github.com/just-unknown-dev/just-box-2d.git

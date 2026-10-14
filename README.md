@@ -28,7 +28,7 @@ This package is part of the Just Game Engine workspace, but can be used independ
 
 ### Add Dependency
 
-Use the package from pub.dev. 1.4.0 is a pre-release, so ask for it by name — a plain `^1.4.0` or `flutter pub add just_physics_engine` gets the latest stable release, 1.3.0, which has no mover and no 3D:
+Use the package from pub.dev (1.4.0 adds the character mover and 3D):
 
 ```yaml
 dependencies:
@@ -283,11 +283,18 @@ void main() {
 ## Compatibility
 
 - Version `1.4.0`
-- Native build hook: `hooks` ^2, `code_assets` `>=1.2.0 <3.0.0`, `native_toolchain_c` ^0.19.3 (the same generation as `just_graphics_engine`, so both resolve in one app).
+- Native Box2D comes from [just_box_2d](https://pub.dev/packages/just_box_2d) ^0.1.0, built from source by its own hook (`hooks` ^2, the same generation as `just_graphics_engine`, so both resolve in one app). An app that wants the pure-Dart engine everywhere turns that build off:
+
+  ```yaml
+  hooks:
+    user_defines:
+      just_box_2d:
+        build: false
+  ```
 - Dart SDK: `^3.11.0`
 - Flutter: `>=3.41.0`
 - Platforms: Android, iOS, Linux, macOS, Web, Windows
-- Native platforms use the Box2D FFI backend (Box2D v3.2, built from source by the package's build hook): the library is found by its code asset id, not by file name.
+- Native platforms use the Box2D FFI backend (Box2D v3.2, through just_box_2d): the library is found by its code asset id, not by file name. This package itself is plain Dart and compiles no C.
 - Web and WASM targets use the pure-Dart backend.
 
 ## Development

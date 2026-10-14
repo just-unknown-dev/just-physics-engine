@@ -1,7 +1,6 @@
 import 'dart:ffi';
 
-import 'ffi/box2d_bindings.dart' as box2d;
-import 'ffi/box2d_library.dart';
+import 'package:just_box_2d/ffi.dart' as box2d;
 
 // Finalizable is a marker interface required by NativeFinalizer.attach.
 class Box2DWorld implements Finalizable {
@@ -27,7 +26,9 @@ class Box2DWorld implements Finalizable {
   // collects this object before dispose() is called.
   // externalSize = 50 MB tells the GC the native footprint so it schedules
   // collection appropriately. Prefer explicit dispose() in all normal paths.
-  static final _finalizer = NativeFinalizer(box2dFinalizerWorld);
+  static final _finalizer = NativeFinalizer(
+    box2d.addresses.b2w_finalizer_world.cast(),
+  );
 
   Box2DWorld._({required int handle, this.subSteps = 4}) : _handle = handle {
     _finalizer.attach(

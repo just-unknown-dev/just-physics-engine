@@ -1,7 +1,6 @@
 import 'dart:ffi';
 
-import 'ffi/box2d_bindings.dart' as box2d;
-import 'ffi/box2d_library.dart';
+import 'package:just_box_2d/ffi.dart' as box2d;
 
 // Finalizable is a marker interface required by NativeFinalizer.attach.
 class Box2DBody implements Finalizable {
@@ -25,7 +24,9 @@ class Box2DBody implements Finalizable {
   double angularVelocity = 0.0;
 
   // ~1 KB per body (b2BodySim + b2BodyState in Box2D 3.0 internals).
-  static final _finalizer = NativeFinalizer(box2dFinalizerBody);
+  static final _finalizer = NativeFinalizer(
+    box2d.addresses.b2w_finalizer_body.cast(),
+  );
 
   Box2DBody._({required int handle}) : _handle = handle {
     if (handle == 0) {

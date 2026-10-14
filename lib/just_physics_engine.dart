@@ -1,7 +1,7 @@
 /// just_physics_engine
 ///
 /// Standalone physics engine for Flutter with dual backends:
-///   - Native (Android/iOS/Windows/macOS/Linux): Box2D v3.2 via Dart FFI
+///   - Native (Android/iOS/Windows/macOS/Linux): Box2D v3.2 via Dart FFI, from just_box_2d
 ///   - Web: pure-Dart fallback (SAT collision, spatial grid, impulse resolution)
 ///
 /// Core types (both backends):

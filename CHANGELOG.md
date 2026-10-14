@@ -1,12 +1,12 @@
 ## 1.4.0 - 2026-10-13
 
-A development release: 3D physics on Jolt, a 2D character mover, and native Box2D on every native platform.
+3D physics on Jolt, a 2D character mover, and native Box2D on every native platform — Jolt and Box2D each in a package of their own, just_jolt and the new just_box_2d.
 
 ### Breaking changes
 
 - `PhysicsEngine3D` is now the 3D engine interface; the experimental placeholder class of that name (`initialize`, `update`, `dispose`) is gone.
 - `CollisionShape.area` is a new abstract getter: a shape class written outside this package must implement it.
-- The native build hook needs `hooks` ^2, with `code_assets` `>=1.2.0 <3.0.0` and `native_toolchain_c` ^0.19.3. An app that pins `hooks` ^1 elsewhere will not resolve.
+- **Native Box2D moved to the new just_box_2d package** (^0.1.0). This package compiles no C and has no build hook of its own; just_box_2d's hook needs `hooks` ^2 (with `code_assets` `>=1.2.0 <3.0.0` and `native_toolchain_c` ^0.19.3), so an app that pins `hooks` ^1 elsewhere will not resolve. It builds by default; `hooks: user_defines: just_box_2d: build: false` in an app's pubspec turns it off, and every platform runs the pure-Dart engine.
 - **Native Box2D now runs on Android, iOS, macOS and Linux**, which all silently ran the pure-Dart fallback before (see Changed): physics there now behaves as Box2D does. Android was checked on an emulator; iOS, macOS and Linux were not run.
 - **The pure-Dart backend behaves as Box2D does** in three places: friction mixes as the geometric mean, nothing bounces below 1 m/s, and a kinematic body no longer touches static or kinematic ones (see Changed).
 - **Every segment of an open `ChainShape` is solid on the native backend too.** Box2D treats an open chain's first and last points as ghosts, so the end segments had no collision there (and fewer than 4 points none at all); the wrapper now adds ghost points beyond the ends, as the pure-Dart engine already behaved.
@@ -25,7 +25,7 @@ A development release: 3D physics on Jolt, a 2D character mover, and native Box2
 - `PhysicsEngine.bodyCount`.
 - `CollisionShape.area`: how much ground a shape covers (0 for a segment or a chain), for weighing a body by its shape.
 - The web's Box2D classes have the whole native API (the joint creators, `destroyJoint`, `registerImpactCallback`, `physicsBodyFromHandle`, `Box2DBody.ofType`, …), doing nothing there, so code written against them compiles for the web. `Box2DBody`'s `destroy` and force methods on the web now do nothing instead of throwing.
-- Box2D's MIT licence in `LICENSE`.
+- Box2D comes from **just_box_2d**: Box2D v3.2 and the `b2w_*` C layer, built from source by its own hook, usable without this package.
 
 ### Changed
 
@@ -33,12 +33,12 @@ A development release: 3D physics on Jolt, a 2D character mover, and native Box2
 - **Friction combines as Box2D combines it on the pure-Dart backend** too: the geometric mean of the two bodies' friction, not their average, so ice stays slippery on any surface and the web plays as native does.
 - **No bounce below 1 m/s (100 units/s) on the pure-Dart backend**, Box2D's restitution threshold: slow contacts settle instead of hopping for ever. Restitution still combines as the less bouncy of the two on both backends.
 - **A kinematic body no longer touches a static one, or another kinematic one, on the pure-Dart backend** — Box2D makes no contact unless one side is dynamic. A moving platform sliding past a wall raised contact events on the web only. Sensors still see every kind of body.
-- **Native Box2D on Android, iOS, macOS and Linux.** The bindings are now `@Native` functions (ffigen `ffi-native`) that find the library through the code asset the build hook bundles, `package:just_physics_engine/box2d_flutter`, instead of `DynamicLibrary.open('box2d_flutter')`. That name only ever worked on Windows (Android's file is `libbox2d_flutter.so`, Apple's and Linux's are named differently again), so games elsewhere silently ran the pure-Dart fallback. `loadBox2DLibrary()` is now the availability probe (it resolves the bundled library and the symbols newer than the first bindings), and the pure-Dart fallback is unchanged where the library is missing (the web, or the Box2D submodule absent). Internal: `Box2DBindings` is gone; `box2d_bindings.dart` holds top-level functions and an `addresses` table for the finalizers.
-- **The Android and Linux library links `libm`.** Without it `libbox2d_flutter.so` failed to load on Android ("cannot locate symbol atan2f"), the second reason Android never ran native Box2D. Checked on an Android x86_64 emulator: the probe finds the library and the platformer parity tests pass natively.
-- **The native build hook moves to `hooks` ^2, `code_assets` `>=1.2.0 <3.0.0` and `native_toolchain_c` ^0.19.3.** An app can now depend on this package together with packages on the same hooks generation, such as `just_graphics_engine`, and on the newest `native_toolchain_c` (0.19.4 and up need `code_assets` 2). `native_toolchain_c` 0.19.3 runs the compiler directly instead of through `cmd.exe`, so long source lists no longer hit the Windows command-line limit.
+- **Native Box2D on Android, iOS, macOS and Linux.** The bindings are now `@Native` functions (ffigen `ffi-native`) that find the library through the code asset just_box_2d's build hook bundles (`package:just_box_2d/just_box_2d`), instead of `DynamicLibrary.open('box2d_flutter')`. That name only ever worked on Windows (Android's file is `libbox2d_flutter.so`, Apple's and Linux's are named differently again), so games elsewhere silently ran the pure-Dart fallback. just_box_2d's `Box2D.ensureAvailable()` is the availability probe (it resolves the bundled library and the newer functions up front), and the pure-Dart fallback is unchanged where the library is missing (the web, or an app that turned the build off). Internal: `Box2DBindings` is gone.
+- **The Android and Linux library links `libm`.** Without it the library failed to load on Android ("cannot locate symbol atan2f"), the second reason Android never ran native Box2D. Checked on an Android x86_64 emulator: the probe finds the library and the platformer parity tests pass natively.
+- **Box2D lives in the new just_box_2d package.** Box2D v3.2 and the `b2w_*` C layer, with a build hook on `hooks` ^2, `code_assets` `>=1.2.0 <3.0.0` and `native_toolchain_c` ^0.19.3 (the same generation as `just_graphics_engine`, so both resolve in one app), moved out: this package is plain Dart, ships no C and needs no git submodule, and other code can use Box2D through just_box_2d alone. `native_toolchain_c` 0.19.3 runs the compiler directly instead of through `cmd.exe`, so long source lists no longer hit the Windows command-line limit.
 - **The native Box2D classes are what the analyzer and the API docs see.** The library exports them by default and swaps in the web's stubs only where `dart.library.js_interop` is (JS and Wasm), so an IDE no longer reports native-only calls such as `registerImpactCallback` as undefined.
 - A `PolygonShape` of more than 8 vertices becomes several Box2D polygons on the native backend, so it keeps its whole outline (Box2D's polygons hold at most 8).
-- The published package leaves out the parts of the Box2D repository the build does not compile (samples, tests, benchmarks, docs) and a stray coverage report.
+- The published package ships no C code, and no stray coverage report.
 - The bundled Box2D is v3.2; the docs said v3.0.
 - Use Box2D and Jolt from one isolate per process: their native worlds are shared by the whole process.
 

@@ -7,6 +7,7 @@ import 'dart:ui'
 import 'package:flutter/foundation.dart' show debugPrint;
 
 import 'package:ffi/ffi.dart';
+import 'package:just_box_2d/ffi.dart' as box2d;
 import 'package:just_dart/just_dart.dart' show Vector2;
 
 // PhysicsBody, CollisionShape, CircleShape, RectangleShape, PolygonShape are
@@ -15,8 +16,6 @@ import '../physics_2d/physics_engine.dart';
 import '../physics_2d/ray_2d.dart';
 import 'box2d_body.dart';
 import 'box2d_world.dart';
-import 'ffi/box2d_bindings.dart' as box2d;
-import 'ffi/box2d_library.dart' show loadBox2DLibrary;
 import 'box2d_joint.dart';
 import 'physics_game_loop.dart';
 
@@ -116,7 +115,8 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     _handleBuffer = null;
     _transformBuffer = null;
     try {
-      loadBox2DLibrary(); // throws if the shared library is missing
+      // Throws, saying why, when just_box_2d's library is not in the build.
+      box2d.Box2D.ensureAvailable();
       _world = Box2DWorld(
         gravityX: gravity.x,
         gravityY: gravity.y,
@@ -126,7 +126,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       _loop = PhysicsGameLoop(_world!);
       _nativeReady = true;
     } catch (e) {
-      // Native library not compiled yet (e.g. Box2D submodule not initialized).
+      // No native library (the app turned just_box_2d's build off).
       // Fall back to the pure-Dart engine so the app keeps running.
       // debugPrint makes the fallback visible rather than silent — check logs if
       // physics performance is unexpectedly low on a native platform.

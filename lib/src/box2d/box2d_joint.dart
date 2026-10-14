@@ -7,7 +7,7 @@ import 'package:ffi/ffi.dart';
 import 'package:flutter/material.dart' show Offset;
 
 import '../physics_2d/physics_engine.dart';
-import 'ffi/box2d_bindings.dart' as box2d;
+import 'package:just_box_2d/ffi.dart' as box2d;
 
 /// Wraps a native Box2D joint and implements [JointConstraint] as a no-op
 /// (Box2D solves the constraint internally each step).

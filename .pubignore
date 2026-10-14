@@ -28,17 +28,6 @@ TEST_RESULTS.md
 build/
 coverage/
 
-# Box2D: the build hook compiles only its src/ and include/; the rest of the
-# Box2D repository (samples, tests, benchmarks, docs, tools) stays out.
-src/native/third_party/just_box_2d/benchmark/
-src/native/third_party/just_box_2d/docs/
-src/native/third_party/just_box_2d/extern/
-src/native/third_party/just_box_2d/samples/
-src/native/third_party/just_box_2d/scripts/
-src/native/third_party/just_box_2d/shared/
-src/native/third_party/just_box_2d/test/
-src/native/third_party/just_box_2d/*.sh
-src/native/third_party/just_box_2d/*.bat
 
 # OS files
 .DS_Store

@@ -33,15 +33,11 @@ This project follows our [Code of Conduct](CODE_OF_CONDUCT.md). By participating
    git clone https://github.com/just-unknown-dev/just-physics-engine.git
    cd just-physics-engine
    ```
-3. **Fetch Box2D**, a git submodule the build hook compiles (without it every test runs the pure-Dart engine and the native ones skip):
-   ```bash
-   git submodule update --init
-   ```
-4. **Install dependencies:**
+3. **Install dependencies** (native Box2D comes from the just_box_2d package, built by its hook):
    ```bash
    flutter pub get
    ```
-5. **Run tests and analysis** to make sure everything is green before you start:
+4. **Run tests and analysis** to make sure everything is green before you start:
    ```bash
    flutter test
    flutter analyze

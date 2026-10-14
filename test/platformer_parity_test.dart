@@ -4,7 +4,8 @@
 // The pure-Dart assertions here are the oracle the native overrides are held
 // to. The final group replays the same expectations against the native
 // backend, skipping when it is unavailable rather than failing — CI without
-// the Box2D submodule should report "skipped", not "broken".
+// just_box_2d's library (an app can turn its build off) should report
+// "skipped", not "broken".
 
 import 'package:flutter/material.dart' show Offset, Rect;
 import 'package:flutter_test/flutter_test.dart';
@@ -518,7 +519,7 @@ void main() {
     tearDown(() => engine.dispose());
 
     // Gate on the reported backend rather than on Platform.isWindows: a
-    // machine without the Box2D submodule built falls back to pure Dart and
+    // machine without just_box_2d's library falls back to pure Dart and
     // should skip these, not fail them.
     bool nativeLive() => engine.stats['backend'] == 'box2d_v3';
 

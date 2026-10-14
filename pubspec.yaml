@@ -24,22 +24,20 @@ environment:
   flutter: ">=3.41.0"
 
 dependencies:
-  code_assets: ">=1.2.0 <3.0.0"
   ffi: ^2.1.0
   flutter:
     sdk: flutter
-  hooks: ^2.0.0
+  # Box2D for the 2-D engine, compiled from source by its build hook unless
+  # an app turns it off (hooks: user_defines: just_box_2d: build: false).
+  just_box_2d: ^0.1.0
   just_dart: ^0.2.0
   # Jolt Physics for the 3-D engine. Its native library is compiled only
   # when the app asks (hooks: user_defines: just_jolt: build: true), so a
   # 2-D game neither builds nor ships it.
   just_jolt: ^0.1.0
   meta: ^1.17.0
-  native_toolchain_c: ^0.19.3
 
 dev_dependencies:
-  # Regenerates lib/src/box2d/ffi/box2d_bindings.dart (see ffigen.yaml).
-  ffigen: ^12.0.0
   flutter_lints: ^6.0.0
   flutter_test:
     sdk: flutter
