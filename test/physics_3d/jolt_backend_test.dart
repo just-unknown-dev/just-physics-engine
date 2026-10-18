@@ -238,6 +238,44 @@ void main() {
           w.createBody(field, BodySettings3D()), // dynamic, the default
           0,
         );
+
+        // Holes: four samples in the middle of an 8 × 8 field, 2 m apart.
+        final holed = Float32List(64)..fillRange(0, 64, 1);
+        for (final (row, column) in [(3, 3), (3, 4), (4, 3), (4, 4)]) {
+          holed[row * 8 + column] = HeightFieldShape3D.hole;
+        }
+        w.createBody(
+          HeightFieldShape3D(holed, 8, 2),
+          BodySettings3D(position: Vector3(-40, 0, 0), type: BodyType3D.static),
+        );
+        final through = w.createBody(
+          const SphereShape3D(0.3),
+          BodySettings3D(position: Vector3(-33, -4, 7)),
+        );
+        final beside = w.createBody(
+          const SphereShape3D(0.3),
+          BodySettings3D(position: Vector3(-38, -4, 1)),
+        );
+        _run(w, 120);
+        expect(_position(w, through).y, greaterThan(2), reason: 'fell through the hole');
+        expect(_position(w, beside).y, closeTo(-1.3, 0.05), reason: 'held where there is ground');
+
+        // A terrain's size: 129 samples a side, not a multiple of Jolt's
+        // blocks.
+        final big = Float32List(129 * 129)..fillRange(0, 129 * 129, 2);
+        expect(
+          w.createBody(
+            HeightFieldShape3D(big, 129, 0.5),
+            BodySettings3D(position: Vector3(0, 0, 40), type: BodyType3D.static),
+          ),
+          isNot(0),
+        );
+        final pebble = w.createBody(
+          const SphereShape3D(0.3),
+          BodySettings3D(position: Vector3(50, -6, 90)),
+        );
+        _run(w, 120);
+        expect(_position(w, pebble).y, closeTo(-2.3, 0.05), reason: 'on the far side of it too');
       },
     );
 

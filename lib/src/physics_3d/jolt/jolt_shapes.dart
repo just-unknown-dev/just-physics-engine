@@ -217,9 +217,13 @@ final class JoltShapes {
     );
   }
 
+  /// Jolt's no-collision height: the largest float.
+  static const double _noCollision = 3.4028234663852886e38;
+
   /// Jolt's height fields rise along +Y, which is down in the engine. The
   /// field is built with its rows reversed and turned half a turn about X,
-  /// so its heights rise towards −Y and row 0 stays at z = 0.
+  /// so its heights rise towards −Y and row 0 stays at z = 0. A hole goes
+  /// in as Jolt's no-collision value.
   static Pointer<JPH_Shape>? _heightField(
     Arena arena,
     HeightFieldShape3D shape,
@@ -230,7 +234,8 @@ final class JoltShapes {
     for (var row = 0; row < n; row++) {
       final from = (n - 1 - row) * n;
       for (var column = 0; column < n; column++) {
-        samples[row * n + column] = shape.heights[from + column];
+        final h = shape.heights[from + column];
+        samples[row * n + column] = h >= HeightFieldShape3D.hole ? _noCollision : h;
       }
     }
     final offset = arena<JPH_Vec3>();

@@ -213,11 +213,15 @@ final class MeshShape3D extends Shape3D {
 /// `heights[row * sampleCount + column]` is how far **up** (towards −Y, the
 /// engine's up) the ground is at x = column × [cellSize], z = row ×
 /// [cellSize] in the body's space. The grid starts at the body's origin and
-/// runs towards +X and +Z.
+/// runs towards +X and +Z. A sample of [hole] or more is a hole: the cells
+/// round it are not there, and things fall through.
 final class HeightFieldShape3D extends Shape3D {
   /// A terrain of [sampleCount] × [sampleCount] [heights], [cellSize]
   /// metres apart.
   const HeightFieldShape3D(this.heights, this.sampleCount, this.cellSize);
+
+  /// A height that marks a hole.
+  static const double hole = 3.0e38;
 
   /// Row-major heights, [sampleCount] squared of them.
   final Float32List heights;

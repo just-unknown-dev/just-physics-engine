@@ -1,6 +1,6 @@
 name: just_physics_engine
 description: "Standalone 2D/3D physics engine for Flutter: 2D on native Box2D v3.2 (FFI) with a pure-Dart fallback, 3D on Jolt Physics through just_jolt."
-version: 1.4.0
+version: 1.4.1
 homepage: https://github.com/just-unknown-dev/just-physics-engine
 repository: https://github.com/just-unknown-dev/just-physics-engine
 issue_tracker: https://github.com/just-unknown-dev/just-physics-engine/issues

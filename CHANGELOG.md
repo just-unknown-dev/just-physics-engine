@@ -1,3 +1,7 @@
+## 1.4.1 - 2026-10-17
+
+- `HeightFieldShape3D.hole`: a height at it or above is a hole. Jolt is given its no-collision value there, so things fall through; until now a hole was solid ground.
+
 ## 1.4.0 - 2026-10-15
 
 3D physics on Jolt, a 2D character mover, and native Box2D on every native platform — Jolt and Box2D each in a package of their own, just_jolt and the new just_box_2d.
