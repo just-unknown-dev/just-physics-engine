@@ -22,7 +22,7 @@ import 'physics_game_loop.dart';
 /// the pure-Dart [PhysicsEngine].
 ///
 /// Drop-in replacement on native platforms — [PhysicsEngineFactory.create]
-/// returns this class. The existing ECS ([PhysicsSystem], [PhysicsBridgeSystem])
+/// returns this class. The existing ECS ([Physics2DSystem], [PhysicsBridgeSystem])
 /// requires no changes because both engines share the same API surface and
 /// communicate through [PhysicsBody] objects.
 ///
@@ -188,7 +188,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
     // Push this frame's ECS-set velocity into the native body before
     // stepping. PhysicsBody.velocity is a plain Dart field — writing it
-    // (e.g. PhysicsSystem._syncIn's per-frame push from VelocityComponent)
+    // (e.g. Physics2DSystem._syncIn's per-frame push from VelocityComponent)
     // never reaches the native simulation on its own, since nothing else
     // bridges Dart → native for velocity. Without this, the native body's
     // velocity only ever changes via its own internal forces/collisions, so
@@ -217,7 +217,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       // its whole integration loop on isAwake) left it alone. Two backends,
       // two behaviours, from the same code.
       //
-      // Gameplay is unaffected: PhysicsSystem force-wakes every body it syncs,
+      // Gameplay is unaffected: Physics2DSystem force-wakes every body it syncs,
       // and applyLinearImpulse wakes explicitly. Only a body something has
       // deliberately put to sleep is held here, which is what asleep means.
       if (body.mass > 0 && body.isAwake) {
@@ -520,7 +520,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     final b2Body = _bodyMap[body];
     if (b2Body == null) return;
 
-    // Only on a change: b2Body_SetType is expensive, and PhysicsSystem
+    // Only on a change: b2Body_SetType is expensive, and Physics2DSystem
     // re-pushes every body field every frame.
     _pushSettings(body, b2Body);
   }

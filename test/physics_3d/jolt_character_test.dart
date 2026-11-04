@@ -1,5 +1,5 @@
 // Jolt's CharacterVirtual through the engine, in a +Y-down world: stairs,
-// slopes, ceilings and moving platforms, the way PhysicsSystem3D drives it.
+// slopes, ceilings and moving platforms, the way Physics3DSystem drives it.
 
 import 'dart:math' as math;
 
@@ -30,7 +30,7 @@ int _static(
 int _floor(PhysicsWorld3D w) =>
     _static(w, const BoxShape3D(20, 0.5, 20), Vector3(0, 0.5, 0));
 
-/// Moves a character as PhysicsSystem3D does: on the ground it moves with
+/// Moves a character as Physics3DSystem does: on the ground it moves with
 /// the ground (and may jump), in the air it keeps its vertical speed; then
 /// gravity, then the requested movement.
 final class _Walker {

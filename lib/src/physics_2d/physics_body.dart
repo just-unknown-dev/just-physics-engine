@@ -98,7 +98,7 @@ class PhysicsBody {
   /// entirely, regardless of [gravityScale].
   ///
   /// Kept as a separate flag rather than folded into [gravityScale] because
-  /// `PhysicsSystem._syncIn` writes `body.useGravity = !comp.isStatic` on
+  /// `Physics2DSystem._syncIn` writes `body.useGravity = !comp.isStatic` on
   /// *every* frame — a computed view would clobber any gameplay-set
   /// [gravityScale] on the next tick. Read [effectiveGravityScale] instead of
   /// either field directly.
@@ -264,7 +264,7 @@ class PhysicsBody {
   /// The body type actually simulated.
   ///
   /// `mass <= 0` has meant "static" since before [bodyType] existed, and
-  /// `PhysicsSystem` still expresses staticness that way, so that inference
+  /// `Physics2DSystem` still expresses staticness that way, so that inference
   /// wins over an explicitly-set [bodyType].
   BodyType get effectiveBodyType => mass <= 0 ? BodyType.static : bodyType;
 
