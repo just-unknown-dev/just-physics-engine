@@ -9,24 +9,24 @@ import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:just_dart/just_dart.dart';
 import 'ray_2d.dart';
-import 'shape_distance_2d.dart';
+import 'shape_2d_distance.dart';
 import '../box2d/_box2d_engine_native.dart'
     if (dart.library.js_interop) '../box2d/_box2d_engine_stub.dart';
 
 part 'collision_manifold.dart';
-part 'collision_shapes.dart';
-part 'physics_body.dart';
+part 'shape_2d.dart';
+part 'physics_2d_body.dart';
 part 'spatial_grid.dart';
 part 'joint_2d.dart';
 part 'mover_2d.dart';
 
 /// Main physics engine class
-class PhysicsEngine {
+class Physics2DEngine {
   /// Create the best backend for the current platform.
   ///
   /// Native platforms resolve to the Box2D backend.
   /// Web resolves to the pure-Dart backend.
-  factory PhysicsEngine() => createPhysicsEngine();
+  factory Physics2DEngine() => createPhysics2DEngine();
 
   /// Explicit pure-Dart backend constructor.
   ///
@@ -39,9 +39,9 @@ class PhysicsEngine {
   /// frame delta, so results depend on refresh rate — the same jump reaches a
   /// different height at 60 Hz and 144 Hz. Pass `false` only to restore the
   /// pre-1.3 behaviour.
-  PhysicsEngine.pureDart({this.fixedTimestep = true});
+  Physics2DEngine.pureDart({this.fixedTimestep = true});
 
-  /// Whether [update] sub-steps at a fixed 1/60 s. See [PhysicsEngine.pureDart].
+  /// Whether [update] sub-steps at a fixed 1/60 s. See [Physics2DEngine.pureDart].
   final bool fixedTimestep;
 
   /// The fixed simulation increment used when [fixedTimestep] is set.
@@ -57,10 +57,10 @@ class PhysicsEngine {
   double _accumulator = 0.0;
 
   /// All physics bodies — list preserves insertion order for deterministic iteration.
-  final List<PhysicsBody> _bodies = [];
+  final List<Physics2DBody> _bodies = [];
 
   /// Set mirror of [_bodies] for O(1) duplicate-check in [addBody].
-  final Set<PhysicsBody> _bodySet = {};
+  final Set<Physics2DBody> _bodySet = {};
 
   /// Global gravity vector. Default: 981 units/s² (9.81 m/s² at 1 unit = 1 cm),
   /// matching the Box2D backend so both simulate identically.
@@ -192,11 +192,11 @@ class PhysicsEngine {
       awakeBodyCount++;
 
       switch (body.effectiveBodyType) {
-        case BodyType.static:
+        case Body2DType.static:
           // Never integrates and is never moved by the solver.
           continue;
 
-        case BodyType.kinematic:
+        case Body2DType.kinematic:
           // Driven purely by whatever wrote `velocity` — no gravity, no
           // accumulated force, no drag. Deliberately exempt from the sleep
           // heuristic below: a moving platform creeping along under the
@@ -210,7 +210,7 @@ class PhysicsEngine {
           body.torque = 0.0;
           continue;
 
-        case BodyType.dynamic:
+        case Body2DType.dynamic:
           break;
       }
 
@@ -278,7 +278,7 @@ class PhysicsEngine {
   }
 
   /// Add a physics body
-  void addBody(PhysicsBody body) {
+  void addBody(Physics2DBody body) {
     if (_bodySet.add(body)) {
       _bodies.add(body);
     }
@@ -286,7 +286,7 @@ class PhysicsEngine {
 
   /// Remove a physics body, and the joints that hold it. The contacts and
   /// overlaps it was in end without an event, as on the native backend.
-  void removeBody(PhysicsBody body) {
+  void removeBody(Physics2DBody body) {
     if (_bodySet.remove(body)) {
       _bodies.remove(body);
       _grid.removeBody(body);
@@ -319,7 +319,12 @@ class PhysicsEngine {
   ///
   /// The body is woken, since a teleported sleeping body would otherwise sit
   /// inert at its new location until something else disturbed it.
-  void setBodyTransform(PhysicsBody body, double x, double y, {double? angle}) {
+  void setBodyTransform(
+    Physics2DBody body,
+    double x,
+    double y, {
+    double? angle,
+  }) {
     body.position.setValues(x, y);
     if (angle != null) body.angle = angle;
     body.isAwake = true;
@@ -331,12 +336,12 @@ class PhysicsEngine {
   }
 
   /// Change how [body] participates in the simulation.
-  void setBodyType(PhysicsBody body, BodyType type) {
+  void setBodyType(Physics2DBody body, Body2DType type) {
     body.bodyType = type;
   }
 
-  /// Set the per-body gravity multiplier. See [PhysicsBody.gravityScale].
-  void setBodyGravityScale(PhysicsBody body, double scale) {
+  /// Set the per-body gravity multiplier. See [Physics2DBody.gravityScale].
+  void setBodyGravityScale(Physics2DBody body, double scale) {
     body.gravityScale = scale;
   }
 
@@ -345,7 +350,7 @@ class PhysicsEngine {
   /// Omitted arguments keep their current value, so flipping a single layer
   /// does not require restating the others.
   void setBodyFilter(
-    PhysicsBody body, {
+    Physics2DBody body, {
     int? categoryBits,
     int? maskBits,
     int? groupIndex,
@@ -358,7 +363,7 @@ class PhysicsEngine {
   /// Turn [body] into a one-way / pass-through platform, solid only when
   /// approached from [direction].
   void setBodyOneWay(
-    PhysicsBody body,
+    Physics2DBody body,
     bool enabled, {
     OneWayDirection direction = OneWayDirection.fromAbove,
   }) {
@@ -370,7 +375,7 @@ class PhysicsEngine {
   ///
   /// Unlike writing `velocity` directly this preserves existing motion, which
   /// is what knockback, bounce pads and explosions want.
-  void applyLinearImpulse(PhysicsBody body, double ix, double iy) {
+  void applyLinearImpulse(Physics2DBody body, double ix, double iy) {
     if (!body.isDynamic) return;
     body.velocity.x += ix * body.inverseMass;
     body.velocity.y += iy * body.inverseMass;
@@ -379,17 +384,17 @@ class PhysicsEngine {
   }
 
   /// Set [body]'s linear damping (velocity decay per second).
-  void setBodyDamping(PhysicsBody body, double damping) {
+  void setBodyDamping(Physics2DBody body, double damping) {
     body.drag = damping;
   }
 
   /// Set [body]'s angular damping (spin decay per second).
-  void setBodyAngularDamping(PhysicsBody body, double damping) {
+  void setBodyAngularDamping(Physics2DBody body, double damping) {
     body.angularDamping = damping;
   }
 
   /// Allow or forbid [body] to fall asleep. Forbidding it wakes the body.
-  void setBodyCanSleep(PhysicsBody body, bool canSleep) {
+  void setBodyCanSleep(Physics2DBody body, bool canSleep) {
     body.canSleep = canSleep;
     if (!canSleep) {
       body.isAwake = true;
@@ -397,19 +402,19 @@ class PhysicsEngine {
     }
   }
 
-  /// Turn continuous collision ([PhysicsBody.isBullet]) on or off for
+  /// Turn continuous collision ([Physics2DBody.isBullet]) on or off for
   /// [body]. Only the native backend has it; here it is just the flag.
-  void setBodyBullet(PhysicsBody body, bool isBullet) {
+  void setBodyBullet(Physics2DBody body, bool isBullet) {
     body.isBullet = isBullet;
   }
 
   /// Set [body]'s surface friction. Swap this to make a platform icy or sticky.
-  void setBodyFriction(PhysicsBody body, double friction) {
+  void setBodyFriction(Physics2DBody body, double friction) {
     body.friction = friction;
   }
 
   /// Set [body]'s bounciness.
-  void setBodyRestitution(PhysicsBody body, double restitution) {
+  void setBodyRestitution(Physics2DBody body, double restitution) {
     body.restitution = restitution;
   }
 
@@ -421,12 +426,12 @@ class PhysicsEngine {
   /// leaves the native shape alone, so code that must work on every platform
   /// should create the body as a sensor and toggle `isActive` or the collision
   /// filter instead.
-  void setBodySensor(PhysicsBody body, bool isSensor) {
+  void setBodySensor(Physics2DBody body, bool isSensor) {
     body.isSensor = isSensor;
   }
 
   /// Returns true if two bodies should interact (collision filter + group index).
-  bool _shouldBodiesCollide(PhysicsBody a, PhysicsBody b) {
+  bool _shouldBodiesCollide(Physics2DBody a, Physics2DBody b) {
     if (a.groupIndex != 0 && a.groupIndex == b.groupIndex) {
       return a.groupIndex > 0; // same positive group → always; negative → never
     }
@@ -565,7 +570,7 @@ class PhysicsEngine {
   /// [fn] gets the sensor first, then the body that came into it (two
   /// sensors come in no set order), as on the native backend.
   void pollSensorBeginEvents(
-    void Function(PhysicsBody sensor, PhysicsBody visitor) fn,
+    void Function(Physics2DBody sensor, Physics2DBody visitor) fn,
   ) {
     for (final pair in _sensorBeginBuffer) {
       final (sensor, visitor) = _sensorFirst(pair);
@@ -576,7 +581,7 @@ class PhysicsEngine {
   /// Iterate sensor-exit events from the last [update]: the sensor first,
   /// then the body that left it.
   void pollSensorEndEvents(
-    void Function(PhysicsBody sensor, PhysicsBody visitor) fn,
+    void Function(Physics2DBody sensor, Physics2DBody visitor) fn,
   ) {
     for (final pair in _sensorEndBuffer) {
       final (sensor, visitor) = _sensorFirst(pair);
@@ -585,16 +590,16 @@ class PhysicsEngine {
   }
 
   /// [pair]'s bodies, the sensor first.
-  static (PhysicsBody, PhysicsBody) _sensorFirst(BodyPair pair) =>
+  static (Physics2DBody, Physics2DBody) _sensorFirst(BodyPair pair) =>
       pair.a.isSensor ? (pair.a, pair.b) : (pair.b, pair.a);
 
   /// Iterate solid-contact-begin events from the last [update].
   ///
-  /// [fn] receives the two colliding [PhysicsBody] objects and the contact
+  /// [fn] receives the two colliding [Physics2DBody] objects and the contact
   /// normal (nx, ny), matching [Box2DPhysicsEngine]'s native contact-begin
   /// event shape so callers use one signature regardless of backend.
   void pollContactBeginEvents(
-    void Function(PhysicsBody a, PhysicsBody b, double nx, double ny) fn,
+    void Function(Physics2DBody a, Physics2DBody b, double nx, double ny) fn,
   ) {
     for (final (pair, nx, ny) in _contactBeginBuffer) {
       fn(pair.a, pair.b, nx, ny);
@@ -606,7 +611,9 @@ class PhysicsEngine {
   /// [fn] is called for each non-sensor (bodyA, bodyB) pair that stopped
   /// overlapping. [Box2DPhysicsEngine] overrides this with the native
   /// contact-end event stream.
-  void pollContactEndEvents(void Function(PhysicsBody a, PhysicsBody b) fn) {
+  void pollContactEndEvents(
+    void Function(Physics2DBody a, Physics2DBody b) fn,
+  ) {
     for (final pair in _contactEndBuffer) {
       fn(pair.a, pair.b);
     }
@@ -639,7 +646,7 @@ class PhysicsEngine {
   /// [normal] points from [a] to [b]; it is flipped as needed so the test
   /// always reads "which way does the mover lie relative to the platform".
   /// Screen-space convention: +Y is down, so "above" is negative Y.
-  bool _oneWayContactIsSolid(PhysicsBody a, PhysicsBody b, Offset normal) {
+  bool _oneWayContactIsSolid(Physics2DBody a, Physics2DBody b, Offset normal) {
     final platformIsA = a.isOneWay;
     final platform = platformIsA ? a : b;
     final sign = platformIsA ? 1.0 : -1.0;
@@ -655,8 +662,8 @@ class PhysicsEngine {
   }
 
   void _resolveCollision(
-    PhysicsBody a,
-    PhysicsBody b,
+    Physics2DBody a,
+    Physics2DBody b,
     CollisionManifold manifold,
   ) {
     final normal = manifold.normal;
@@ -787,17 +794,17 @@ class PhysicsEngine {
 
   void _renderBodyShape(
     Canvas canvas,
-    PhysicsBody body,
-    CollisionShape shape,
+    Physics2DBody body,
+    Shape2D shape,
     Paint paint,
   ) {
-    if (shape is CircleShape) {
+    if (shape is Circle2DShape) {
       canvas.drawCircle(
         shape.centerAt(body.position.toOffset()),
         shape.radius,
         paint,
       );
-    } else if (shape is CapsuleShape) {
+    } else if (shape is Capsule2DShape) {
       final wa1 = Offset(
         body.position.x + shape.center1.dx,
         body.position.y + shape.center1.dy,
@@ -809,7 +816,7 @@ class PhysicsEngine {
       canvas.drawCircle(wa1, shape.radius, paint);
       canvas.drawCircle(wa2, shape.radius, paint);
       canvas.drawLine(wa1, wa2, paint);
-    } else if (shape is ChainShape) {
+    } else if (shape is Chain2DShape) {
       for (int i = 0; i < shape.vertices.length - 1; i++) {
         canvas.drawLine(
           Offset(
@@ -836,7 +843,7 @@ class PhysicsEngine {
           paint,
         );
       }
-    } else if (shape is SegmentShape) {
+    } else if (shape is Segment2DShape) {
       canvas.drawLine(
         Offset(
           body.position.x + shape.point1.dx,
@@ -848,7 +855,7 @@ class PhysicsEngine {
         ),
         paint,
       );
-    } else if (shape is PolygonShape) {
+    } else if (shape is Polygon2DShape) {
       final path = Path();
       if (shape.vertices.isNotEmpty) {
         path.moveTo(
@@ -887,46 +894,46 @@ class PhysicsEngine {
   }
 
   /// Get all bodies
-  List<PhysicsBody> get bodies => List.unmodifiable(_bodies);
+  List<Physics2DBody> get bodies => List.unmodifiable(_bodies);
 
   /// How many bodies the world holds, without copying them.
   int get bodyCount => _bodies.length;
 
   // ── Joint management ─────────────────────────────────────────────────────
 
-  final List<JointConstraint> _joints = [];
+  final List<Joint2D> _joints = [];
 
   /// Add a joint constraint to the simulation.
-  void addJoint(JointConstraint joint) {
+  void addJoint(Joint2D joint) {
     _joints.add(joint);
   }
 
   /// Remove a joint constraint.
-  void removeJoint(JointConstraint joint) {
+  void removeJoint(Joint2D joint) {
     _joints.remove(joint);
   }
 
   /// All active joints (read-only view).
-  List<JointConstraint> get joints => List.unmodifiable(_joints);
+  List<Joint2D> get joints => List.unmodifiable(_joints);
 
   // ── Unified joint factory (works on both backends) ────────────────────────
   //
   // Dart fallback: adds the Dart constraint directly.
   // Box2DPhysicsEngine overrides to create native joints instead.
 
-  JointConstraint addRevoluteJoint(
-    PhysicsBody a,
-    PhysicsBody b,
+  Joint2D addRevoluteJoint(
+    Physics2DBody a,
+    Physics2DBody b,
     Offset worldAnchor,
   ) {
-    final j = RevoluteJoint(bodyA: a, bodyB: b, worldAnchor: worldAnchor);
+    final j = RevoluteJoint2D(bodyA: a, bodyB: b, worldAnchor: worldAnchor);
     addJoint(j);
     return j;
   }
 
-  JointConstraint addDistanceJoint(
-    PhysicsBody a,
-    PhysicsBody b, {
+  Joint2D addDistanceJoint(
+    Physics2DBody a,
+    Physics2DBody b, {
     double? length,
     double? minLength,
     double? maxLength,
@@ -934,7 +941,7 @@ class PhysicsEngine {
     double damping = 0.3,
   }) {
     final l = length ?? ((b.position - a.position).length);
-    final j = DistanceJoint(
+    final j = DistanceJoint2D(
       bodyA: a,
       bodyB: b,
       length: l,
@@ -947,26 +954,26 @@ class PhysicsEngine {
     return j;
   }
 
-  JointConstraint addWeldJoint(PhysicsBody a, PhysicsBody b) {
-    final j = WeldJoint(bodyA: a, bodyB: b);
+  Joint2D addWeldJoint(Physics2DBody a, Physics2DBody b) {
+    final j = WeldJoint2D(bodyA: a, bodyB: b);
     addJoint(j);
     return j;
   }
 
-  JointConstraint addMouseJoint(PhysicsBody b, Vector2 target) {
-    final j = MouseJoint(body: b, target: target);
+  Joint2D addMouseJoint(Physics2DBody b, Vector2 target) {
+    final j = MouseJoint2D(body: b, target: target);
     addJoint(j);
     return j;
   }
 
-  JointConstraint addPrismaticJoint(PhysicsBody a, PhysicsBody b, Offset axis) {
-    final j = PrismaticJoint(bodyA: a, bodyB: b, axis: axis);
+  Joint2D addPrismaticJoint(Physics2DBody a, Physics2DBody b, Offset axis) {
+    final j = PrismaticJoint2D(bodyA: a, bodyB: b, axis: axis);
     addJoint(j);
     return j;
   }
 
-  JointConstraint addWheelJoint(PhysicsBody a, PhysicsBody b, Offset axis) {
-    final j = WheelJoint(bodyA: a, bodyB: b, axis: axis);
+  Joint2D addWheelJoint(Physics2DBody a, Physics2DBody b, Offset axis) {
+    final j = WheelJoint2D(bodyA: a, bodyB: b, axis: axis);
     addJoint(j);
     return j;
   }
@@ -974,16 +981,16 @@ class PhysicsEngine {
   // ── Body movement events ──────────────────────────────────────────────────
 
   // Per-body previous awake state for Dart-fallback sleep notifications.
-  final Map<PhysicsBody, bool> _prevAwake = {};
+  final Map<Physics2DBody, bool> _prevAwake = {};
 
-  final List<({PhysicsBody body, bool fellAsleep})> _moveEventBuffer = [];
+  final List<({Physics2DBody body, bool fellAsleep})> _moveEventBuffer = [];
 
   /// Iterate body-move events from the last [update].
   ///
   /// Fires for every dynamic body that moved. [fellAsleep] is true if the body
   /// transitioned to sleep this step.
   void pollBodyMoveEvents(
-    void Function(PhysicsBody body, {required bool fellAsleep}) fn,
+    void Function(Physics2DBody body, {required bool fellAsleep}) fn,
   ) {
     for (final ev in _moveEventBuffer) {
       fn(ev.body, fellAsleep: ev.fellAsleep);
@@ -995,8 +1002,8 @@ class PhysicsEngine {
   /// Cast a ray and return the closest hit among all physics bodies.
   ///
   /// [exclude] is an optional set of bodies to skip (e.g. the casting body).
-  RayBodyHit? castRay(Ray ray, {Set<PhysicsBody>? exclude}) {
-    RayBodyHit? best;
+  Ray2DHit? raycast(Ray2D ray, {Set<Physics2DBody>? exclude}) {
+    Ray2DHit? best;
     for (final body in bodies) {
       if (!body.isActive) continue;
       if (exclude != null && exclude.contains(body)) continue;
@@ -1009,8 +1016,8 @@ class PhysicsEngine {
   }
 
   /// Cast a ray and return all hits sorted nearest-first.
-  List<RayBodyHit> castRayAll(Ray ray, {Set<PhysicsBody>? exclude}) {
-    final hits = <RayBodyHit>[];
+  List<Ray2DHit> raycastAll(Ray2D ray, {Set<Physics2DBody>? exclude}) {
+    final hits = <Ray2DHit>[];
     for (final body in bodies) {
       if (!body.isActive) continue;
       if (exclude != null && exclude.contains(body)) continue;
@@ -1025,9 +1032,9 @@ class PhysicsEngine {
 
   /// [ray]'s nearest hit on any of [body]'s shapes, turned with it. A shape
   /// the ray starts inside is passed over, as on the native backend.
-  static RayBodyHit? _rayHitBody(Ray ray, PhysicsBody body) {
+  static Ray2DHit? _rayHitBody(Ray2D ray, Physics2DBody body) {
     final pos = body.position.toOffset();
-    RayBodyHit? best;
+    Ray2DHit? best;
     for (final unturned in [body.shape, ...body.additionalShapes]) {
       final shape = _turnedShape(unturned, body.angle);
       // AABB quick-reject using the slab method.
@@ -1040,51 +1047,56 @@ class PhysicsEngine {
     return best;
   }
 
-  static RayBodyHit? _rayHitShape(
-    Ray ray,
+  static Ray2DHit? _rayHitShape(
+    Ray2D ray,
     Offset pos,
-    CollisionShape shape,
-    PhysicsBody body,
+    Shape2D shape,
+    Physics2DBody body,
   ) {
-    if (shape is CapsuleShape) {
+    if (shape is Capsule2DShape) {
       return _rayHitCapsule(ray, pos, shape, body);
-    } else if (shape is ChainShape) {
+    } else if (shape is Chain2DShape) {
       return _rayHitChain(ray, pos, shape, body);
-    } else if (shape is SegmentShape) {
+    } else if (shape is Segment2DShape) {
       return _rayHitSegmentShape(ray, pos, shape, body);
-    } else if (shape is CircleShape) {
+    } else if (shape is Circle2DShape) {
       return _rayHitCircle(ray, shape.centerAt(pos), shape.radius, body);
-    } else if (shape is RoundedPolygonShape) {
+    } else if (shape is RoundedPolygon2DShape) {
       return _rayHitRoundedPolygon(ray, pos, shape, body);
-    } else if (shape is PolygonShape) {
+    } else if (shape is Polygon2DShape) {
       return _rayHitPolygonVerts(ray, shape.vertices, pos, body);
     }
     return null;
   }
 
   /// [shape] turned by [angle] about its body's position.
-  static CollisionShape _turnedShape(CollisionShape shape, double angle) {
+  static Shape2D _turnedShape(Shape2D shape, double angle) {
     if (angle == 0) return shape;
     final c = math.cos(angle), s = math.sin(angle);
     Offset turn(Offset p) => Offset(c * p.dx - s * p.dy, s * p.dx + c * p.dy);
     return switch (shape) {
-      CircleShape() when shape.center == Offset.zero => shape,
-      CircleShape() => CircleShape(shape.radius, center: turn(shape.center)),
-      CapsuleShape() => CapsuleShape(
+      Circle2DShape() when shape.center == Offset.zero => shape,
+      Circle2DShape() => Circle2DShape(
+        shape.radius,
+        center: turn(shape.center),
+      ),
+      Capsule2DShape() => Capsule2DShape(
         center1: turn(shape.center1),
         center2: turn(shape.center2),
         radius: shape.radius,
       ),
-      RoundedPolygonShape() => RoundedPolygonShape([
+      RoundedPolygon2DShape() => RoundedPolygon2DShape([
         for (final v in shape.vertices) turn(v),
       ], shape.cornerRadius),
-      PolygonShape() => PolygonShape([for (final v in shape.vertices) turn(v)]),
-      SegmentShape() => SegmentShape(
+      Polygon2DShape() => Polygon2DShape([
+        for (final v in shape.vertices) turn(v),
+      ]),
+      Segment2DShape() => Segment2DShape(
         turn(shape.point1),
         turn(shape.point2),
         thickness: shape.thickness,
       ),
-      ChainShape() => ChainShape(
+      Chain2DShape() => Chain2DShape(
         [for (final v in shape.vertices) turn(v)],
         loop: shape.loop,
         thickness: shape.thickness,
@@ -1114,11 +1126,11 @@ class PhysicsEngine {
 
   /// [ray] against a polygon grown by its corner radius: each side moved out
   /// by the radius, and a circle at each corner.
-  static RayBodyHit? _rayHitRoundedPolygon(
-    Ray ray,
+  static Ray2DHit? _rayHitRoundedPolygon(
+    Ray2D ray,
     Offset pos,
-    RoundedPolygonShape shape,
-    PhysicsBody body,
+    RoundedPolygon2DShape shape,
+    Physics2DBody body,
   ) {
     final r = shape.cornerRadius;
     final verts = [for (final v in shape.vertices) v + pos];
@@ -1129,7 +1141,7 @@ class PhysicsEngine {
     if (_containsConvex(shape.vertices, pos, ray.origin)) return null;
     final n = verts.length;
     for (var i = 0; i < n; i++) {
-      final c = CapsuleShape.closestPointOnSegment(
+      final c = Capsule2DShape.closestPointOnSegment(
         ray.origin,
         verts[i],
         verts[(i + 1) % n],
@@ -1143,7 +1155,7 @@ class PhysicsEngine {
     }
     centroid /= n.toDouble();
 
-    RayBodyHit? best;
+    Ray2DHit? best;
     for (var i = 0; i < n; i++) {
       final a = verts[i], b = verts[(i + 1) % n];
       final e = b - a;
@@ -1166,7 +1178,7 @@ class PhysicsEngine {
       final s = (dpx * ray.direction.dy - dpy * ray.direction.dx) / denom;
       if (t < 0 || t > ray.maxDistance || s < 0 || s > 1) continue;
       if (best != null && t >= best.distance) continue;
-      best = RayBodyHit(
+      best = Ray2DHit(
         body: body,
         point: ray.at(t),
         normal: normal,
@@ -1180,7 +1192,7 @@ class PhysicsEngine {
     return best;
   }
 
-  static bool _rayIntersectsAABB(Ray ray, Rect rect) {
+  static bool _rayIntersectsAABB(Ray2D ray, Rect rect) {
     double tMin = 0, tMax = ray.maxDistance;
 
     if (ray.direction.dx.abs() < 1e-10) {
@@ -1218,11 +1230,11 @@ class PhysicsEngine {
     return true;
   }
 
-  static RayBodyHit? _rayHitCircle(
-    Ray ray,
+  static Ray2DHit? _rayHitCircle(
+    Ray2D ray,
     Offset center,
     double radius,
-    PhysicsBody body,
+    Physics2DBody body,
   ) {
     final ocx = ray.origin.dx - center.dx;
     final ocy = ray.origin.dy - center.dy;
@@ -1240,7 +1252,7 @@ class PhysicsEngine {
     final dx = point.dx - center.dx;
     final dy = point.dy - center.dy;
     final len = math.sqrt(dx * dx + dy * dy);
-    return RayBodyHit(
+    return Ray2DHit(
       body: body,
       point: point,
       normal: len > 1e-8 ? Offset(dx / len, dy / len) : const Offset(0, -1),
@@ -1248,11 +1260,11 @@ class PhysicsEngine {
     );
   }
 
-  static RayBodyHit? _rayHitPolygonVerts(
-    Ray ray,
+  static Ray2DHit? _rayHitPolygonVerts(
+    Ray2D ray,
     List<Offset> verts,
     Offset pos,
-    PhysicsBody body,
+    Physics2DBody body,
   ) {
     // Starting inside: passed over.
     if (_containsConvex(verts, pos, ray.origin)) return null;
@@ -1292,7 +1304,7 @@ class PhysicsEngine {
     }
 
     if (closestNormal == null) return null;
-    return RayBodyHit(
+    return Ray2DHit(
       body: body,
       point: ray.at(closestT),
       normal: closestNormal,
@@ -1300,21 +1312,21 @@ class PhysicsEngine {
     );
   }
 
-  static RayBodyHit? _rayHitCapsule(
-    Ray ray,
+  static Ray2DHit? _rayHitCapsule(
+    Ray2D ray,
     Offset pos,
-    CapsuleShape cap,
-    PhysicsBody body,
+    Capsule2DShape cap,
+    Physics2DBody body,
   ) {
     final p1 = Offset(pos.dx + cap.center1.dx, pos.dy + cap.center1.dy);
     final p2 = Offset(pos.dx + cap.center2.dx, pos.dy + cap.center2.dy);
     final r = cap.radius;
 
     // Starting inside: passed over.
-    final inner = CapsuleShape.closestPointOnSegment(ray.origin, p1, p2);
+    final inner = Capsule2DShape.closestPointOnSegment(ray.origin, p1, p2);
     if ((ray.origin - inner).distanceSquared < r * r) return null;
 
-    RayBodyHit? best;
+    Ray2DHit? best;
 
     // Endpoint circles (caps).
     for (final center in [p1, p2]) {
@@ -1355,7 +1367,7 @@ class PhysicsEngine {
           nx = -nx;
           ny = -ny;
         }
-        best = RayBodyHit(
+        best = Ray2DHit(
           body: body,
           point: ray.at(t),
           normal: Offset(nx, ny),
@@ -1367,16 +1379,16 @@ class PhysicsEngine {
     return best;
   }
 
-  static RayBodyHit? _rayHitSegmentShape(
-    Ray ray,
+  static Ray2DHit? _rayHitSegmentShape(
+    Ray2D ray,
     Offset pos,
-    SegmentShape seg,
-    PhysicsBody body,
+    Segment2DShape seg,
+    Physics2DBody body,
   ) {
     return _rayHitCapsule(
       ray,
       pos,
-      CapsuleShape(
+      Capsule2DShape(
         center1: seg.point1,
         center2: seg.point2,
         radius: seg.thickness,
@@ -1385,18 +1397,18 @@ class PhysicsEngine {
     );
   }
 
-  static RayBodyHit? _rayHitChain(
-    Ray ray,
+  static Ray2DHit? _rayHitChain(
+    Ray2D ray,
     Offset pos,
-    ChainShape chain,
-    PhysicsBody body,
+    Chain2DShape chain,
+    Physics2DBody body,
   ) {
     if (chain.vertices.length < 2) return null;
-    RayBodyHit? best;
+    Ray2DHit? best;
     final n = chain.vertices.length;
     final segCount = chain.loop ? n : n - 1;
     for (int i = 0; i < segCount; i++) {
-      final seg = SegmentShape(
+      final seg = Segment2DShape(
         chain.vertices[i],
         chain.vertices[(i + 1) % n],
         thickness: chain.thickness,
@@ -1426,26 +1438,26 @@ class PhysicsEngine {
   /// Box2D's shape cast against every shape of every active body (turned
   /// with its body), so it stops where the circle touches, to within Box2D's
   /// linear slop (half a unit). A circle that starts out touching a body
-  /// hits it at a [ShapeCastResult.toi] of 0.
-  ShapeCastResult? castCircle(
+  /// hits it at a [CircleCast2DHit.toi] of 0.
+  CircleCast2DHit? circleCast(
     Offset origin,
     double radius,
     Offset motion, {
-    Set<PhysicsBody>? exclude,
+    Set<Physics2DBody>? exclude,
   }) {
     if (motion == Offset.zero) return null;
     final motionDist = motion.distance;
-    final circle = ShapeProxy2D([origin], radius);
+    final circle = Shape2DProxy([origin], radius);
     final from = Rect.fromCircle(center: origin, radius: radius);
     final sweep = from.expandToInclude(from.shift(motion));
 
-    ShapeCastResult? best;
+    CircleCast2DHit? best;
     for (final body in bodies) {
       if (!body.isActive) continue;
       if (exclude != null && exclude.contains(body)) continue;
       if (!_turnedBoundsOf(body).overlaps(sweep)) continue;
       for (final proxy in _shapeProxiesOf(body, Offset.zero)) {
-        final hit = castShape2D(
+        final hit = shapeCast2D(
           proxy,
           circle,
           motion,
@@ -1457,10 +1469,10 @@ class PhysicsEngine {
         }
         var normal = hit.normal;
         if (hit.fraction == 0) {
-          final d = ShapeDistance2D.between(proxy, circle);
+          final d = Shape2DDistance.between(proxy, circle);
           normal = d.overlaps ? Offset.zero : d.normal;
         }
-        best = ShapeCastResult(
+        best = CircleCast2DHit(
           body: body,
           point: hit.point,
           normal: normal,
@@ -1475,14 +1487,14 @@ class PhysicsEngine {
   // ── Character movers ──────────────────────────────────────────────────────
 
   /// The surfaces a mover of [shape] centred at [position] touches, as
-  /// planes for [MoverSolver.solvePlanes] (Box2D's b2World_CollideMover,
-  /// for a capsule or a box). Sensors, [MoverFilter.ignore] and bodies the
+  /// planes for [Mover2DSolver.solvePlanes] (Box2D's b2World_CollideMover,
+  /// for a capsule or a box). Sensors, [Mover2DFilter.ignore] and bodies the
   /// filter leaves out are passed over; a one-way platform counts only from
   /// its solid side and only while the mover is not partway through it.
-  List<MoverPlane> collideMover(
-    MoverShape shape,
+  List<Mover2DPlane> collideMover(
+    Mover2DShape shape,
     Offset position, {
-    MoverFilter filter = const MoverFilter(),
+    Mover2DFilter filter = const Mover2DFilter(),
   }) => _collideMoverDart(shape, position, filter);
 
   /// How much of [translation] a mover of [shape] at [position] can move
@@ -1491,10 +1503,10 @@ class PhysicsEngine {
   /// one-way platform stops it only when it comes from the solid side and
   /// is not partway through it.
   double castMover(
-    MoverShape shape,
+    Mover2DShape shape,
     Offset position,
     Offset translation, {
-    MoverFilter filter = const MoverFilter(),
+    Mover2DFilter filter = const Mover2DFilter(),
   }) => _castMoverDart(shape, position, translation, filter);
 
   // ── Overlap queries ───────────────────────────────────────────────────────
@@ -1503,8 +1515,8 @@ class PhysicsEngine {
   /// turned with the body — overlaps [rect]. The native backend answers with
   /// Box2D's boxes, which it keeps a little larger than the shapes (by a
   /// tenth of a metre), so a body just outside [rect] can come too.
-  List<PhysicsBody> queryAABB(Rect rect) {
-    final result = <PhysicsBody>[];
+  List<Physics2DBody> queryAABB(Rect rect) {
+    final result = <Physics2DBody>[];
     for (final body in bodies) {
       if (!body.isActive) continue;
       if (_turnedBoundsOf(body).overlaps(rect)) result.add(body);
@@ -1514,15 +1526,15 @@ class PhysicsEngine {
 
   /// Return all active bodies with a shape (turned with its body)
   /// overlapping a circle at [center] with [radius].
-  List<PhysicsBody> queryCircle(Offset center, double radius) {
+  List<Physics2DBody> queryCircle(Offset center, double radius) {
     final aabb = Rect.fromCircle(center: center, radius: radius);
-    final circle = ShapeProxy2D([center], radius);
-    final result = <PhysicsBody>[];
+    final circle = Shape2DProxy([center], radius);
+    final result = <Physics2DBody>[];
     for (final body in bodies) {
       if (!body.isActive) continue;
       if (!_turnedBoundsOf(body).overlaps(aabb)) continue;
       for (final proxy in _shapeProxiesOf(body, Offset.zero)) {
-        final d = ShapeDistance2D.between(proxy, circle);
+        final d = Shape2DDistance.between(proxy, circle);
         if (d.overlaps || d.distance < proxy.radius + radius) {
           result.add(body);
           break;
@@ -1533,7 +1545,7 @@ class PhysicsEngine {
   }
 
   /// Return all active bodies containing [point].
-  List<PhysicsBody> queryPoint(Offset point) =>
+  List<Physics2DBody> queryPoint(Offset point) =>
       queryCircle(point, 0.5); // 0.5-unit epsilon circle
 
   // ── Shape caching (in-memory) ─────────────────────────────────────────────
@@ -1549,10 +1561,10 @@ class PhysicsEngine {
   }
 }
 
-/// The result of a circle shape cast against a [PhysicsBody].
-class ShapeCastResult {
+/// The result of a circle shape cast against a [Physics2DBody].
+class CircleCast2DHit {
   /// The body that was hit.
-  final PhysicsBody body;
+  final Physics2DBody body;
 
   /// World-space contact point.
   final Offset point;
@@ -1566,7 +1578,7 @@ class ShapeCastResult {
   /// Distance from the sweep origin to the contact point.
   final double distance;
 
-  const ShapeCastResult({
+  const CircleCast2DHit({
     required this.body,
     required this.point,
     required this.normal,
@@ -1575,10 +1587,10 @@ class ShapeCastResult {
   });
 }
 
-/// The result of a ray cast against a [PhysicsBody].
-class RayBodyHit {
+/// The result of a ray cast against a [Physics2DBody].
+class Ray2DHit {
   /// The body that was intersected.
-  final PhysicsBody body;
+  final Physics2DBody body;
 
   /// World-space hit point.
   final Offset point;
@@ -1589,7 +1601,7 @@ class RayBodyHit {
   /// Distance from the ray origin to [point] (world units).
   final double distance;
 
-  const RayBodyHit({
+  const Ray2DHit({
     required this.body,
     required this.point,
     required this.normal,

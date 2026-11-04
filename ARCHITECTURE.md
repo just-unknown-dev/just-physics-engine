@@ -24,22 +24,22 @@ The public package entry point is `lib/just_physics_engine.dart`, which exports:
 
 ## 1) Public API Layer
 
-- `PhysicsEngine()` selects the best runtime backend by default.
-- `PhysicsEngineFactory.create()` remains available for explicit factory-style construction.
-- Consumers use shared types like `PhysicsBody`, `CollisionShape`, and `Ray`.
+- `Physics2DEngine()` selects the best runtime backend by default.
+- `PhysicsEngineFactory.create2D()` remains available for explicit factory-style construction; `create3D()` is its 3D twin.
+- Consumers use shared types like `Physics2DBody`, `Shape2D`, and `Ray2D`.
 - Higher-level game code should not need backend-specific branches for normal use.
 
 ## 2) Pure-Dart 2D Layer (`lib/src/physics_2d`)
 
 Core files:
 
-- `physics_engine.dart`: simulation loop, broad-phase invocation, impulse resolution, debug rendering.
-- `physics_body.dart`: rigid body state carrier and force/impulse helpers.
-- `collision_shapes.dart`: SAT/circle manifold generation.
+- `physics_2d_engine.dart`: simulation loop, broad-phase invocation, impulse resolution, debug rendering.
+- `physics_2d_body.dart`: rigid body state carrier and force/impulse helpers.
+- `shape_2d.dart`: the shapes, and SAT/circle manifold generation.
 - `spatial_grid.dart`: broad-phase uniform grid with pooled buckets.
 - `collision_manifold.dart`: narrow-phase result object.
 - `ray_2d.dart`: ray utility.
-- `shape_distance_2d.dart`: Box2D's GJK distance and shape cast, ported.
+- `shape_2d_distance.dart`: Box2D's GJK distance and shape cast, ported.
 - `mover_2d.dart`: the character mover — its shapes, filter and planes, Box2D's plane solver, `CharacterMover2D`, and the pure-Dart answers to `collideMover` and `castMover`.
 
 Key runtime flow per update:
@@ -59,7 +59,7 @@ Allocation strategy highlights:
 
 Core pieces:
 
-- `Box2DPhysicsEngine`: backend adapter that mirrors `PhysicsEngine` API.
+- `Box2DPhysicsEngine`: backend adapter that mirrors `Physics2DEngine` API.
 - `Box2DWorld`: native world handle + fixed-timestep accumulator.
 - `Box2DBody`: native body wrapper with previous/current transform snapshots.
 - `PhysicsGameLoop`: lightweight step coordinator that exposes interpolation alpha.
@@ -73,7 +73,7 @@ Native synchronization pattern:
 1. Before stepping, capture previous body transforms and push Dart-side writes: linear velocity for awake dynamic bodies, and angular velocity only when it differs from what Box2D last reported (`Box2DBody.angularVelocity`), so an unchanged value never overwrites Box2D's own spin.
 2. Advance fixed-step Box2D world (0..N steps per frame).
 3. Bulk extract transforms in one FFI call to pre-allocated native buffers: 7 floats per body — x, y, angle, vx, vy, awake, angular velocity.
-4. Write transformed state back into shared `PhysicsBody` objects.
+4. Write transformed state back into shared `Physics2DBody` objects.
 
 This write-through keeps ECS/gameplay integrations unchanged.
 
@@ -82,7 +82,7 @@ Per-body flags in the wrapper:
 - The wrapper keeps a sensor flag per body handle, read when shape fixtures are created. Handles are reused (a new world, or a freed slot), so `addBody` writes the flag for every body — solid ones too — before adding shapes, and `b2w_destroyBody` erases it. Otherwise a solid body could inherit `true` from a destroyed sensor.
 - Bullet, sleep (`b2w_setBodySleepEnabled`), damping and the other body settings are set at `addBody` and again by the matching `setBody*` engine methods at runtime.
 
-Shapes: `CircleShape.center` is passed to Box2D as the circle's local centre, so it rotates with the body. The pure-Dart backend does not rotate shapes in its collisions; it offsets the circle by `center` unrotated (its queries and the mover do turn shapes, as Box2D does). A segment, and each segment of a chain, with a thickness goes in as a capsule (Box2D's lines have none); a chain with none goes in as two Box2D chains, one each way round, as a Box2D chain is solid on one side. Every shape has density 1: Box2D gives static and kinematic bodies no mass whatever it is, and `b2w_setBodyMass` sets a dynamic body's.
+Shapes: `Circle2DShape.center` is passed to Box2D as the circle's local centre, so it rotates with the body. The pure-Dart backend does not rotate shapes in its collisions; it offsets the circle by `center` unrotated (its queries and the mover do turn shapes, as Box2D does). A segment, and each segment of a chain, with a thickness goes in as a capsule (Box2D's lines have none); a chain with none goes in as two Box2D chains, one each way round, as a Box2D chain is solid on one side. Every shape has density 1: Box2D gives static and kinematic bodies no mass whatever it is, and `b2w_setBodyMass` sets a dynamic body's.
 
 Character movers: `b2w_moverCollide` and `b2w_moverCast` in `box2d_wrapper.cpp` walk the broad phase (`b2World_OverlapAABB`) and run Box2D's own `b2ShapeDistance` and `b2ShapeCast` per shape, with the same rules as the Dart side: sensors and the mover's own body passed over, a one-way shape solid from one side only (its flags are the shape user data the pre-solve callback reads), a chain segment one-sided (a chain with no thickness goes into Box2D both ways round, so it stops a mover from either side, as on the Dart side). Box2D's `b2World_CollideMover`/`CastMover` take only a capsule and cannot pass over one-way shapes or one body, so they are not used.
 
@@ -90,14 +90,14 @@ Character movers: `b2w_moverCollide` and `b2w_moverCast` in `box2d_wrapper.cpp` 
 
 - `PhysicsEngineFactory` uses conditional imports.
 - When native init fails (just_box_2d's library not in the build: the app turned it off), `Box2DPhysicsEngine` logs and falls back to pure-Dart update behavior.
-- A game that never needs Box2D (a 3-D game with no 2-D physics) can ask the engine for the pure-Dart engine directly: `EngineConfig(createPhysics: PhysicsEngine.pureDart)` in just_game_engine.
+- A game that never needs Box2D (a 3-D game with no 2-D physics) can ask the engine for the pure-Dart engine directly: `EngineConfig(createPhysics: Physics2DEngine.pureDart)` in just_game_engine.
 - On web, `box2d_public_web.dart` has the native classes' whole API, doing nothing, so code written against them compiles there too. Keep the two in step.
 
 ## Data Model
 
 Primary state object:
 
-- `PhysicsBody` is the shared carrier for gameplay-visible position, velocity, angle, angular velocity, material properties (friction, restitution, `drag`, `angularDamping`), sleep state (`isAwake`, `canSleep`), and shape.
+- `Physics2DBody` is the shared carrier for gameplay-visible position, velocity, angle, angular velocity, material properties (friction, restitution, `drag`, `angularDamping`), sleep state (`isAwake`, `canSleep`), and shape.
 - Fields set before `addBody` reach both backends. To change one afterwards, call the engine's `setBody*` method; writing the field directly only reaches the pure-Dart backend. The exceptions are the per-step motion fields — `velocity`, `angularVelocity`, and the forces left by `applyForce`/`applyTorque` (`acceleration`, `torque`) — which the native backend pushes for every awake dynamic body before each step.
 
 Collision model:
@@ -110,13 +110,13 @@ Collision model:
 
 Pure-Dart backend:
 
-- Uses a fixed `1/60` s timestep with an accumulator, at most 5 sub-steps a frame (`PhysicsEngine.maxSubSteps`), and exposes the remainder as `alpha`. `PhysicsEngine.pureDart(fixedTimestep: false)` integrates the frame's `deltaTime` directly instead.
+- Uses a fixed `1/60` s timestep with an accumulator, at most 5 sub-steps a frame (`Physics2DEngine.maxSubSteps`), and exposes the remainder as `alpha`. `Physics2DEngine.pureDart(fixedTimestep: false)` integrates the frame's `deltaTime` directly instead.
 
 Box2D backend:
 
 - Uses fixed timestep `1/60` with accumulator and sub-steps.
 - Reads each fixed step's contact, sensor and move events right after it (`Box2DWorld.step`'s `onStep`) and keeps a frame's until the next `update`: Box2D holds the last step's only.
-- Brings each native body's type, gravity scale and mass up to date whenever they change (`_pushSettings`), from the engine's setters or the `PhysicsBody` fields.
+- Brings each native body's type, gravity scale and mass up to date whenever they change (`_pushSettings`), from the engine's setters or the `Physics2DBody` fields.
 - Hands `applyForce`'s accumulated forces to Box2D as impulses (acceleration × step) before a step, as the pure-Dart engine integrates them, and runs Dart joints (the mouse joint) before every native step (`Box2DWorld.step`'s `beforeStep`).
 - Exposes interpolation alpha (`accumulator / fixedDt`) for render smoothing.
 
@@ -129,7 +129,7 @@ Box2D backend:
 
 ## 3D
 
-- `PhysicsEngine3D` makes `PhysicsWorld3D`s; the world API is int handles plus batched reads (`readMovedBodies`, 14 floats a body) and one event drain per step, so a frame costs a few FFI calls, not one per body.
+- `Physics3DEngine` makes `Physics3DWorld`s; the world API is int handles plus batched reads (`readMovedBodies`, 14 floats a body) and one event drain per step, so a frame costs a few FFI calls, not one per body.
 - `JoltPhysicsEngine` (`src/physics_3d/jolt/`) is the implementation, on just_jolt's bindings: `JoltWorld` (bodies, joints, characters, queries) and `JoltShapes` (shared, reference-counted native shapes; height fields turned to Jolt's +Y up). Worlds ask just_jolt for min restitution, as the 2D engines mix it.
 - A `JoltWorld` acts only on the bodies, joints and characters it made itself: a handle from another world, or a character's stand-in body passed to `destroyBody` or `createJoint`, is passed over — Jolt would otherwise destroy that body twice. Shapes are checked (`Shape3D.isValid`) before Jolt sees them.
 - Jolt's native library is compiled only when the app asks (`hooks: user_defines: just_jolt: build: true`). The 3D code is reachable only through `PhysicsEngineFactory.create3D` and `JoltPhysicsEngine`, so a 2D app tree-shakes all of it and, without the define, builds no Jolt.

@@ -10,25 +10,25 @@ const _dt = 1 / 60;
 final _backend = JoltPhysicsEngine();
 final _up = Vector3(0, -1, 0);
 
-PhysicsWorld3D _world({List<int>? masks}) {
-  final world = _backend.createWorld(PhysicsWorldSettings3D(layerMasks: masks));
+Physics3DWorld _world({List<int>? masks}) {
+  final world = _backend.createWorld(Physics3DWorldSettings(layerMasks: masks));
   addTearDown(world.dispose);
   return world;
 }
 
 int _static(
-  PhysicsWorld3D w,
+  Physics3DWorld w,
   Shape3D shape,
   Vector3 at, {
   Quaternion? rotation,
 }) => w.createBody(
   shape,
-  BodySettings3D(position: at, rotation: rotation, type: BodyType3D.static),
+  Body3DSettings(position: at, rotation: rotation, type: Body3DType.static),
 );
 
 /// A 40 m floor whose top is at y = 0.
-int _floor(PhysicsWorld3D w) =>
-    _static(w, const BoxShape3D(20, 0.5, 20), Vector3(0, 0.5, 0));
+int _floor(Physics3DWorld w) =>
+    _static(w, const Box3DShape(20, 0.5, 20), Vector3(0, 0.5, 0));
 
 /// Moves a character as Physics3DSystem does: on the ground it moves with
 /// the ground (and may jump), in the air it keeps its vertical speed; then
@@ -36,15 +36,15 @@ int _floor(PhysicsWorld3D w) =>
 final class _Walker {
   _Walker(this.w, Vector3 at, {int layer = 0, bool innerBody = true})
     : character = w.createCharacter(
-        CharacterSettings3D(layer: layer, innerBody: innerBody),
+        Character3DSettings(layer: layer, innerBody: innerBody),
         at,
       ) {
     w.characterState(character, state);
   }
 
-  final PhysicsWorld3D w;
+  final Physics3DWorld w;
   final int character;
-  final CharacterState3D state = CharacterState3D();
+  final Character3DState state = Character3DState();
 
   Vector3 get position => state.position;
 
@@ -82,11 +82,11 @@ final class _Walker {
 
 /// A ramp rising towards +X at [angle] whose top surface meets the floor at
 /// x = [startX].
-int _ramp(PhysicsWorld3D w, double angle, double startX) {
+int _ramp(Physics3DWorld w, double angle, double startX) {
   final c = math.cos(angle), s = math.sin(angle);
   return _static(
     w,
-    const BoxShape3D(3, 0.1, 2),
+    const Box3DShape(3, 0.1, 2),
     Vector3(startX + 3 * c + 0.1 * s, 0.1 * c - 3 * s, 0),
     rotation: Quaternion(0, 0, math.sin(-angle / 2), math.cos(-angle / 2)),
   );
@@ -98,7 +98,7 @@ void main() {
     _floor(w);
     final hero = _Walker(w, Vector3(0, -0.5, 0));
     hero.walk(60, Vector3.zero());
-    expect(hero.state.groundState, GroundState3D.onGround);
+    expect(hero.state.groundState, Ground3DState.onGround);
     expect(hero.position.y, closeTo(0, 0.03));
     expect(
       hero.state.groundNormal.y,
@@ -113,7 +113,7 @@ void main() {
     // Five steps, 0.2 m up and 0.5 m deep each, from x = 2.
     for (var k = 1; k <= 5; k++) {
       final x0 = 2 + 0.5 * (k - 1);
-      _static(w, BoxShape3D(2.5, 0.1 * k, 2), Vector3(x0 + 2.5, -0.1 * k, 0));
+      _static(w, Box3DShape(2.5, 0.1 * k, 2), Vector3(x0 + 2.5, -0.1 * k, 0));
     }
     final hero = _Walker(w, Vector3.zero());
     hero.walk(150, Vector3(2, 0, 0));
@@ -125,7 +125,7 @@ void main() {
   test('a step too tall is a wall', () {
     final w = _world();
     _floor(w);
-    _static(w, const BoxShape3D(2, 0.4, 2), Vector3(4, -0.4, 0)); // 0.8 m tall
+    _static(w, const Box3DShape(2, 0.4, 2), Vector3(4, -0.4, 0)); // 0.8 m tall
     final hero = _Walker(w, Vector3.zero());
     hero.walk(120, Vector3(2, 0, 0));
     expect(hero.position.x, closeTo(2 - 0.3, 0.05), reason: 'stopped by it');
@@ -156,7 +156,7 @@ void main() {
     final w = _world();
     _floor(w);
     // A ceiling whose underside is 2.2 m up; the character is 1.8 m tall.
-    _static(w, const BoxShape3D(5, 0.25, 5), Vector3(0, -2.45, 0));
+    _static(w, const Box3DShape(5, 0.25, 5), Vector3(0, -2.45, 0));
     final hero = _Walker(w, Vector3.zero());
     hero.walk(10, Vector3.zero());
     hero.step(Vector3.zero(), jump: 6);
@@ -181,8 +181,8 @@ void main() {
   test('rides a moving platform', () {
     final w = _world();
     final platform = w.createBody(
-      const BoxShape3D(2, 0.25, 2),
-      BodySettings3D(position: Vector3(0, 0.25, 0), type: BodyType3D.kinematic),
+      const Box3DShape(2, 0.25, 2),
+      Body3DSettings(position: Vector3(0, 0.25, 0), type: Body3DType.kinematic),
     );
     final hero = _Walker(w, Vector3.zero());
     hero.walk(10, Vector3.zero());
@@ -205,23 +205,23 @@ void main() {
     final w = _world();
     _floor(w);
     final coin = w.createBody(
-      const SphereShape3D(0.3),
-      BodySettings3D(
+      const Sphere3DShape(0.3),
+      Body3DSettings(
         position: Vector3(2, -1, 0),
-        type: BodyType3D.static,
+        type: Body3DType.static,
         isSensor: true,
       ),
     );
     final hero = _Walker(w, Vector3.zero());
     final body = w.characterBody(hero.character);
     expect(body, isNot(0));
-    final events = <PhysicsEvent3D>[];
+    final events = <Physics3DEvent>[];
     for (var i = 0; i < 90; i++) {
       hero.step(Vector3(2, 0, 0));
       events.addAll(w.drainEvents());
     }
     final enter = events.firstWhere(
-      (e) => e.type == PhysicsEventType3D.sensorBegin,
+      (e) => e.type == Physics3DEventType.sensorBegin,
     );
     expect({enter.bodyA, enter.bodyB}, {coin, body});
 
@@ -231,7 +231,7 @@ void main() {
       w.raycast(
         Vector3(hero.position.x, -1, -5),
         Vector3(0, 0, 10),
-        filter: const QueryFilter3D(includeCharacters: false),
+        filter: const Query3DFilter(includeCharacters: false),
       ),
       isEmpty,
     );
@@ -272,7 +272,7 @@ void main() {
     w.destroyCharacter(hero.character);
     expect(w.isCharacter(hero.character), isFalse);
     hero.step(Vector3(1, 0, 0));
-    expect(hero.state.groundState, GroundState3D.inAir);
+    expect(hero.state.groundState, Ground3DState.inAir);
     expect(w.characterContacts(hero.character), isEmpty);
     expect(w.bodyCount, 0, reason: 'its body went with it');
   });

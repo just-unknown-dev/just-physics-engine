@@ -21,20 +21,20 @@ void main() {
       markTestSkipped('built without the dev flavour');
       return;
     }
-    final w = backend.createWorld(PhysicsWorldSettings3D());
+    final w = backend.createWorld(Physics3DWorldSettings());
     addTearDown(w.dispose);
     w.createBody(
-      const BoxShape3D(1, 1, 1),
-      BodySettings3D(position: Vector3(3, 0, 0)),
+      const Box3DShape(1, 1, 1),
+      Body3DSettings(position: Vector3(3, 0, 0)),
     );
     final a = w.createBody(
-      const SphereShape3D(0.5),
-      BodySettings3D(position: Vector3(-3, 0, 0)),
+      const Sphere3DShape(0.5),
+      Body3DSettings(position: Vector3(-3, 0, 0)),
     );
     w.createJoint(
       a,
       0,
-      JointSettings3D(kind: JointKind3D.point, pointA: Vector3(-3, -1, 0)),
+      Joint3DSettings(kind: Joint3DKind.point, pointA: Vector3(-3, -1, 0)),
     );
     w.step(1 / 60);
 

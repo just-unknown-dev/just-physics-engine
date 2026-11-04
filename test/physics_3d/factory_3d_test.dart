@@ -13,15 +13,15 @@ void main() {
     final engine = PhysicsEngineFactory.create3D();
     expect(engine, isA<JoltPhysicsEngine>());
     expect(engine.name, 'jolt');
-    final world = engine.createWorld(PhysicsWorldSettings3D());
+    final world = engine.createWorld(Physics3DWorldSettings());
     addTearDown(world.dispose);
     expect(world.bodyCount, 0);
   });
 
   test('an engine that cannot run throws the typed error with its reason', () {
-    final engine = FakePhysicsEngine3D(unavailableReason: 'not here');
+    final engine = FakePhysics3DEngine(unavailableReason: 'not here');
     expect(
-      () => engine.createWorld(PhysicsWorldSettings3D()),
+      () => engine.createWorld(Physics3DWorldSettings()),
       throwsA(
         isA<Physics3DUnsupportedError>().having(
           (e) => e.message,

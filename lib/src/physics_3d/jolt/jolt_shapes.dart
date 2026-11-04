@@ -5,7 +5,7 @@ import 'dart:math' as math;
 import 'package:ffi/ffi.dart';
 import 'package:just_jolt/ffi.dart';
 
-import '../shapes_3d.dart';
+import '../shape_3d.dart';
 
 /// Jolt's default convex radius: corners are rounded by this much.
 const double _convexRadius = 0.05;
@@ -109,16 +109,16 @@ final class JoltShapes {
 
   static Pointer<JPH_Shape>? _make(Shape3D shape) => using((arena) {
     final made = switch (shape) {
-      BoxShape3D(:final hx, :final hy, :final hz) => _box(arena, hx, hy, hz),
-      SphereShape3D(:final radius) => _settled(
+      Box3DShape(:final hx, :final hy, :final hz) => _box(arena, hx, hy, hz),
+      Sphere3DShape(:final radius) => _settled(
         JPH_SphereShapeSettings_Create(radius),
         (s) => JPH_SphereShapeSettings_CreateShape(s).cast(),
       ),
-      CapsuleShape3D(:final halfHeight, :final radius) => _settled(
+      Capsule3DShape(:final halfHeight, :final radius) => _settled(
         JPH_CapsuleShapeSettings_Create(halfHeight, radius),
         (s) => JPH_CapsuleShapeSettings_CreateShape(s).cast(),
       ),
-      CylinderShape3D(:final halfHeight, :final radius) => _settled(
+      Cylinder3DShape(:final halfHeight, :final radius) => _settled(
         JPH_CylinderShapeSettings_Create(
           halfHeight,
           radius,
@@ -126,15 +126,15 @@ final class JoltShapes {
         ),
         (s) => JPH_CylinderShapeSettings_CreateShape(s).cast(),
       ),
-      ConvexHullShape3D(:final points) => _hull(arena, points),
-      MeshShape3D(:final positions, :final indices) => _mesh(
+      ConvexHull3DShape(:final points) => _hull(arena, points),
+      Mesh3DShape(:final positions, :final indices) => _mesh(
         arena,
         positions,
         indices,
       ),
-      HeightFieldShape3D() => _heightField(arena, shape),
-      TransformedShape3D() => _transformed(arena, shape),
-      CompoundShape3D(:final parts) => _compound(arena, parts),
+      HeightField3DShape() => _heightField(arena, shape),
+      Transformed3DShape() => _transformed(arena, shape),
+      Compound3DShape(:final parts) => _compound(arena, parts),
     };
     return made == null || made == nullptr ? null : made;
   });
@@ -226,7 +226,7 @@ final class JoltShapes {
   /// in as Jolt's no-collision value.
   static Pointer<JPH_Shape>? _heightField(
     Arena arena,
-    HeightFieldShape3D shape,
+    HeightField3DShape shape,
   ) {
     final n = shape.sampleCount;
     if (n < 4 || shape.heights.length < n * n) return null;
@@ -235,7 +235,7 @@ final class JoltShapes {
       final from = (n - 1 - row) * n;
       for (var column = 0; column < n; column++) {
         final h = shape.heights[from + column];
-        samples[row * n + column] = h >= HeightFieldShape3D.hole ? _noCollision : h;
+        samples[row * n + column] = h >= HeightField3DShape.hole ? _noCollision : h;
       }
     }
     final offset = arena<JPH_Vec3>();
@@ -266,7 +266,7 @@ final class JoltShapes {
   }
 
   /// A static compound of [parts], each placed by its own transform (a
-  /// [TransformedShape3D]) or at the origin. Static means its parts are
+  /// [Transformed3DShape]) or at the origin. Static means its parts are
   /// fixed once made, not that its body must be.
   static Pointer<JPH_Shape>? _compound(Arena arena, List<Shape3D> parts) {
     if (parts.isEmpty) return null;
@@ -282,9 +282,9 @@ final class JoltShapes {
     final position = arena<JPH_Vec3>();
     final rotation = arena<JPH_Quat>();
     for (final part in parts) {
-      final placed = part is TransformedShape3D
+      final placed = part is Transformed3DShape
           ? part
-          : TransformedShape3D(part);
+          : Transformed3DShape(part);
       final inner = make(placed.shape);
       if (inner == null) {
         JPH_ShapeSettings_Destroy(settings.cast());
@@ -314,7 +314,7 @@ final class JoltShapes {
 
   static Pointer<JPH_Shape>? _transformed(
     Arena arena,
-    TransformedShape3D shape,
+    Transformed3DShape shape,
   ) {
     final inner = make(shape.shape);
     if (inner == null) return null;
@@ -337,7 +337,7 @@ final class JoltShapes {
 
   /// [shape]'s rotation, made unit length, into [out]: Jolt takes it as it
   /// is, and a compound keeps only its first three parts.
-  static void _unit(Pointer<JPH_Quat> out, TransformedShape3D shape) {
+  static void _unit(Pointer<JPH_Quat> out, Transformed3DShape shape) {
     final length = math.sqrt(
       shape.qx * shape.qx +
           shape.qy * shape.qy +

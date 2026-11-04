@@ -1,4 +1,4 @@
-part of 'physics_engine.dart';
+part of 'physics_2d_engine.dart';
 
 /// Contains information about a collision between two bodies.
 class CollisionManifold {

@@ -1,6 +1,6 @@
-/// just_physics_engine's 3-D side on its own: [PhysicsEngine3D] (made by
+/// just_physics_engine's 3-D side on its own: [Physics3DEngine] (made by
 /// `PhysicsEngineFactory.create3D`, Jolt Physics through just_jolt), the
-/// [PhysicsWorld3D] it makes, and the plain data both speak — shapes,
+/// [Physics3DWorld] it makes, and the plain data both speak — shapes,
 /// settings, poses, hits and events — with the math types they use.
 ///
 /// Units are metres, seconds and radians; +Y is down, so gravity is

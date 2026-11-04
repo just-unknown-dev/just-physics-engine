@@ -9,9 +9,9 @@ import 'package:just_dart/just_dart.dart';
 /// A world owns one and refills it on every read; its contents are good
 /// until the world's next read, into any buffer (a backend may hand out
 /// views of its own memory). They stay readable after the world is gone.
-final class BodyPoses3D {
+final class Body3DPoses {
   /// An empty buffer.
-  BodyPoses3D();
+  Body3DPoses();
 
   /// Floats per body.
   static const int stride = 14;
@@ -61,7 +61,7 @@ final class BodyPoses3D {
 }
 
 /// What happened between bodies during a step.
-enum PhysicsEventType3D {
+enum Physics3DEventType {
   /// Two bodies started touching.
   contactBegin,
 
@@ -87,9 +87,9 @@ enum PhysicsEventType3D {
 /// One event from a step. Begin and stay events carry a contact point, the
 /// normal pointing from [bodyA] to [bodyB] (zero for sensors) and how deep
 /// they overlap.
-final class PhysicsEvent3D {
+final class Physics3DEvent {
   /// An event of [type] between [bodyA] and [bodyB].
-  PhysicsEvent3D(
+  Physics3DEvent(
     this.type,
     this.bodyA,
     this.bodyB, {
@@ -100,7 +100,7 @@ final class PhysicsEvent3D {
        normal = normal ?? Vector3.zero();
 
   /// What happened.
-  final PhysicsEventType3D type;
+  final Physics3DEventType type;
 
   /// The first body.
   final int bodyA;
@@ -118,13 +118,13 @@ final class PhysicsEvent3D {
   final double depth;
 
   @override
-  String toString() => 'PhysicsEvent3D(${type.name}, $bodyA, $bodyB)';
+  String toString() => 'Physics3DEvent(${type.name}, $bodyA, $bodyB)';
 }
 
 /// What a query looks at.
-final class QueryFilter3D {
+final class Query3DFilter {
   /// Every layer, no body ignored, sensors left out, characters in.
-  const QueryFilter3D({
+  const Query3DFilter({
     this.layerMask = 0xFFFF,
     this.ignoreBody = 0,
     this.includeSensors = false,
@@ -132,7 +132,7 @@ final class QueryFilter3D {
   });
 
   /// Everything but sensors.
-  static const QueryFilter3D all = QueryFilter3D();
+  static const Query3DFilter all = Query3DFilter();
 
   /// Layers to hit, one bit per layer.
   final int layerMask;
@@ -148,9 +148,9 @@ final class QueryFilter3D {
 }
 
 /// A query's hit.
-final class QueryHit3D {
+final class Query3DHit {
   /// A hit on [body].
-  QueryHit3D({
+  Query3DHit({
     required this.body,
     required this.fraction,
     required this.point,
@@ -174,11 +174,11 @@ final class QueryHit3D {
   final double depth;
 
   @override
-  String toString() => 'QueryHit3D($body at $point, fraction $fraction)';
+  String toString() => 'Query3DHit($body at $point, fraction $fraction)';
 }
 
 /// Whether a character stands on something.
-enum GroundState3D {
+enum Ground3DState {
   /// On ground it can stand on.
   onGround,
 
@@ -193,9 +193,9 @@ enum GroundState3D {
 }
 
 /// A character after a step. A world refills one it is given.
-final class CharacterState3D {
+final class Character3DState {
   /// A character in the air at the origin.
-  CharacterState3D();
+  Character3DState();
 
   /// Where its feet are.
   final Vector3 position = Vector3.zero();
@@ -204,7 +204,7 @@ final class CharacterState3D {
   final Vector3 velocity = Vector3.zero();
 
   /// What it stands on.
-  GroundState3D groundState = GroundState3D.inAir;
+  Ground3DState groundState = Ground3DState.inAir;
 
   /// The ground's normal (pointing up, out of the ground).
   final Vector3 groundNormal = Vector3.zero();
@@ -222,13 +222,13 @@ final class CharacterState3D {
   int contactCount = 0;
 
   /// Whether it stands on walkable ground.
-  bool get isGrounded => groundState == GroundState3D.onGround;
+  bool get isGrounded => groundState == Ground3DState.onGround;
 }
 
 /// Something a character touches.
-final class CharacterContact3D {
+final class Character3DContact {
   /// A contact with [body] or [character].
-  CharacterContact3D({
+  Character3DContact({
     required this.body,
     required this.character,
     required this.position,

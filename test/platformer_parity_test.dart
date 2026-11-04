@@ -16,10 +16,10 @@ void main() {
   group('Fixed timestep', () {
     /// Free-fall distance after [seconds] of simulation, stepped at [hz].
     double fallDistance({required double hz, required double seconds}) {
-      final engine = PhysicsEngine.pureDart()..initialize();
-      final body = PhysicsBody(
+      final engine = Physics2DEngine.pureDart()..initialize();
+      final body = Physics2DBody(
         position: Vector2(0, 0),
-        shape: CircleShape(1),
+        shape: Circle2DShape(1),
         drag: 0,
       );
       engine.addBody(body);
@@ -51,22 +51,26 @@ void main() {
     });
 
     test('alpha exposes the unconsumed remainder', () {
-      final engine = PhysicsEngine.pureDart()..initialize();
-      engine.update(PhysicsEngine.fixedDeltaTime / 2);
+      final engine = Physics2DEngine.pureDart()..initialize();
+      engine.update(Physics2DEngine.fixedDeltaTime / 2);
       expect(engine.alpha, closeTo(0.5, 1e-6));
       engine.dispose();
     });
 
     test('opting out reports no interpolation remainder', () {
-      final engine = PhysicsEngine.pureDart(fixedTimestep: false)..initialize();
+      final engine = Physics2DEngine.pureDart(fixedTimestep: false)
+        ..initialize();
       engine.update(1 / 60);
       expect(engine.alpha, 0.0);
       engine.dispose();
     });
 
     test('a long stall is clamped instead of spiralling', () {
-      final engine = PhysicsEngine.pureDart()..initialize();
-      final body = PhysicsBody(position: Vector2(0, 0), shape: CircleShape(1));
+      final engine = Physics2DEngine.pureDart()..initialize();
+      final body = Physics2DBody(
+        position: Vector2(0, 0),
+        shape: Circle2DShape(1),
+      );
       engine.addBody(body);
 
       // Ten simulated seconds arriving as one frame must run at most
@@ -80,10 +84,10 @@ void main() {
 
   group('gravityScale', () {
     double fallWith({double scale = 1.0, bool useGravity = true}) {
-      final engine = PhysicsEngine.pureDart()..initialize();
-      final body = PhysicsBody(
+      final engine = Physics2DEngine.pureDart()..initialize();
+      final body = Physics2DBody(
         position: Vector2(0, 0),
-        shape: CircleShape(1),
+        shape: Circle2DShape(1),
         drag: 0,
         gravityScale: scale,
         useGravity: useGravity,
@@ -110,9 +114,9 @@ void main() {
     });
 
     test('effectiveGravityScale folds both inputs', () {
-      final body = PhysicsBody(
+      final body = Physics2DBody(
         position: Vector2(0, 0),
-        shape: CircleShape(1),
+        shape: Circle2DShape(1),
         gravityScale: 2,
       );
       expect(body.effectiveGravityScale, 2.0);
@@ -123,11 +127,11 @@ void main() {
 
   group('Kinematic bodies', () {
     test('move by velocity and ignore gravity', () {
-      final engine = PhysicsEngine.pureDart()..initialize();
-      final platform = PhysicsBody(
+      final engine = Physics2DEngine.pureDart()..initialize();
+      final platform = Physics2DBody(
         position: Vector2(0, 0),
-        shape: RectangleShape(100, 20),
-        bodyType: BodyType.kinematic,
+        shape: Rectangle2DShape(100, 20),
+        bodyType: Body2DType.kinematic,
       )..velocity.setValues(60, 0);
       engine.addBody(platform);
 
@@ -141,15 +145,15 @@ void main() {
     });
 
     test('cannot be pushed by a heavy dynamic body resting on them', () {
-      final engine = PhysicsEngine.pureDart()..initialize();
-      final platform = PhysicsBody(
+      final engine = Physics2DEngine.pureDart()..initialize();
+      final platform = Physics2DBody(
         position: Vector2(0, 100),
-        shape: RectangleShape(200, 20),
-        bodyType: BodyType.kinematic,
+        shape: Rectangle2DShape(200, 20),
+        bodyType: Body2DType.kinematic,
       );
-      final crate = PhysicsBody(
+      final crate = Physics2DBody(
         position: Vector2(0, 80),
-        shape: RectangleShape(20, 20),
+        shape: Rectangle2DShape(20, 20),
         mass: 50,
       );
       engine
@@ -166,11 +170,11 @@ void main() {
     });
 
     test('never fall asleep while creeping below the sleep threshold', () {
-      final engine = PhysicsEngine.pureDart()..initialize();
-      final platform = PhysicsBody(
+      final engine = Physics2DEngine.pureDart()..initialize();
+      final platform = Physics2DBody(
         position: Vector2(0, 0),
-        shape: RectangleShape(100, 20),
-        bodyType: BodyType.kinematic,
+        shape: Rectangle2DShape(100, 20),
+        bodyType: Body2DType.kinematic,
       )..velocity.setValues(1, 0); // well under sleepVelocityThreshold of 5
       engine.addBody(platform);
 
@@ -184,12 +188,12 @@ void main() {
     });
 
     test('mass <= 0 still wins over an explicit dynamic type', () {
-      final body = PhysicsBody(
+      final body = Physics2DBody(
         position: Vector2(0, 0),
-        shape: CircleShape(1),
+        shape: Circle2DShape(1),
         mass: 0,
       );
-      expect(body.effectiveBodyType, BodyType.static);
+      expect(body.effectiveBodyType, Body2DType.static);
       expect(body.solverInverseMass, 0.0);
     });
   });
@@ -202,17 +206,17 @@ void main() {
       required double vy,
       OneWayDirection direction = OneWayDirection.fromAbove,
     }) {
-      final engine = PhysicsEngine.pureDart()..initialize();
-      final platform = PhysicsBody(
+      final engine = Physics2DEngine.pureDart()..initialize();
+      final platform = Physics2DBody(
         position: Vector2(0, 0),
-        shape: RectangleShape(200, 10),
+        shape: Rectangle2DShape(200, 10),
         mass: 0,
         isOneWay: true,
         oneWayDirection: direction,
       );
-      final mover = PhysicsBody(
+      final mover = Physics2DBody(
         position: Vector2(0, startY),
-        shape: RectangleShape(20, 20),
+        shape: Rectangle2DShape(20, 20),
         useGravity: false,
         drag: 0,
       )..velocity.setValues(0, vy);
@@ -247,16 +251,16 @@ void main() {
     });
 
     test('two one-way bodies collide normally', () {
-      final engine = PhysicsEngine.pureDart()..initialize();
-      final a = PhysicsBody(
+      final engine = Physics2DEngine.pureDart()..initialize();
+      final a = Physics2DBody(
         position: Vector2(0, 0),
-        shape: RectangleShape(40, 40),
+        shape: Rectangle2DShape(40, 40),
         mass: 0,
         isOneWay: true,
       );
-      final b = PhysicsBody(
+      final b = Physics2DBody(
         position: Vector2(0, 30),
-        shape: RectangleShape(40, 40),
+        shape: Rectangle2DShape(40, 40),
         isOneWay: true,
         useGravity: false,
         drag: 0,
@@ -278,10 +282,10 @@ void main() {
 
   group('Runtime body mutation', () {
     test('setBodyTransform repositions and wakes', () {
-      final engine = PhysicsEngine.pureDart()..initialize();
-      final body = PhysicsBody(
+      final engine = Physics2DEngine.pureDart()..initialize();
+      final body = Physics2DBody(
         position: Vector2(0, 0),
-        shape: CircleShape(10),
+        shape: Circle2DShape(10),
         useGravity: false,
       );
       engine.addBody(body);
@@ -301,10 +305,10 @@ void main() {
       // position write used to be discarded by the sync-back after the step,
       // so respawns and checkpoints silently did nothing on desktop/mobile
       // while working fine on web.
-      final engine = PhysicsEngine.pureDart()..initialize();
-      final body = PhysicsBody(
+      final engine = Physics2DEngine.pureDart()..initialize();
+      final body = Physics2DBody(
         position: Vector2(0, 0),
-        shape: CircleShape(10),
+        shape: Circle2DShape(10),
         useGravity: false,
         drag: 0,
       );
@@ -319,10 +323,10 @@ void main() {
     });
 
     test('setBodyFilter leaves omitted fields alone', () {
-      final engine = PhysicsEngine.pureDart()..initialize();
-      final body = PhysicsBody(
+      final engine = Physics2DEngine.pureDart()..initialize();
+      final body = Physics2DBody(
         position: Vector2(0, 0),
-        shape: CircleShape(1),
+        shape: Circle2DShape(1),
         categoryBits: 0x0004,
         maskBits: 0x00FF,
         groupIndex: -2,
@@ -338,15 +342,15 @@ void main() {
     });
 
     test('a filter change takes effect on the next step', () {
-      final engine = PhysicsEngine.pureDart()..initialize();
-      final ground = PhysicsBody(
+      final engine = Physics2DEngine.pureDart()..initialize();
+      final ground = Physics2DBody(
         position: Vector2(0, 100),
-        shape: RectangleShape(200, 20),
+        shape: Rectangle2DShape(200, 20),
         mass: 0,
       );
-      final faller = PhysicsBody(
+      final faller = Physics2DBody(
         position: Vector2(0, 0),
-        shape: RectangleShape(20, 20),
+        shape: Rectangle2DShape(20, 20),
         drag: 0,
       );
       engine
@@ -367,10 +371,10 @@ void main() {
     });
 
     test('applyLinearImpulse preserves existing momentum', () {
-      final engine = PhysicsEngine.pureDart()..initialize();
-      final body = PhysicsBody(
+      final engine = Physics2DEngine.pureDart()..initialize();
+      final body = Physics2DBody(
         position: Vector2(0, 0),
-        shape: CircleShape(1),
+        shape: Circle2DShape(1),
         mass: 2,
         useGravity: false,
       )..velocity.setValues(100, 0);
@@ -384,10 +388,10 @@ void main() {
     });
 
     test('applyLinearImpulse does nothing to a static body', () {
-      final engine = PhysicsEngine.pureDart()..initialize();
-      final body = PhysicsBody(
+      final engine = Physics2DEngine.pureDart()..initialize();
+      final body = Physics2DBody(
         position: Vector2(0, 0),
-        shape: CircleShape(1),
+        shape: Circle2DShape(1),
         mass: 0,
       );
       engine.addBody(body);
@@ -400,8 +404,11 @@ void main() {
     });
 
     test('friction, restitution and damping are settable at runtime', () {
-      final engine = PhysicsEngine.pureDart()..initialize();
-      final body = PhysicsBody(position: Vector2(0, 0), shape: CircleShape(1));
+      final engine = Physics2DEngine.pureDart()..initialize();
+      final body = Physics2DBody(
+        position: Vector2(0, 0),
+        shape: Circle2DShape(1),
+      );
       engine.addBody(body);
 
       engine
@@ -416,12 +423,15 @@ void main() {
     });
 
     test('setBodyType and setBodyGravityScale write through', () {
-      final engine = PhysicsEngine.pureDart()..initialize();
-      final body = PhysicsBody(position: Vector2(0, 0), shape: CircleShape(1));
+      final engine = Physics2DEngine.pureDart()..initialize();
+      final body = Physics2DBody(
+        position: Vector2(0, 0),
+        shape: Circle2DShape(1),
+      );
       engine.addBody(body);
 
       engine
-        ..setBodyType(body, BodyType.kinematic)
+        ..setBodyType(body, Body2DType.kinematic)
         ..setBodyGravityScale(body, 0.25);
 
       expect(body.isKinematic, isTrue);
@@ -430,8 +440,11 @@ void main() {
     });
 
     test('setBodyOneWay sets both flag and direction', () {
-      final engine = PhysicsEngine.pureDart()..initialize();
-      final body = PhysicsBody(position: Vector2(0, 0), shape: CircleShape(1));
+      final engine = Physics2DEngine.pureDart()..initialize();
+      final body = Physics2DBody(
+        position: Vector2(0, 0),
+        shape: Circle2DShape(1),
+      );
       engine.addBody(body);
 
       engine.setBodyOneWay(body, true, direction: OneWayDirection.fromLeft);
@@ -444,16 +457,16 @@ void main() {
 
   group('Ray casting', () {
     /// A world with two horizontal slabs stacked below the origin.
-    (PhysicsEngine, PhysicsBody near, PhysicsBody far) stackedSlabs() {
-      final engine = PhysicsEngine.pureDart()..initialize();
-      final near = PhysicsBody(
+    (Physics2DEngine, Physics2DBody near, Physics2DBody far) stackedSlabs() {
+      final engine = Physics2DEngine.pureDart()..initialize();
+      final near = Physics2DBody(
         position: Vector2(0, 100),
-        shape: RectangleShape(200, 20),
+        shape: Rectangle2DShape(200, 20),
         mass: 0,
       );
-      final far = PhysicsBody(
+      final far = Physics2DBody(
         position: Vector2(0, 300),
-        shape: RectangleShape(200, 20),
+        shape: Rectangle2DShape(200, 20),
         mass: 0,
       );
       engine
@@ -465,8 +478,8 @@ void main() {
     test('returns the nearer of two stacked bodies', () {
       final (engine, near, _) = stackedSlabs();
 
-      final hit = engine.castRay(
-        Ray(origin: Offset.zero, direction: const Offset(0, 1)),
+      final hit = engine.raycast(
+        Ray2D(origin: Offset.zero, direction: const Offset(0, 1)),
       );
 
       expect(hit, isNotNull);
@@ -474,11 +487,11 @@ void main() {
       engine.dispose();
     });
 
-    test('castRayAll reports both, nearest first', () {
+    test('raycastAll reports both, nearest first', () {
       final (engine, _, _) = stackedSlabs();
 
-      final hits = engine.castRayAll(
-        Ray(origin: Offset.zero, direction: const Offset(0, 1)),
+      final hits = engine.raycastAll(
+        Ray2D(origin: Offset.zero, direction: const Offset(0, 1)),
       );
 
       expect(hits.length, 2);
@@ -489,8 +502,8 @@ void main() {
     test('exclude skips a body', () {
       final (engine, near, far) = stackedSlabs();
 
-      final hit = engine.castRay(
-        Ray(origin: Offset.zero, direction: const Offset(0, 1)),
+      final hit = engine.raycast(
+        Ray2D(origin: Offset.zero, direction: const Offset(0, 1)),
         exclude: {near},
       );
 
@@ -503,8 +516,8 @@ void main() {
       final (engine, _, _) = stackedSlabs();
 
       // Straight along +X, where nothing sits.
-      final hit = engine.castRay(
-        Ray(origin: Offset.zero, direction: const Offset(1, 0)),
+      final hit = engine.raycast(
+        Ray2D(origin: Offset.zero, direction: const Offset(1, 0)),
       );
 
       expect(hit, isNull);
@@ -513,9 +526,9 @@ void main() {
   });
 
   group('Box2D native backend', () {
-    late PhysicsEngine engine;
+    late Physics2DEngine engine;
 
-    setUp(() => engine = PhysicsEngine()..initialize());
+    setUp(() => engine = Physics2DEngine()..initialize());
     tearDown(() => engine.dispose());
 
     // Gate on the reported backend rather than on Platform.isWindows: a
@@ -535,9 +548,9 @@ void main() {
         markTestSkipped('native Box2D backend unavailable');
         return;
       }
-      final body = PhysicsBody(
+      final body = Physics2DBody(
         position: Vector2(0, 0),
-        shape: CircleShape(10),
+        shape: Circle2DShape(10),
         useGravity: false,
         drag: 0,
       );
@@ -556,15 +569,15 @@ void main() {
         markTestSkipped('native Box2D backend unavailable');
         return;
       }
-      final platform = PhysicsBody(
+      final platform = Physics2DBody(
         position: Vector2(0, 0),
-        shape: RectangleShape(200, 10),
+        shape: Rectangle2DShape(200, 10),
         mass: 0,
         isOneWay: true,
       );
-      final mover = PhysicsBody(
+      final mover = Physics2DBody(
         position: Vector2(0, 60),
-        shape: RectangleShape(20, 20),
+        shape: Rectangle2DShape(20, 20),
         useGravity: false,
         drag: 0,
         fixedRotation: true,
@@ -589,14 +602,14 @@ void main() {
         markTestSkipped('native Box2D backend unavailable');
         return;
       }
-      final near = PhysicsBody(
+      final near = Physics2DBody(
         position: Vector2(0, 100),
-        shape: RectangleShape(200, 20),
+        shape: Rectangle2DShape(200, 20),
         mass: 0,
       );
-      final far = PhysicsBody(
+      final far = Physics2DBody(
         position: Vector2(0, 300),
-        shape: RectangleShape(200, 20),
+        shape: Rectangle2DShape(200, 20),
         mass: 0,
       );
       engine
@@ -605,22 +618,22 @@ void main() {
         // Native bodies only enter the broad-phase tree once stepped.
         ..update(1 / 60);
 
-      final hit = engine.castRay(
-        Ray(origin: Offset.zero, direction: const Offset(0, 1)),
+      final hit = engine.raycast(
+        Ray2D(origin: Offset.zero, direction: const Offset(0, 1)),
       );
       expect(hit, isNotNull);
       expect(identical(hit!.body, near), isTrue);
       // Top face of the near slab: centre 100, half-height 10.
       expect(hit.point.dy, closeTo(90, 2));
 
-      final all = engine.castRayAll(
-        Ray(origin: Offset.zero, direction: const Offset(0, 1)),
+      final all = engine.raycastAll(
+        Ray2D(origin: Offset.zero, direction: const Offset(0, 1)),
       );
       expect(all.length, 2);
       expect(all.first.distance, lessThan(all.last.distance));
 
-      final excluded = engine.castRay(
-        Ray(origin: Offset.zero, direction: const Offset(0, 1)),
+      final excluded = engine.raycast(
+        Ray2D(origin: Offset.zero, direction: const Offset(0, 1)),
         exclude: {near},
       );
       expect(identical(excluded!.body, far), isTrue);
@@ -631,14 +644,14 @@ void main() {
         markTestSkipped('native Box2D backend unavailable');
         return;
       }
-      final inside = PhysicsBody(
+      final inside = Physics2DBody(
         position: Vector2(0, 100),
-        shape: RectangleShape(40, 40),
+        shape: Rectangle2DShape(40, 40),
         mass: 0,
       );
-      final outside = PhysicsBody(
+      final outside = Physics2DBody(
         position: Vector2(5000, 5000),
-        shape: RectangleShape(40, 40),
+        shape: Rectangle2DShape(40, 40),
         mass: 0,
       );
       engine
@@ -657,14 +670,14 @@ void main() {
         markTestSkipped('native Box2D backend unavailable');
         return;
       }
-      final platform = PhysicsBody(
+      final platform = Physics2DBody(
         position: Vector2(0, 200),
-        shape: RectangleShape(400, 20),
-        bodyType: BodyType.kinematic,
+        shape: Rectangle2DShape(400, 20),
+        bodyType: Body2DType.kinematic,
       );
-      final crate = PhysicsBody(
+      final crate = Physics2DBody(
         position: Vector2(0, 150),
-        shape: RectangleShape(20, 20),
+        shape: Rectangle2DShape(20, 20),
         mass: 50,
         fixedRotation: true,
       );
@@ -685,15 +698,15 @@ void main() {
     ///
     /// This is the mechanism `RigidBody2DComponent.isGrounded` is built from,
     /// and therefore the mechanism every jump in a platformer depends on.
-    int countLandingContacts(PhysicsEngine engine) {
-      final ground = PhysicsBody(
+    int countLandingContacts(Physics2DEngine engine) {
+      final ground = Physics2DBody(
         position: Vector2(0, 300),
-        shape: RectangleShape(400, 40),
+        shape: Rectangle2DShape(400, 40),
         mass: 0,
       );
-      final faller = PhysicsBody(
+      final faller = Physics2DBody(
         position: Vector2(0, 0),
-        shape: RectangleShape(32, 48),
+        shape: Rectangle2DShape(32, 48),
         fixedRotation: true,
         drag: 0,
       );
@@ -711,7 +724,7 @@ void main() {
     }
 
     test('a landing raises a contact begin event on the pure-Dart backend', () {
-      final engine = PhysicsEngine.pureDart()..initialize();
+      final engine = Physics2DEngine.pureDart()..initialize();
       expect(countLandingContacts(engine), greaterThan(0));
       engine.dispose();
     });
@@ -724,7 +737,7 @@ void main() {
       // silent. isGrounded was therefore always false on desktop and mobile
       // and always correct on web: a platformer where the player could not
       // jump, on every platform except the one most people test on.
-      final engine = PhysicsEngine()..initialize();
+      final engine = Physics2DEngine()..initialize();
       if (engine.stats['backend'] != 'box2d_v3') {
         markTestSkipped('native Box2D backend unavailable');
         engine.dispose();
@@ -735,16 +748,16 @@ void main() {
     });
 
     test('a sensor overlap raises a sensor event', () {
-      final engine = PhysicsEngine()..initialize();
-      final trigger = PhysicsBody(
+      final engine = Physics2DEngine()..initialize();
+      final trigger = Physics2DBody(
         position: Vector2(0, 300),
-        shape: RectangleShape(200, 200),
+        shape: Rectangle2DShape(200, 200),
         mass: 0,
         isSensor: true,
       );
-      final visitor = PhysicsBody(
+      final visitor = Physics2DBody(
         position: Vector2(0, 0),
-        shape: RectangleShape(32, 32),
+        shape: Rectangle2DShape(32, 32),
         fixedRotation: true,
         drag: 0,
       );

@@ -1,7 +1,7 @@
 import 'package:just_dart/just_dart.dart';
 
 /// How a body moves.
-enum BodyType3D {
+enum Body3DType {
   /// Never moves (walls, floors, terrain).
   static,
 
@@ -14,7 +14,7 @@ enum BodyType3D {
 }
 
 /// How carefully a moving body checks for collisions.
-enum MotionQuality3D {
+enum Motion3DQuality {
   /// Once per step. Cheap; a small, fast body can pass through a thin wall.
   discrete,
 
@@ -24,16 +24,16 @@ enum MotionQuality3D {
 }
 
 /// Everything about a new body but its shape.
-final class BodySettings3D {
+final class Body3DSettings {
   /// A body with the given settings; the defaults are a dynamic body on
   /// layer 0 that may sleep.
-  BodySettings3D({
+  Body3DSettings({
     Vector3? position,
     Quaternion? rotation,
     Vector3? linearVelocity,
     Vector3? angularVelocity,
-    this.type = BodyType3D.dynamic,
-    this.motionQuality = MotionQuality3D.discrete,
+    this.type = Body3DType.dynamic,
+    this.motionQuality = Motion3DQuality.discrete,
     this.layer = 0,
     this.isSensor = false,
     this.allowSleeping = true,
@@ -63,12 +63,12 @@ final class BodySettings3D {
   final Vector3 angularVelocity;
 
   /// Static, kinematic or dynamic.
-  final BodyType3D type;
+  final Body3DType type;
 
   /// Discrete or continuous collision.
-  final MotionQuality3D motionQuality;
+  final Motion3DQuality motionQuality;
 
-  /// Collision layer, 0–15 (see [PhysicsWorldSettings3D.layerMasks]).
+  /// Collision layer, 0–15 (see [Physics3DWorldSettings.layerMasks]).
   final int layer;
 
   /// Whether it only reports what enters and leaves it, never colliding.
@@ -100,7 +100,7 @@ final class BodySettings3D {
 }
 
 /// The kind of a joint.
-enum JointKind3D {
+enum Joint3DKind {
   /// Holds two bodies rigidly together.
   fixed,
 
@@ -123,7 +123,7 @@ enum JointKind3D {
 }
 
 /// What drives a hinge or slider.
-enum MotorState3D {
+enum Motor3DState {
   /// Nothing.
   off,
 
@@ -135,7 +135,7 @@ enum MotorState3D {
 }
 
 /// What a six-degrees-of-freedom joint lets one axis do.
-enum SixDofAxisMode3D {
+enum SixDofAxis3DMode {
   /// Moves or turns freely.
   free,
 
@@ -148,9 +148,9 @@ enum SixDofAxisMode3D {
 
 /// How a joint is made. Points and axes are in world space, as the bodies
 /// are when it is made.
-final class JointSettings3D {
+final class Joint3DSettings {
   /// A joint of [kind]; see each field for which kinds read it.
-  JointSettings3D({
+  Joint3DSettings({
     required this.kind,
     Vector3? pointA,
     Vector3? pointB,
@@ -162,22 +162,22 @@ final class JointSettings3D {
     this.springFrequency = 0,
     this.springDamping = 0,
     this.maxFriction = 0,
-    this.motorState = MotorState3D.off,
+    this.motorState = Motor3DState.off,
     this.motorTarget = 0,
     this.motorMaxForce = 0,
-    List<SixDofAxisMode3D>? sixDofModes,
+    List<SixDofAxis3DMode>? sixDofModes,
     List<double>? sixDofMin,
     List<double>? sixDofMax,
   }) : pointA = pointA ?? Vector3.zero(),
        pointB = pointB ?? Vector3.copy(pointA ?? Vector3.zero()),
        axis = axis ?? Vector3(0, 1, 0),
        normal = normal ?? Vector3(1, 0, 0),
-       sixDofModes = sixDofModes ?? List.filled(6, SixDofAxisMode3D.fixed),
+       sixDofModes = sixDofModes ?? List.filled(6, SixDofAxis3DMode.fixed),
        sixDofMin = sixDofMin ?? List.filled(6, 0.0),
        sixDofMax = sixDofMax ?? List.filled(6, 0.0);
 
   /// Fixed, point, hinge, slider, distance or six-DOF.
-  final JointKind3D kind;
+  final Joint3DKind kind;
 
   /// Where it holds the first body.
   final Vector3 pointA;
@@ -208,7 +208,7 @@ final class JointSettings3D {
   final double maxFriction;
 
   /// Hinge and slider motor.
-  final MotorState3D motorState;
+  final Motor3DState motorState;
 
   /// The motor's target speed or position.
   final double motorTarget;
@@ -217,16 +217,16 @@ final class JointSettings3D {
   final double motorMaxForce;
 
   /// Six-DOF: per axis — translation X, Y, Z, then rotation X, Y, Z.
-  final List<SixDofAxisMode3D> sixDofModes;
+  final List<SixDofAxis3DMode> sixDofModes;
 
   /// Six-DOF limits for limited axes, in the same order.
   final List<double> sixDofMin, sixDofMax;
 }
 
 /// How a character is made: a capsule standing on its position.
-final class CharacterSettings3D {
+final class Character3DSettings {
   /// A character 1.8 m tall and 0.3 m in radius, by default.
-  CharacterSettings3D({
+  Character3DSettings({
     this.radius = 0.3,
     this.halfHeight = 0.6,
     Vector3? up,
@@ -269,11 +269,11 @@ final class CharacterSettings3D {
 }
 
 /// How a world is made.
-final class PhysicsWorldSettings3D {
+final class Physics3DWorldSettings {
   /// A world with [gravity] (0, 9.81, 0) — down, since +Y is down — and
   /// every layer colliding with every other unless [layerMasks] says
   /// otherwise.
-  PhysicsWorldSettings3D({
+  Physics3DWorldSettings({
     Vector3? gravity,
     List<int>? layerMasks,
     this.maxBodies = 10240,

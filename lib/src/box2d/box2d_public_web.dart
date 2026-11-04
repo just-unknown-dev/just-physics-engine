@@ -5,7 +5,7 @@
 
 import 'dart:ui' show Offset;
 
-import '../physics_2d/physics_engine.dart';
+import '../physics_2d/physics_2d_engine.dart';
 
 export 'physics_engine_factory.dart';
 
@@ -111,8 +111,8 @@ class Box2DBody {
   }
 }
 
-class Box2DJoint extends JointConstraint {
-  Box2DJoint._(super.type);
+class Box2DJoint extends Joint2D {
+  Box2DJoint._(super.kind);
 
   bool get isDestroyed => true;
   void destroy() {}
@@ -173,7 +173,7 @@ extension Box2DJointFactory on Object {
       'Box2D joints need a native world; the web runs the pure-Dart engine.';
 }
 
-class Box2DPhysicsEngine extends PhysicsEngine {
+class Box2DPhysicsEngine extends Physics2DEngine {
   Box2DPhysicsEngine({
     double gravityX = 0.0,
     double gravityY = 981.0,
@@ -194,34 +194,34 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   };
 
   Box2DJoint? createRevoluteJoint(
-    PhysicsBody bodyA,
-    PhysicsBody bodyB,
+    Physics2DBody bodyA,
+    Physics2DBody bodyB,
     Offset worldAnchor,
   ) => null;
 
   Box2DJoint? createPrismaticJoint(
-    PhysicsBody bodyA,
-    PhysicsBody bodyB,
+    Physics2DBody bodyA,
+    Physics2DBody bodyB,
     Offset worldAnchor,
     Offset axis,
   ) => null;
 
   Box2DJoint? createDistanceJoint(
-    PhysicsBody bodyA,
-    PhysicsBody bodyB, {
+    Physics2DBody bodyA,
+    Physics2DBody bodyB, {
     required double minLength,
     required double maxLength,
   }) => null;
 
   Box2DJoint? createWeldJoint(
-    PhysicsBody bodyA,
-    PhysicsBody bodyB,
+    Physics2DBody bodyA,
+    Physics2DBody bodyB,
     Offset worldAnchor,
   ) => null;
 
   Box2DJoint? createWheelJoint(
-    PhysicsBody bodyA,
-    PhysicsBody bodyB,
+    Physics2DBody bodyA,
+    Physics2DBody bodyB,
     Offset worldAnchor,
     Offset axis,
   ) => null;
@@ -233,7 +233,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     double speedThreshold = 100.0,
   }) {}
 
-  PhysicsBody? physicsBodyFromHandle(int handle) => null;
+  Physics2DBody? bodyFromHandle(int handle) => null;
 }
 
 class PhysicsGameLoop {
@@ -252,9 +252,9 @@ class PhysicsGameLoop {
 
 abstract final class TransformInterpolator {
   static void interpolate({
-    required Map<PhysicsBody, Box2DBody> bodyMap,
+    required Map<Physics2DBody, Box2DBody> bodyMap,
     required double alpha,
-    required void Function(PhysicsBody body, double x, double y, double angle)
+    required void Function(Physics2DBody body, double x, double y, double angle)
     write,
   }) {
     final oneMinusAlpha = 1.0 - alpha;

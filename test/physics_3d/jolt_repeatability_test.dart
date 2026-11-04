@@ -14,12 +14,12 @@ const _dt = 1 / 60;
 /// position, as raw floats.
 Float32List _run(JoltPhysicsEngine backend) {
   final w = backend.createWorld(
-    PhysicsWorldSettings3D(reportContactStay: true),
+    Physics3DWorldSettings(reportContactStay: true),
   );
   try {
     w.createBody(
-      const BoxShape3D(20, 0.5, 20),
-      BodySettings3D(position: Vector3(0, 0.5, 0), type: BodyType3D.static),
+      const Box3DShape(20, 0.5, 20),
+      Body3DSettings(position: Vector3(0, 0.5, 0), type: Body3DType.static),
     );
     final bodies = <int>[];
     // A pyramid of boxes and a rain of spheres and capsules.
@@ -27,8 +27,8 @@ Float32List _run(JoltPhysicsEngine backend) {
       for (var i = 0; i < 6 - layer; i++) {
         bodies.add(
           w.createBody(
-            const BoxShape3D(0.5, 0.5, 0.5),
-            BodySettings3D(
+            const Box3DShape(0.5, 0.5, 0.5),
+            Body3DSettings(
               position: Vector3(
                 i * 1.02 + layer * 0.51 - 3,
                 -0.5 - layer * 1.0,
@@ -41,12 +41,12 @@ Float32List _run(JoltPhysicsEngine backend) {
     }
     for (var i = 0; i < 40; i++) {
       final shape = i.isEven
-          ? const SphereShape3D(0.3)
-          : const CapsuleShape3D(0.3, 0.2);
+          ? const Sphere3DShape(0.3)
+          : const Capsule3DShape(0.3, 0.2);
       bodies.add(
         w.createBody(
           shape,
-          BodySettings3D(
+          Body3DSettings(
             position: Vector3(
               (i % 8) * 0.7 - 2.5,
               -8 - (i ~/ 8) * 0.9,
@@ -58,10 +58,10 @@ Float32List _run(JoltPhysicsEngine backend) {
       );
     }
     final character = w.createCharacter(
-      CharacterSettings3D(),
+      Character3DSettings(),
       Vector3(-8, 0, 0),
     );
-    final state = CharacterState3D();
+    final state = Character3DState();
     final velocity = Vector3.zero();
     for (var step = 0; step < 600; step++) {
       velocity.setValues(2, step < 300 ? 0 : 1, 0);
@@ -78,7 +78,7 @@ Float32List _run(JoltPhysicsEngine backend) {
       w.step(_dt);
       w.drainEvents();
     }
-    final poses = BodyPoses3D();
+    final poses = Body3DPoses();
     w.readBodies(bodies, poses);
     return Float32List.fromList([
       ...poses.data,
@@ -96,7 +96,7 @@ void main() {
     final backend = JoltPhysicsEngine();
     final first = _run(backend);
     final second = _run(backend);
-    expect(first.length, (21 + 40) * BodyPoses3D.stride + 3);
+    expect(first.length, (21 + 40) * Body3DPoses.stride + 3);
     // Something happened: the pyramid fell, the rain landed.
     expect(first.any((v) => v != 0), isTrue);
     expect(

@@ -1,3 +1,100 @@
+## 2.0.0 - 2026-11-04
+
+The public names follow the Just Game Engine's naming rule: the 2D or 3D tag goes right after the subject (`Physics3DWorld`, `Box3DShape`, `Ground2DState`), and a 2D type with a 3D twin says its dimension too (`Shape2D` and `Shape3D`, `Body2DType` and `Body3DType`, `Joint2DKind` and `Joint3DKind`). Nothing behaves differently, and nothing saved changes: no enum value was renamed (`Body2DType.static` is still saved as `static`), and nothing this package writes holds a class name.
+
+### Breaking changes
+
+- **Renamed types, functions and members**: every one is in the tables below, under [Migrating from 1.x](#migrating-from-1x). The libraries to import are the same.
+- **`RigidBody` is removed.** It was a point mass with no shape that nothing used; a `Physics2DBody` with a mass, `applyForce` and an engine does what it did.
+- **`JointConstraint.type` is `Joint2D.kind`**: "kind" is the word for a joint in both dimensions (`Joint2DKind`, `Joint3DKind`, `Joint3DSettings.kind`).
+- `toString()` of the 3D shapes, `Physics3DEvent`, `Query3DHit` and `Mover2DPlane` names the new classes.
+- Files under `lib/src/` are named after what they hold (`physics_2d/physics_2d_engine.dart`, `physics_2d_body.dart`, `shape_2d.dart`, `shape_2d_distance.dart`; `physics_3d/physics_3d_engine.dart`, `physics_3d_results.dart`, `physics_3d_settings.dart`, `shape_3d.dart`; `testing/fake_physics_3d_engine.dart`). Code that imports the public libraries is unaffected.
+
+### Migrating from 1.x
+
+Rename these; the compiler lists every place. A 2D type that sits beside a tagged one takes the tag too, so the joints, the mover's types and the query results are tagged although they have no 3D class.
+
+| 2D: 1.x | 2.0.0 |
+|---|---|
+| `PhysicsEngine` | `Physics2DEngine` |
+| `PhysicsBody` | `Physics2DBody` |
+| `BodyType` | `Body2DType` |
+| `CollisionShape` | `Shape2D` |
+| `CircleShape` | `Circle2DShape` |
+| `PolygonShape` | `Polygon2DShape` |
+| `RectangleShape` | `Rectangle2DShape` |
+| `CapsuleShape` | `Capsule2DShape` |
+| `SegmentShape` | `Segment2DShape` |
+| `ChainShape` | `Chain2DShape` |
+| `RoundedPolygonShape` | `RoundedPolygon2DShape` |
+| `Ray` | `Ray2D` |
+| `RayBodyHit` | `Ray2DHit` |
+| `ShapeCastResult` | `CircleCast2DHit` |
+| `JointType` | `Joint2DKind` |
+| `JointConstraint` | `Joint2D` |
+| `DistanceJoint` | `DistanceJoint2D` |
+| `MouseJoint` | `MouseJoint2D` |
+| `WeldJoint` | `WeldJoint2D` |
+| `RevoluteJoint` | `RevoluteJoint2D` |
+| `PrismaticJoint` | `PrismaticJoint2D` |
+| `WheelJoint` | `WheelJoint2D` |
+| `GroundState2D` | `Ground2DState` |
+| `MoverShape` | `Mover2DShape` |
+| `MoverFilter` | `Mover2DFilter` |
+| `MoverPlane` | `Mover2DPlane` |
+| `MoverSolver` | `Mover2DSolver` |
+| `ShapeProxy2D` | `Shape2DProxy` |
+| `ShapeDistance2D` | `Shape2DDistance` |
+| `ShapeCastHit2D` | `ShapeCast2DHit` |
+| `castShape2D` | `shapeCast2D` |
+| `RigidBody` | removed: use a `Physics2DBody` |
+
+| 3D: 1.x | 2.0.0 |
+|---|---|
+| `PhysicsEngine3D` | `Physics3DEngine` |
+| `PhysicsWorld3D` | `Physics3DWorld` |
+| `PhysicsWorldSettings3D` | `Physics3DWorldSettings` |
+| `PhysicsEvent3D` | `Physics3DEvent` |
+| `PhysicsEventType3D` | `Physics3DEventType` |
+| `BodySettings3D` | `Body3DSettings` |
+| `BodyType3D` | `Body3DType` |
+| `BodyPoses3D` | `Body3DPoses` |
+| `MotionQuality3D` | `Motion3DQuality` |
+| `JointKind3D` | `Joint3DKind` |
+| `JointSettings3D` | `Joint3DSettings` |
+| `MotorState3D` | `Motor3DState` |
+| `SixDofAxisMode3D` | `SixDofAxis3DMode` |
+| `CharacterSettings3D` | `Character3DSettings` |
+| `CharacterState3D` | `Character3DState` |
+| `CharacterContact3D` | `Character3DContact` |
+| `GroundState3D` | `Ground3DState` |
+| `QueryFilter3D` | `Query3DFilter` |
+| `QueryHit3D` | `Query3DHit` |
+| `BoxShape3D` | `Box3DShape` |
+| `SphereShape3D` | `Sphere3DShape` |
+| `CapsuleShape3D` | `Capsule3DShape` |
+| `CylinderShape3D` | `Cylinder3DShape` |
+| `ConvexHullShape3D` | `ConvexHull3DShape` |
+| `MeshShape3D` | `Mesh3DShape` |
+| `HeightFieldShape3D` | `HeightField3DShape` |
+| `TransformedShape3D` | `Transformed3DShape` |
+| `CompoundShape3D` | `Compound3DShape` |
+
+| `package:just_physics_engine/testing.dart`: 1.x | 2.0.0 |
+|---|---|
+| `FakePhysicsEngine3D` | `FakePhysics3DEngine` |
+| `FakePhysicsWorld3D` | `FakePhysics3DWorld` |
+
+| Member: 1.x | 2.0.0 |
+|---|---|
+| `PhysicsEngine.castRay`, `castRayAll` (and `Box2DPhysicsEngine`'s) | `Physics2DEngine.raycast`, `raycastAll` |
+| `PhysicsEngine.castCircle` | `Physics2DEngine.circleCast` |
+| `PhysicsEngineFactory.create()` | `PhysicsEngineFactory.create2D()`, the twin of `create3D()` |
+| `Box2DPhysicsEngine.physicsBodyFromHandle` | `Box2DPhysicsEngine.bodyFromHandle` |
+| `JointConstraint.type` (and the constructor's first argument) | `Joint2D.kind`, as `Joint3DSettings.kind` says it |
+
+Unchanged: `Shape3D`, `Physics3DUnsupportedError`, `PhysicsEngineFactory` (`create3D`, `supports3D`, `unavailable3DReason`), the Box2D and Jolt classes (`Box2DPhysicsEngine`, `Box2DWorld`, `Box2DBody`, `Box2DJoint`, `Box2DJointFactory`, `JoltPhysicsEngine`, `JoltWorld`, `JoltShapes`), `PhysicsGameLoop`, `TransformInterpolator`, `CharacterMover2D`, `CharacterMove2D`, `OneWayDirection`, `SpatialGrid`, `BodyPair`, `CollisionManifold`, `CollisionDetector`, `ForceManager`, `moverLinearSlop`, `FakeBody3D`, `FakeJoint3D`, `FakeCharacter3D`, every enum value, and the 2D queries `queryAABB`, `queryCircle`, `queryPoint`, `castMover` and `collideMover`.
+
 ## 1.4.1 - 2026-10-17
 
 - `HeightFieldShape3D.hole`: a height at it or above is a hole. Jolt is given its no-collision value there, so things fall through; until now a hole was solid ground.

@@ -1,9 +1,9 @@
-part of 'physics_engine.dart';
+part of 'physics_2d_engine.dart';
 
 /// Pair of physics bodies for collision checking.
 class BodyPair {
-  final PhysicsBody a;
-  final PhysicsBody b;
+  final Physics2DBody a;
+  final Physics2DBody b;
   BodyPair(this.a, this.b);
 
   @override
@@ -21,20 +21,20 @@ class BodyPair {
 /// pressure from Map reallocation.
 class SpatialGrid {
   final double cellSize;
-  final Map<int, List<PhysicsBody>> _cells = {};
+  final Map<int, List<Physics2DBody>> _cells = {};
 
   /// Pool of previously allocated cell lists, reused on next rebuild.
-  final List<List<PhysicsBody>> _listPool = [];
+  final List<List<Physics2DBody>> _listPool = [];
 
   /// Tracks the last occupied cell range for each body.
-  final Map<PhysicsBody, _CellRange> _trackedBodies = {};
-  final Set<PhysicsBody> _seenBodies = <PhysicsBody>{};
+  final Map<Physics2DBody, _CellRange> _trackedBodies = {};
+  final Set<Physics2DBody> _seenBodies = <Physics2DBody>{};
 
   // Persistent scratch buffers — cleared and reused each frame to avoid
   // heap allocation in hot paths.
-  final List<PhysicsBody> _removedScratch = [];
+  final List<Physics2DBody> _removedScratch = [];
   final List<BodyPair> _pairBuffer = [];
-  // BodyPair.== is symmetric and PhysicsBody uses identity hashCode,
+  // BodyPair.== is symmetric and Physics2DBody uses identity hashCode,
   // so this Set correctly deduplicates (a,b) and (b,a) as the same pair.
   final Set<BodyPair> _seenPairs = {};
 
@@ -60,11 +60,11 @@ class SpatialGrid {
   }
 
   /// Obtain a list from the pool or allocate a new one.
-  List<PhysicsBody> _acquireList() {
-    return _listPool.isNotEmpty ? _listPool.removeLast() : <PhysicsBody>[];
+  List<Physics2DBody> _acquireList() {
+    return _listPool.isNotEmpty ? _listPool.removeLast() : <Physics2DBody>[];
   }
 
-  void insert(PhysicsBody body) {
+  void insert(Physics2DBody body) {
     final range = _computeRange(body);
     if (range == null) return;
 
@@ -72,7 +72,7 @@ class SpatialGrid {
     _trackedBodies[body] = range;
   }
 
-  void syncBodies(Iterable<PhysicsBody> bodies) {
+  void syncBodies(Iterable<Physics2DBody> bodies) {
     _seenBodies.clear();
     var dirtyBodies = 0;
 
@@ -121,14 +121,14 @@ class SpatialGrid {
     _lastDirtyBodyCount = dirtyBodies;
   }
 
-  void removeBody(PhysicsBody body) {
+  void removeBody(Physics2DBody body) {
     final previousRange = _trackedBodies.remove(body);
     if (previousRange != null) {
       _removeFromRange(body, previousRange);
     }
   }
 
-  _CellRange? _computeRange(PhysicsBody body) {
+  _CellRange? _computeRange(Physics2DBody body) {
     if (!body.isActive || !body.checkCollision) return null;
 
     final bounds = body.getCompoundBounds(body.position.toOffset());
@@ -140,7 +140,7 @@ class SpatialGrid {
     );
   }
 
-  void _insertIntoRange(PhysicsBody body, _CellRange range) {
+  void _insertIntoRange(Physics2DBody body, _CellRange range) {
     for (int x = range.minX; x <= range.maxX; x++) {
       for (int y = range.minY; y <= range.maxY; y++) {
         final hash = _hash(x, y);
@@ -149,7 +149,7 @@ class SpatialGrid {
     }
   }
 
-  void _removeFromRange(PhysicsBody body, _CellRange range) {
+  void _removeFromRange(Physics2DBody body, _CellRange range) {
     for (int x = range.minX; x <= range.maxX; x++) {
       for (int y = range.minY; y <= range.maxY; y++) {
         final hash = _hash(x, y);

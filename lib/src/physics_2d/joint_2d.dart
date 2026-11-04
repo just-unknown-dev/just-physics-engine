@@ -1,7 +1,7 @@
-part of 'physics_engine.dart';
+part of 'physics_2d_engine.dart';
 
-/// Enumeration of joint types.
-enum JointType { distance, mouse, weld, revolute, prismatic, wheel }
+/// The kind of a 2-D joint.
+enum Joint2DKind { distance, mouse, weld, revolute, prismatic, wheel }
 
 /// Base class for all joint constraints.
 ///
@@ -12,13 +12,14 @@ enum JointType { distance, mouse, weld, revolute, prismatic, wheel }
 /// do not turn in collisions — so joints move bodies, and set the angle a
 /// body is drawn at where they decide it (a hinged body turns as it swings).
 /// [Box2DPhysicsEngine] solves its own joints natively.
-abstract class JointConstraint {
-  final JointType type;
+abstract class Joint2D {
+  /// Which kind of joint this is.
+  final Joint2DKind kind;
 
-  JointConstraint(this.type);
+  Joint2D(this.kind);
 
   /// The bodies the joint holds; empty where it does not say.
-  List<PhysicsBody> get bodies => const [];
+  List<Physics2DBody> get bodies => const [];
 
   /// Apply the constraint for one physics step.
   void applyConstraint(double dt);
@@ -32,13 +33,13 @@ const double _jointCorrection = 0.5;
 const double _jointSlop = 0.5;
 
 /// Whether both of a joint's bodies take part in the simulation.
-bool _jointLive(PhysicsBody a, PhysicsBody b) => a.isActive && b.isActive;
+bool _jointLive(Physics2DBody a, Physics2DBody b) => a.isActive && b.isActive;
 
 /// [b] moved away from [a] along ([nx], [ny]) by [amount] (negative: toward
 /// it), shared by their solver masses.
 void _jointSeparate(
-  PhysicsBody a,
-  PhysicsBody b,
+  Physics2DBody a,
+  Physics2DBody b,
   double nx,
   double ny,
   double amount,
@@ -55,8 +56,8 @@ void _jointSeparate(
 
 /// An impulse [lambda] along ([nx], [ny]): [b] pushed along it, [a] against.
 void _jointPush(
-  PhysicsBody a,
-  PhysicsBody b,
+  Physics2DBody a,
+  Physics2DBody b,
   double nx,
   double ny,
   double lambda,
@@ -70,7 +71,7 @@ void _jointPush(
 
 /// Takes away [b]'s velocity relative to ([pvx], [pvy]) — the velocity of the
 /// point of [a] it is held to — shared by their solver masses.
-void _jointHold(PhysicsBody a, PhysicsBody b, double pvx, double pvy) {
+void _jointHold(Physics2DBody a, Physics2DBody b, double pvx, double pvy) {
   final ia = a.solverInverseMass, ib = b.solverInverseMass;
   final k = ia + ib;
   if (k == 0) return;
@@ -83,13 +84,13 @@ void _jointHold(PhysicsBody a, PhysicsBody b, double pvx, double pvy) {
 
 /// Inverse rotational inertia as the joints use it: none for a body that is
 /// not dynamic, or cannot turn.
-double _jointInverseInertia(PhysicsBody b) =>
+double _jointInverseInertia(Physics2DBody b) =>
     b.isDynamic && !b.fixedRotation ? b.inverseInertia : 0.0;
 
 /// A spin impulse driving `ωB − ωA` toward [speed], at most [maxTorque] × dt.
 void _jointSpinMotor(
-  PhysicsBody a,
-  PhysicsBody b,
+  Physics2DBody a,
+  Physics2DBody b,
   double speed,
   double maxTorque,
   double dt,
@@ -121,19 +122,19 @@ void _jointSpinMotor(
 /// outside the range it pulls back with an acceleration of [stiffness] ×
 /// the distance out, and [damping] × the speed apart slows it, whatever the
 /// masses.
-class DistanceJoint extends JointConstraint {
-  final PhysicsBody bodyA;
-  final PhysicsBody bodyB;
+class DistanceJoint2D extends Joint2D {
+  final Physics2DBody bodyA;
+  final Physics2DBody bodyB;
 
   @override
-  List<PhysicsBody> get bodies => [bodyA, bodyB];
+  List<Physics2DBody> get bodies => [bodyA, bodyB];
 
   double minLength;
   double maxLength;
   double stiffness; // 0 = rigid limit
   double damping;
 
-  DistanceJoint({
+  DistanceJoint2D({
     required this.bodyA,
     required this.bodyB,
     required double length,
@@ -143,7 +144,7 @@ class DistanceJoint extends JointConstraint {
     this.damping = 0.3,
   }) : minLength = minLength ?? length,
        maxLength = maxLength ?? length,
-       super(JointType.distance);
+       super(Joint2DKind.distance);
 
   @override
   void applyConstraint(double dt) {
@@ -193,11 +194,11 @@ class DistanceJoint extends JointConstraint {
 ///
 /// Typical use: dragging bodies with a pointer. It is a Dart joint on both
 /// backends: on the native one its force goes into the native body.
-class MouseJoint extends JointConstraint {
-  final PhysicsBody body;
+class MouseJoint2D extends Joint2D {
+  final Physics2DBody body;
 
   @override
-  List<PhysicsBody> get bodies => [body];
+  List<Physics2DBody> get bodies => [body];
 
   /// World-space target position (update each frame to drag the body).
   final Vector2 target;
@@ -206,14 +207,14 @@ class MouseJoint extends JointConstraint {
   double damping;
   double maxForce;
 
-  MouseJoint({
+  MouseJoint2D({
     required this.body,
     required Vector2 target,
     this.stiffness = 500.0,
     this.damping = 0.7,
     this.maxForce = 50000.0,
   }) : target = Vector2(target.x, target.y),
-       super(JointType.mouse);
+       super(Joint2DKind.mouse);
 
   /// Move the target (call from the game loop when the pointer moves).
   void setTarget(double x, double y) {
@@ -249,12 +250,12 @@ class MouseJoint extends JointConstraint {
 
 /// Holds bodyB where it was against bodyA when the joint was made, turning
 /// with bodyA, at the same angle to it.
-class WeldJoint extends JointConstraint {
-  final PhysicsBody bodyA;
-  final PhysicsBody bodyB;
+class WeldJoint2D extends Joint2D {
+  final Physics2DBody bodyA;
+  final Physics2DBody bodyB;
 
   @override
-  List<PhysicsBody> get bodies => [bodyA, bodyB];
+  List<Physics2DBody> get bodies => [bodyA, bodyB];
 
   // bodyB's offset from bodyA in bodyA's frame, and the angle between them,
   // when made.
@@ -262,17 +263,20 @@ class WeldJoint extends JointConstraint {
   final double _relY;
   final double _relAngle;
 
-  factory WeldJoint({required PhysicsBody bodyA, required PhysicsBody bodyB}) {
+  factory WeldJoint2D({
+    required Physics2DBody bodyA,
+    required Physics2DBody bodyB,
+  }) {
     final (x, y) = _jointTurn(
       bodyB.position.x - bodyA.position.x,
       bodyB.position.y - bodyA.position.y,
       -bodyA.angle,
     );
-    return WeldJoint._(bodyA, bodyB, x, y, bodyB.angle - bodyA.angle);
+    return WeldJoint2D._(bodyA, bodyB, x, y, bodyB.angle - bodyA.angle);
   }
 
-  WeldJoint._(this.bodyA, this.bodyB, this._relX, this._relY, this._relAngle)
-    : super(JointType.weld);
+  WeldJoint2D._(this.bodyA, this.bodyB, this._relX, this._relY, this._relAngle)
+    : super(Joint2DKind.weld);
 
   @override
   void applyConstraint(double dt) {
@@ -316,12 +320,12 @@ class WeldJoint extends JointConstraint {
 /// ([lowerLimit], [upperLimit]) are how far it may slide from where it
 /// started; a motor drives the sliding speed, pushing with up to
 /// [maxMotorForce].
-class PrismaticJoint extends JointConstraint {
-  final PhysicsBody bodyA;
-  final PhysicsBody bodyB;
+class PrismaticJoint2D extends Joint2D {
+  final Physics2DBody bodyA;
+  final Physics2DBody bodyB;
 
   @override
-  List<PhysicsBody> get bodies => [bodyA, bodyB];
+  List<Physics2DBody> get bodies => [bodyA, bodyB];
 
   // The unit axis in bodyA's frame.
   final double _axisX;
@@ -339,9 +343,9 @@ class PrismaticJoint extends JointConstraint {
   double motorSpeed = 0.0;
   double maxMotorForce = 0.0;
 
-  factory PrismaticJoint({
-    required PhysicsBody bodyA,
-    required PhysicsBody bodyB,
+  factory PrismaticJoint2D({
+    required Physics2DBody bodyA,
+    required Physics2DBody bodyB,
     required Offset axis,
   }) {
     final len = axis.distance;
@@ -353,7 +357,7 @@ class PrismaticJoint extends JointConstraint {
       bodyB.position.y - bodyA.position.y,
       -bodyA.angle,
     );
-    return PrismaticJoint._(
+    return PrismaticJoint2D._(
       bodyA,
       bodyB,
       ax,
@@ -364,7 +368,7 @@ class PrismaticJoint extends JointConstraint {
     );
   }
 
-  PrismaticJoint._(
+  PrismaticJoint2D._(
     this.bodyA,
     this.bodyB,
     this._axisX,
@@ -372,7 +376,7 @@ class PrismaticJoint extends JointConstraint {
     this._across0,
     this._along0,
     this._relAngle,
-  ) : super(JointType.prismatic);
+  ) : super(Joint2DKind.prismatic);
 
   /// How far bodyB has slid along the axis since the joint was made.
   double get translation {
@@ -453,12 +457,12 @@ class PrismaticJoint extends JointConstraint {
 /// acceleration per unit out, and [springDamping] per unit of speed,
 /// whatever the masses (Box2D's wheel spring is a frequency in hertz and a
 /// damping ratio instead).
-class WheelJoint extends JointConstraint {
-  final PhysicsBody bodyA;
-  final PhysicsBody bodyB;
+class WheelJoint2D extends Joint2D {
+  final Physics2DBody bodyA;
+  final Physics2DBody bodyB;
 
   @override
-  List<PhysicsBody> get bodies => [bodyA, bodyB];
+  List<Physics2DBody> get bodies => [bodyA, bodyB];
 
   // The unit axis in bodyA's frame.
   final double _axisX;
@@ -477,9 +481,9 @@ class WheelJoint extends JointConstraint {
   double motorSpeed = 0.0;
   double maxMotorTorque = 0.0;
 
-  factory WheelJoint({
-    required PhysicsBody bodyA,
-    required PhysicsBody bodyB,
+  factory WheelJoint2D({
+    required Physics2DBody bodyA,
+    required Physics2DBody bodyB,
     required Offset axis,
   }) {
     final len = axis.distance;
@@ -491,7 +495,7 @@ class WheelJoint extends JointConstraint {
       bodyB.position.y - bodyA.position.y,
       -bodyA.angle,
     );
-    return WheelJoint._(
+    return WheelJoint2D._(
       bodyA,
       bodyB,
       ax,
@@ -501,14 +505,14 @@ class WheelJoint extends JointConstraint {
     );
   }
 
-  WheelJoint._(
+  WheelJoint2D._(
     this.bodyA,
     this.bodyB,
     this._axisX,
     this._axisY,
     this._across0,
     this._along0,
-  ) : super(JointType.wheel);
+  ) : super(Joint2DKind.wheel);
 
   /// Set the suspension spring (matches [Box2DJoint.setWheelSpring] for a
   /// consistent API across backends).
@@ -572,12 +576,12 @@ class WheelJoint extends JointConstraint {
 /// bodyA's frame. Limits ([lowerLimit], [upperLimit]) and the motor act on
 /// the angle between the bodies, from what it was when the joint was made,
 /// as Box2D's revolute joint.
-class RevoluteJoint extends JointConstraint {
-  final PhysicsBody bodyA;
-  final PhysicsBody bodyB;
+class RevoluteJoint2D extends Joint2D {
+  final Physics2DBody bodyA;
+  final Physics2DBody bodyB;
 
   @override
-  List<PhysicsBody> get bodies => [bodyA, bodyB];
+  List<Physics2DBody> get bodies => [bodyA, bodyB];
 
   // The anchor in bodyA's frame.
   final double _anchorX;
@@ -598,9 +602,9 @@ class RevoluteJoint extends JointConstraint {
   double motorSpeed = 0.0;
   double maxMotorTorque = 0.0;
 
-  factory RevoluteJoint({
-    required PhysicsBody bodyA,
-    required PhysicsBody bodyB,
+  factory RevoluteJoint2D({
+    required Physics2DBody bodyA,
+    required Physics2DBody bodyB,
     required Offset worldAnchor,
   }) {
     final (lx, ly) = _jointTurn(
@@ -610,7 +614,7 @@ class RevoluteJoint extends JointConstraint {
     );
     final bx = bodyB.position.x - worldAnchor.dx;
     final by = bodyB.position.y - worldAnchor.dy;
-    return RevoluteJoint._(
+    return RevoluteJoint2D._(
       bodyA,
       bodyB,
       lx,
@@ -621,7 +625,7 @@ class RevoluteJoint extends JointConstraint {
     );
   }
 
-  RevoluteJoint._(
+  RevoluteJoint2D._(
     this.bodyA,
     this.bodyB,
     this._anchorX,
@@ -629,7 +633,7 @@ class RevoluteJoint extends JointConstraint {
     this._radius,
     this._swing0,
     this._relAngle0,
-  ) : super(JointType.revolute);
+  ) : super(Joint2DKind.revolute);
 
   /// The angle between the bodies, from what it was when the joint was made
   /// (Box2D's joint angle).

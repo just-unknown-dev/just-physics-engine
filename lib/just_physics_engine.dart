@@ -6,13 +6,13 @@
 ///
 /// Core types (both backends):
 /// - [PhysicsEngineFactory]  — create the best backend for the current platform
-/// - [PhysicsEngine]         — pure-Dart engine (also returned on web)
+/// - [Physics2DEngine]       — pure-Dart engine (also returned on web)
 /// - [Box2DPhysicsEngine]    — Box2D v3.2 FFI engine (native; a stub on the web)
-/// - [PhysicsBody]           — shared rigid body state carrier
-/// - [CollisionShape], [CircleShape], [PolygonShape], [RectangleShape]
+/// - [Physics2DBody]         — shared rigid body state carrier
+/// - [Shape2D], [Circle2DShape], [Polygon2DShape], [Rectangle2DShape]
 /// - [CollisionManifold], [SpatialGrid], [BodyPair]
-/// - [RigidBody], [CollisionDetector], [ForceManager]
-/// - [Ray]                   — 2D ray descriptor
+/// - [CollisionDetector], [ForceManager]
+/// - [Ray2D]                 — 2D ray descriptor
 ///
 /// Box2D-specific types (native only):
 /// - [Box2DWorld]            — native world + fixed-step accumulator
@@ -21,13 +21,14 @@
 /// - [TransformInterpolator] — sub-frame render interpolation (α-blending)
 ///
 /// 3D (also on its own in `package:just_physics_engine/physics_3d.dart`):
-/// - [PhysicsEngine3D]       — makes worlds; `PhysicsEngineFactory.create3D`
+/// - [Physics3DEngine]       — makes worlds; `PhysicsEngineFactory.create3D`
 ///                             gives the platform's
 /// - [JoltPhysicsEngine]     — Jolt Physics through just_jolt (native only;
 ///                             the app's pubspec opts in to building it)
-/// - [PhysicsWorld3D]        — one simulation, with int body handles
+/// - [Physics3DWorld]        — one simulation, with int body handles
 /// - [Physics3DUnsupportedError] — where 3D cannot run
-/// - shapes, settings, poses, hits and events (`…3D`)
+/// - shapes, settings, poses, hits and events (`Box3DShape`,
+///   `Body3DSettings`, `Body3DPoses`, `Query3DHit`, `Physics3DEvent`, …)
 library;
 
 // ── Pure-Dart 2D backend (web fallback, unchanged) ─────────────────────────

@@ -1,8 +1,8 @@
-part of 'physics_engine.dart';
+part of 'physics_2d_engine.dart';
 
 // A kinematic character mover: Box2D's (samples/sample_character.cpp, after
 // Quake's pmove) on top of two world queries every backend answers —
-// [PhysicsEngine.collideMover] and [PhysicsEngine.castMover]. Native Box2D
+// [Physics2DEngine.collideMover] and [Physics2DEngine.castMover]. Native Box2D
 // answers them in C; the pure-Dart engine with the same algorithm in Dart.
 // The plane solver and the rest of the move are shared, so a character walks
 // the same on the web as on a phone.
@@ -21,12 +21,15 @@ const double _moverOneWayDepth = 2 * moverLinearSlop;
 
 /// The shape a character moves as, centred on its position: a capsule
 /// standing upright, or a box with slightly rounded corners.
-final class MoverShape {
+final class Mover2DShape {
   /// An upright capsule [height] tall and [radius] across, end to end.
-  factory MoverShape.capsule({required double radius, required double height}) {
+  factory Mover2DShape.capsule({
+    required double radius,
+    required double height,
+  }) {
     final r = math.max(radius, 2 * moverLinearSlop + 0.01);
     final half = math.max(height / 2 - r, 0.0);
-    return MoverShape._(
+    return Mover2DShape._(
       half == 0 ? const [Offset.zero] : [Offset(0, -half), Offset(0, half)],
       r,
       2 * r,
@@ -37,7 +40,7 @@ final class MoverShape {
   /// A [width] × [height] box whose corners are rounded by [cornerRadius]
   /// (a tenth of its shorter side by default), which lets it slide over
   /// seams instead of catching on them.
-  factory MoverShape.box({
+  factory Mover2DShape.box({
     required double width,
     required double height,
     double? cornerRadius,
@@ -47,7 +50,7 @@ final class MoverShape {
         .clamp(2 * moverLinearSlop + 0.01, math.max(shorter / 2, 1.01))
         .toDouble();
     final hx = math.max(width / 2 - r, 0.0), hy = math.max(height / 2 - r, 0.0);
-    return MoverShape._(
+    return Mover2DShape._(
       [Offset(-hx, -hy), Offset(hx, -hy), Offset(hx, hy), Offset(-hx, hy)],
       r,
       width,
@@ -55,7 +58,7 @@ final class MoverShape {
     );
   }
 
-  const MoverShape._(this.points, this.radius, this.width, this.height);
+  const Mover2DShape._(this.points, this.radius, this.width, this.height);
 
   /// The core's points, relative to the centre.
   final List<Offset> points;
@@ -70,16 +73,16 @@ final class MoverShape {
   final double height;
 
   /// Its proxy centred on [position].
-  ShapeProxy2D proxyAt(Offset position) =>
-      ShapeProxy2D([for (final p in points) p + position], radius);
+  Shape2DProxy proxyAt(Offset position) =>
+      Shape2DProxy([for (final p in points) p + position], radius);
 }
 
 /// Which bodies a mover meets: those whose category is in [maskBits] and
 /// whose mask holds [categoryBits] (Box2D's query filter), never a sensor,
 /// and never [ignore] (the character's own body).
-final class MoverFilter {
+final class Mover2DFilter {
   /// A filter; by default everything but sensors.
-  const MoverFilter({
+  const Mover2DFilter({
     this.categoryBits = 1,
     this.maskBits = 0xFFFFFFFF,
     this.ignore,
@@ -92,10 +95,10 @@ final class MoverFilter {
   final int maskBits;
 
   /// A body to pass through, usually the character's own.
-  final PhysicsBody? ignore;
+  final Physics2DBody? ignore;
 
   /// Whether the mover meets [body].
-  bool passes(PhysicsBody body) =>
+  bool passes(Physics2DBody body) =>
       body.isActive &&
       !body.isSensor &&
       !identical(body, ignore) &&
@@ -105,10 +108,10 @@ final class MoverFilter {
 
 /// A surface a mover touches: Box2D's b2CollisionPlane. The mover is kept
 /// on the [normal] side, at least [offset] along it.
-final class MoverPlane {
+final class Mover2DPlane {
   /// A plane of [body]'s with [normal] (towards the mover), [offset] (how
   /// far the mover is into it) and the touching [point].
-  MoverPlane({
+  Mover2DPlane({
     required this.normal,
     required this.offset,
     required this.point,
@@ -129,7 +132,7 @@ final class MoverPlane {
   final Offset point;
 
   /// Whose surface it is.
-  final PhysicsBody? body;
+  final Physics2DBody? body;
 
   /// The most the solver may push the mover out (soft collision when
   /// finite); below 0, or not a number, counts as 0.
@@ -147,17 +150,17 @@ final class MoverPlane {
 
   @override
   String toString() =>
-      'MoverPlane(normal: $normal, offset: ${offset.toStringAsFixed(3)})';
+      'Mover2DPlane(normal: $normal, offset: ${offset.toStringAsFixed(3)})';
 }
 
 /// Box2D's plane solver for movers (b2SolvePlanes and b2ClipVector).
-abstract final class MoverSolver {
+abstract final class Mover2DSolver {
   /// Where a mover wanting to move by [targetDelta] can go without breaking
   /// [planes]: the target pushed out of each plane, iterated (Box2D's
-  /// b2SolvePlanes). Each plane's [MoverPlane.push] is set.
+  /// b2SolvePlanes). Each plane's [Mover2DPlane.push] is set.
   static ({Offset translation, int iterations}) solvePlanes(
     Offset targetDelta,
-    List<MoverPlane> planes,
+    List<Mover2DPlane> planes,
   ) {
     for (final p in planes) {
       p.push = 0;
@@ -190,7 +193,7 @@ abstract final class MoverSolver {
   /// [vector] with what runs into [planes] taken off (Box2D's
   /// b2ClipVector): planes the solver did not push, or that do not clip,
   /// are skipped.
-  static Offset clipVector(Offset vector, List<MoverPlane> planes) {
+  static Offset clipVector(Offset vector, List<Mover2DPlane> planes) {
     var vx = vector.dx, vy = vector.dy;
     for (final plane in planes) {
       if (plane.push == 0 || !plane.clipVelocity) continue;
@@ -203,7 +206,7 @@ abstract final class MoverSolver {
 }
 
 /// What a character stands on after a move.
-enum GroundState2D {
+enum Ground2DState {
   /// On ground it can stand on.
   onGround,
 
@@ -235,35 +238,35 @@ final class CharacterMove2D {
   final Offset velocity;
 
   /// What it stands on.
-  final GroundState2D groundState;
+  final Ground2DState groundState;
 
   /// The ground's normal, or zero in the air.
   final Offset groundNormal;
 
   /// The body it stands on, or null.
-  final PhysicsBody? groundBody;
+  final Physics2DBody? groundBody;
 
   /// The surfaces it touched at the end of the move.
-  final List<MoverPlane> contacts;
+  final List<Mover2DPlane> contacts;
 
   /// Whether it stands on walkable ground.
-  bool get isGrounded => groundState == GroundState2D.onGround;
+  bool get isGrounded => groundState == Ground2DState.onGround;
 }
 
-/// Moves a character through a [PhysicsEngine]'s world as a kinematic
+/// Moves a character through a [Physics2DEngine]'s world as a kinematic
 /// shape: it slides along walls and slopes, stops at ceilings, climbs steps
 /// up to [stepHeight], keeps to the floor going down within
 /// [stickToFloor], stands on one-way platforms and passes up through them,
 /// and pushes dynamic bodies it walks into.
 ///
 /// It is not a body: nothing collides with it unless the caller also keeps
-/// a body where it is (and passes it as [MoverFilter.ignore]).
+/// a body where it is (and passes it as [Mover2DFilter.ignore]).
 final class CharacterMover2D {
   /// A mover in [engine]'s world.
   CharacterMover2D(this.engine);
 
   /// The world it moves through.
-  final PhysicsEngine engine;
+  final Physics2DEngine engine;
 
   static const _iterations = 5;
   static const _tolerance = 2 * moverLinearSlop; // Box2D's 0.01 m
@@ -276,7 +279,7 @@ final class CharacterMover2D {
   /// above 0, it pushes dynamic bodies in its way as a body of [mass] would,
   /// with at most that force.
   CharacterMove2D move({
-    required MoverShape shape,
+    required Mover2DShape shape,
     required Offset position,
     required Offset velocity,
     required double dt,
@@ -285,7 +288,7 @@ final class CharacterMover2D {
     double stepHeight = 0,
     double stickToFloor = 0,
     bool wasGrounded = false,
-    MoverFilter filter = const MoverFilter(),
+    Mover2DFilter filter = const Mover2DFilter(),
     double mass = 1,
     double pushStrength = 0,
   }) {
@@ -310,7 +313,7 @@ final class CharacterMover2D {
               up,
               minUp,
             ).$1 ==
-            GroundState2D.onGround) {
+            Ground2DState.onGround) {
       final stepped = _tryStep(
         shape,
         position,
@@ -335,7 +338,7 @@ final class CharacterMover2D {
 
     // Keep to the floor going down slopes and off small ledges.
     if (wasGrounded &&
-        ground.$1 != GroundState2D.onGround &&
+        ground.$1 != Ground2DState.onGround &&
         stickToFloor > 0 &&
         _dot(v, up) <= 0) {
       final down = up * -stickToFloor;
@@ -344,7 +347,7 @@ final class CharacterMover2D {
         final candidate = pos + down * f;
         final below = engine.collideMover(shape, candidate, filter: filter);
         final g = _ground(below, up, minUp);
-        if (g.$1 == GroundState2D.onGround) {
+        if (g.$1 == Ground2DState.onGround) {
           pos = candidate;
           contacts = below;
           ground = g;
@@ -366,22 +369,22 @@ final class CharacterMover2D {
   }
 
   /// Box2D's mover loop: collide, solve, cast, advance, a few times.
-  (Offset, List<MoverPlane>) _slide(
-    MoverShape shape,
+  (Offset, List<Mover2DPlane>) _slide(
+    Mover2DShape shape,
     Offset start,
     Offset delta,
-    MoverFilter filter,
+    Mover2DFilter filter,
     Offset up,
     double minUp,
   ) {
     var target = start + delta;
     var pos = start;
-    var planes = const <MoverPlane>[];
+    var planes = const <Mover2DPlane>[];
     for (var i = 0; i < _iterations; i++) {
       planes = engine.collideMover(shape, pos, filter: filter);
       final wanted = _offSteep(target - pos, planes, up, minUp);
       target = pos + wanted;
-      final t = MoverSolver.solvePlanes(wanted, planes).translation;
+      final t = Mover2DSolver.solvePlanes(wanted, planes).translation;
       final fraction = engine.castMover(shape, pos, t, filter: filter);
       final step = t * fraction;
       pos += step;
@@ -393,7 +396,7 @@ final class CharacterMover2D {
   /// A position past a step in the way, or null when there is none to
   /// climb (or climbing gets no further).
   Offset? _tryStep(
-    MoverShape shape,
+    Mover2DShape shape,
     Offset start,
     Offset slid,
     Offset delta,
@@ -401,7 +404,7 @@ final class CharacterMover2D {
     double stepHeight,
     double stickToFloor,
     double minUp,
-    MoverFilter filter,
+    Mover2DFilter filter,
   ) {
     final across = _along(delta, up);
     final want = across.distance;
@@ -424,17 +427,17 @@ final class CharacterMover2D {
       up,
       minUp,
     );
-    if (g.$1 != GroundState2D.onGround) return null;
+    if (g.$1 != Ground2DState.onGround) return null;
     if (_dot(landed - start, up) > stepHeight + moverLinearSlop) return null;
     return landed;
   }
 
-  /// [velocity] clipped against [planes] as [MoverSolver.clipVector] does,
+  /// [velocity] clipped against [planes] as [Mover2DSolver.clipVector] does,
   /// except that a slope too steep to stand on never turns running into it
   /// into speed up it.
   static Offset _clip(
     Offset velocity,
-    List<MoverPlane> planes,
+    List<Mover2DPlane> planes,
     Offset up,
     double minUp,
   ) {
@@ -460,7 +463,7 @@ final class CharacterMover2D {
   /// sliding up it. Gravity still slides the character down them.
   static Offset _offSteep(
     Offset motion,
-    List<MoverPlane> planes,
+    List<Mover2DPlane> planes,
     Offset up,
     double minUp,
   ) {
@@ -479,13 +482,13 @@ final class CharacterMover2D {
   }
 
   /// The ground among [planes]: the one facing most up.
-  (GroundState2D, Offset, PhysicsBody?) _ground(
-    List<MoverPlane> planes,
+  (Ground2DState, Offset, Physics2DBody?) _ground(
+    List<Mover2DPlane> planes,
     Offset up,
     double minUp,
   ) {
-    if (planes.isEmpty) return (GroundState2D.inAir, Offset.zero, null);
-    MoverPlane? best;
+    if (planes.isEmpty) return (Ground2DState.inAir, Offset.zero, null);
+    Mover2DPlane? best;
     var bestUp = -2.0;
     for (final p in planes) {
       final u = _dot(p.normal, up);
@@ -495,17 +498,17 @@ final class CharacterMover2D {
       }
     }
     if (bestUp >= minUp) {
-      return (GroundState2D.onGround, best!.normal, best.body);
+      return (Ground2DState.onGround, best!.normal, best.body);
     }
     if (bestUp > 0.01) {
-      return (GroundState2D.onSteepGround, best!.normal, best.body);
+      return (Ground2DState.onSteepGround, best!.normal, best.body);
     }
-    return (GroundState2D.notSupported, Offset.zero, null);
+    return (Ground2DState.notSupported, Offset.zero, null);
   }
 
   /// Pushes the dynamic bodies among [contacts] that [velocity] runs into.
   void _push(
-    List<MoverPlane> contacts,
+    List<Mover2DPlane> contacts,
     Offset velocity,
     double dt,
     double mass,
@@ -513,7 +516,9 @@ final class CharacterMover2D {
   ) {
     for (final p in contacts) {
       final body = p.body;
-      if (body == null || body.effectiveBodyType != BodyType.dynamic) continue;
+      if (body == null || body.effectiveBodyType != Body2DType.dynamic) {
+        continue;
+      }
       final approach = -_dot(velocity, p.normal);
       if (approach <= 0) continue;
       final impulse = math.min(mass * approach, pushStrength * dt);
@@ -538,41 +543,41 @@ double _moverDot(Offset a, Offset b) => a.dx * b.dx + a.dy * b.dy;
 /// on both backends, though the pure-Dart engine's own collisions do not
 /// turn them. A segment, and each segment of a chain, is the capsule its
 /// thickness makes, as both backends collide it.
-List<ShapeProxy2D> _shapeProxiesOf(PhysicsBody body, Offset origin) {
+List<Shape2DProxy> _shapeProxiesOf(Physics2DBody body, Offset origin) {
   final c = math.cos(body.angle), s = math.sin(body.angle);
   final px = body.position.x - origin.dx, py = body.position.y - origin.dy;
   Offset at(Offset p) =>
       Offset(c * p.dx - s * p.dy + px, s * p.dx + c * p.dy + py);
-  final out = <ShapeProxy2D>[];
-  void add(CollisionShape shape) {
+  final out = <Shape2DProxy>[];
+  void add(Shape2D shape) {
     switch (shape) {
-      case CircleShape():
-        out.add(ShapeProxy2D([at(shape.center)], shape.radius));
-      case CapsuleShape():
+      case Circle2DShape():
+        out.add(Shape2DProxy([at(shape.center)], shape.radius));
+      case Capsule2DShape():
         out.add(
-          ShapeProxy2D([at(shape.center1), at(shape.center2)], shape.radius),
+          Shape2DProxy([at(shape.center1), at(shape.center2)], shape.radius),
         );
-      case RoundedPolygonShape():
+      case RoundedPolygon2DShape():
         out.add(
-          ShapeProxy2D([
+          Shape2DProxy([
             for (final v in shape.vertices) at(v),
           ], shape.cornerRadius),
         );
-      case PolygonShape():
+      case Polygon2DShape():
         if (shape.vertices.isNotEmpty) {
-          out.add(ShapeProxy2D([for (final v in shape.vertices) at(v)], 0));
+          out.add(Shape2DProxy([for (final v in shape.vertices) at(v)], 0));
         }
-      case SegmentShape():
+      case Segment2DShape():
         out.add(
-          ShapeProxy2D([at(shape.point1), at(shape.point2)], shape.thickness),
+          Shape2DProxy([at(shape.point1), at(shape.point2)], shape.thickness),
         );
-      case ChainShape():
+      case Chain2DShape():
         final v = shape.vertices;
         if (v.length < 2) break;
         final n = shape.loop && v.length > 2 ? v.length : v.length - 1;
         for (var i = 0; i < n; i++) {
           out.add(
-            ShapeProxy2D([
+            Shape2DProxy([
               at(v[i]),
               at(v[(i + 1) % v.length]),
             ], shape.thickness),
@@ -590,7 +595,7 @@ List<ShapeProxy2D> _shapeProxiesOf(PhysicsBody body, Offset origin) {
 
 /// The way a one-way [body] is solid from, as the normal of a surface
 /// facing a mover it holds; null for an ordinary body.
-Offset? _moverSolidSide(PhysicsBody body) {
+Offset? _moverSolidSide(Physics2DBody body) {
   if (!body.isOneWay) return null;
   return switch (body.oneWayDirection) {
     OneWayDirection.fromAbove => const Offset(0, -1),
@@ -602,7 +607,7 @@ Offset? _moverSolidSide(PhysicsBody body) {
 
 /// [body]'s bounds round all its shapes, turned as it is: the box round its
 /// unturned bounds turned about its position.
-Rect _turnedBoundsOf(PhysicsBody body) {
+Rect _turnedBoundsOf(Physics2DBody body) {
   final position = body.position.toOffset();
   final bounds = body.getCompoundBounds(position);
   if (body.angle == 0) return bounds;
@@ -617,11 +622,14 @@ Rect _turnedBoundsOf(PhysicsBody body) {
   );
 }
 
-/// The pure-Dart answers to [PhysicsEngine.collideMover] and
-/// [PhysicsEngine.castMover]; the native backend answers in C with the same
+/// The pure-Dart answers to [Physics2DEngine.collideMover] and
+/// [Physics2DEngine.castMover]; the native backend answers in C with the same
 /// rules.
-extension on PhysicsEngine {
-  Iterable<PhysicsBody> _moverCandidates(Rect box, MoverFilter filter) sync* {
+extension on Physics2DEngine {
+  Iterable<Physics2DBody> _moverCandidates(
+    Rect box,
+    Mover2DFilter filter,
+  ) sync* {
     for (final body in bodies) {
       if (!filter.passes(body)) continue;
       if (!_turnedBoundsOf(body).overlaps(box)) continue;
@@ -629,10 +637,10 @@ extension on PhysicsEngine {
     }
   }
 
-  List<MoverPlane> _collideMoverDart(
-    MoverShape shape,
+  List<Mover2DPlane> _collideMoverDart(
+    Mover2DShape shape,
     Offset position,
-    MoverFilter filter,
+    Mover2DFilter filter,
   ) {
     final mover = shape.proxyAt(Offset.zero);
     final box = Rect.fromCenter(
@@ -640,11 +648,11 @@ extension on PhysicsEngine {
       width: shape.width + 2 * moverLinearSlop,
       height: shape.height + 2 * moverLinearSlop,
     );
-    final planes = <MoverPlane>[];
+    final planes = <Mover2DPlane>[];
     for (final body in _moverCandidates(box, filter)) {
       final solid = _moverSolidSide(body);
       for (final proxy in _shapeProxiesOf(body, position)) {
-        final d = ShapeDistance2D.between(proxy, mover);
+        final d = Shape2DDistance.between(proxy, mover);
         final totalRadius = proxy.radius + mover.radius;
         if (d.overlaps || d.distance > totalRadius) continue;
         final offset = totalRadius - d.distance;
@@ -654,7 +662,7 @@ extension on PhysicsEngine {
           continue;
         }
         planes.add(
-          MoverPlane(
+          Mover2DPlane(
             normal: d.normal,
             offset: offset,
             point: d.pointA + position,
@@ -667,10 +675,10 @@ extension on PhysicsEngine {
   }
 
   double _castMoverDart(
-    MoverShape shape,
+    Mover2DShape shape,
     Offset position,
     Offset translation,
-    MoverFilter filter,
+    Mover2DFilter filter,
   ) {
     if (translation == Offset.zero) return 1;
     final mover = shape.proxyAt(Offset.zero);
@@ -691,13 +699,13 @@ extension on PhysicsEngine {
         if (solid != null) {
           // Partway through it already (rising through, or carried into
           // it): passed over, as collideMover passes over it.
-          final d = ShapeDistance2D.between(proxy, mover);
+          final d = Shape2DDistance.between(proxy, mover);
           if (d.overlaps ||
               proxy.radius + mover.radius - d.distance > _moverOneWayDepth) {
             continue;
           }
         }
-        final hit = castShape2D(
+        final hit = shapeCast2D(
           proxy,
           mover,
           translation,

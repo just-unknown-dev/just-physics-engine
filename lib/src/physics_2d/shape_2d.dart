@@ -1,9 +1,9 @@
-part of 'physics_engine.dart';
+part of 'physics_2d_engine.dart';
 
 /// Base class for collision shapes.
-abstract class CollisionShape {
+abstract class Shape2D {
   /// Check collision and return manifold.
-  CollisionManifold getManifold(Offset posA, CollisionShape other, Offset posB);
+  CollisionManifold getManifold(Offset posA, Shape2D other, Offset posB);
 
   /// Get the axis-aligned bounding box for this shape.
   Rect getBounds(Offset position);
@@ -14,7 +14,7 @@ abstract class CollisionShape {
 }
 
 /// A circular collision shape.
-class CircleShape extends CollisionShape {
+class Circle2DShape extends Shape2D {
   final double radius;
 
   /// Where the circle's centre is, relative to the body's position: zero
@@ -25,7 +25,7 @@ class CircleShape extends CollisionShape {
   /// does not turn shapes, keeps it where it is.
   final Offset center;
 
-  CircleShape(this.radius, {this.center = Offset.zero});
+  Circle2DShape(this.radius, {this.center = Offset.zero});
 
   /// The circle's centre in the world, for a body at [position].
   Offset centerAt(Offset position) =>
@@ -35,12 +35,8 @@ class CircleShape extends CollisionShape {
   double get area => math.pi * radius * radius;
 
   @override
-  CollisionManifold getManifold(
-    Offset posA,
-    CollisionShape other,
-    Offset posB,
-  ) {
-    if (other is CircleShape) {
+  CollisionManifold getManifold(Offset posA, Shape2D other, Offset posB) {
+    if (other is Circle2DShape) {
       final delta = other.centerAt(posB) - centerAt(posA);
       final distance = delta.distance;
       final totalRadius = radius + other.radius;
@@ -54,10 +50,10 @@ class CircleShape extends CollisionShape {
           penetration: penetration,
         );
       }
-    } else if (other is PolygonShape ||
-        other is CapsuleShape ||
-        other is SegmentShape ||
-        other is ChainShape) {
+    } else if (other is Polygon2DShape ||
+        other is Capsule2DShape ||
+        other is Segment2DShape ||
+        other is Chain2DShape) {
       // Delegate to the other shape and flip the normal so it points A→B.
       final m = other.getManifold(posB, this, posA);
       if (!m.isColliding) return CollisionManifold.empty();
@@ -77,11 +73,11 @@ class CircleShape extends CollisionShape {
 }
 
 /// A convex polygonal collision shape using SAT (Separating Axis Theorem).
-class PolygonShape extends CollisionShape {
+class Polygon2DShape extends Shape2D {
   /// Vertices defined relative to the center of the body.
   List<Offset> vertices;
 
-  PolygonShape(this.vertices);
+  Polygon2DShape(this.vertices);
 
   @override
   double get area {
@@ -95,14 +91,10 @@ class PolygonShape extends CollisionShape {
   }
 
   @override
-  CollisionManifold getManifold(
-    Offset posA,
-    CollisionShape other,
-    Offset posB,
-  ) {
-    if (other is RoundedPolygonShape) {
-      // Check this before the plain PolygonShape branch below — RoundedPolygonShape
-      // extends PolygonShape, so `other is PolygonShape` would otherwise match
+  CollisionManifold getManifold(Offset posA, Shape2D other, Offset posB) {
+    if (other is RoundedPolygon2DShape) {
+      // Check this before the plain Polygon2DShape branch below — RoundedPolygon2DShape
+      // extends Polygon2DShape, so `other is Polygon2DShape` would otherwise match
       // here first and silently ignore the other body's cornerRadius. Delegate
       // to the rounded polygon's own logic and flip the normal so it points A→B.
       final m = other.getManifold(posB, this, posA);
@@ -112,9 +104,9 @@ class PolygonShape extends CollisionShape {
         normal: -m.normal,
         penetration: m.penetration,
       );
-    } else if (other is PolygonShape) {
+    } else if (other is Polygon2DShape) {
       return _satPolygonVsPolygon(posA, this, posB, other);
-    } else if (other is CircleShape) {
+    } else if (other is Circle2DShape) {
       // Invert the result so normal points A→B.
       final manifold = _satCircleVsPolygon(
         other.centerAt(posB),
@@ -127,17 +119,17 @@ class PolygonShape extends CollisionShape {
         normal: -manifold.normal,
         penetration: manifold.penetration,
       );
-    } else if (other is CapsuleShape) {
+    } else if (other is Capsule2DShape) {
       return _satPolygonVsCapsule(posA, this, posB, other);
-    } else if (other is SegmentShape) {
+    } else if (other is Segment2DShape) {
       // Treat segment as a thin capsule.
-      final cap = CapsuleShape(
+      final cap = Capsule2DShape(
         center1: other.point1,
         center2: other.point2,
         radius: other.thickness,
       );
       return _satPolygonVsCapsule(posA, this, posB, cap);
-    } else if (other is ChainShape) {
+    } else if (other is Chain2DShape) {
       // Delegate to the chain (which degrades to per-segment capsule tests)
       // and flip the normal so it points A→B.
       final m = other.getManifold(posB, this, posA);
@@ -172,9 +164,9 @@ class PolygonShape extends CollisionShape {
 
   CollisionManifold _satPolygonVsPolygon(
     Offset posA,
-    PolygonShape polyA,
+    Polygon2DShape polyA,
     Offset posB,
-    PolygonShape polyB,
+    Polygon2DShape polyB,
   ) {
     double minPenetration = double.infinity;
     double bestNx = 0, bestNy = 0;
@@ -234,9 +226,9 @@ class PolygonShape extends CollisionShape {
 
   CollisionManifold _satCircleVsPolygon(
     Offset center,
-    CircleShape circle,
+    Circle2DShape circle,
     Offset polyPos,
-    PolygonShape poly,
+    Polygon2DShape poly,
   ) {
     if (poly.vertices.isEmpty) return CollisionManifold.empty();
     double minPenetration = double.infinity;
@@ -322,9 +314,9 @@ class PolygonShape extends CollisionShape {
   /// from each polygon vertex to the closest point on the capsule axis.
   CollisionManifold _satPolygonVsCapsule(
     Offset posA,
-    PolygonShape poly,
+    Polygon2DShape poly,
     Offset posB,
-    CapsuleShape cap,
+    Capsule2DShape cap,
   ) {
     final p1 = Offset(posB.dx + cap.center1.dx, posB.dy + cap.center1.dy);
     final p2 = Offset(posB.dx + cap.center2.dx, posB.dy + cap.center2.dy);
@@ -374,7 +366,7 @@ class PolygonShape extends CollisionShape {
 
     // Test axis from each polygon vertex to the closest point on capsule axis.
     for (final w in worldVerts) {
-      final closest = CapsuleShape.closestPointOnSegment(w, p1, p2);
+      final closest = Capsule2DShape.closestPointOnSegment(w, p1, p2);
       final dx = w.dx - closest.dx;
       final dy = w.dy - closest.dy;
       final len = math.sqrt(dx * dx + dy * dy);
@@ -419,9 +411,9 @@ class PolygonShape extends CollisionShape {
   /// shorter way), negative when against it.
   /// All arithmetic is inline — zero heap allocation.
   double? _overlapOnAxis(
-    PolygonShape polyA,
+    Polygon2DShape polyA,
     Offset posA,
-    PolygonShape polyB,
+    Polygon2DShape polyB,
     Offset posB,
     double nx,
     double ny,
@@ -451,7 +443,7 @@ class PolygonShape extends CollisionShape {
   /// circle as A: positive when the polygon comes out along the axis.
   /// Zero heap allocation.
   double? _overlapOnAxisCircle(
-    PolygonShape poly,
+    Polygon2DShape poly,
     Offset polyPos,
     Offset circleCenter,
     double radius,
@@ -477,11 +469,11 @@ class PolygonShape extends CollisionShape {
 }
 
 /// A rectangular collision shape (simplified Polygon).
-class RectangleShape extends PolygonShape {
+class Rectangle2DShape extends Polygon2DShape {
   final double width;
   final double height;
 
-  RectangleShape(this.width, this.height)
+  Rectangle2DShape(this.width, this.height)
     : super([
         Offset(-width / 2, -height / 2),
         Offset(width / 2, -height / 2),
@@ -496,24 +488,24 @@ class RectangleShape extends PolygonShape {
 ///
 /// Defined by two center offsets [center1] and [center2] relative to the
 /// body's position, and a [radius]. Suitable for characters, pills, bullets.
-class CapsuleShape extends CollisionShape {
+class Capsule2DShape extends Shape2D {
   final Offset center1;
   final Offset center2;
   final double radius;
 
-  CapsuleShape({
+  Capsule2DShape({
     required this.center1,
     required this.center2,
     required this.radius,
   });
 
   /// Convenience constructor for a vertical capsule of given [height] and [radius].
-  factory CapsuleShape.vertical({
+  factory Capsule2DShape.vertical({
     required double height,
     required double radius,
   }) {
     final half = height / 2 - radius;
-    return CapsuleShape(
+    return Capsule2DShape(
       center1: Offset(0, -half),
       center2: Offset(0, half),
       radius: radius,
@@ -539,29 +531,25 @@ class CapsuleShape extends CollisionShape {
   }
 
   @override
-  CollisionManifold getManifold(
-    Offset posA,
-    CollisionShape other,
-    Offset posB,
-  ) {
-    if (other is CircleShape) {
+  CollisionManifold getManifold(Offset posA, Shape2D other, Offset posB) {
+    if (other is Circle2DShape) {
       return _capsuleVsCircle(posA, other, posB);
-    } else if (other is CapsuleShape) {
+    } else if (other is Capsule2DShape) {
       return _capsuleVsCapsule(posA, other, posB);
-    } else if (other is SegmentShape) {
+    } else if (other is Segment2DShape) {
       return _capsuleVsCapsule(
         posA,
-        CapsuleShape(
+        Capsule2DShape(
           center1: other.point1,
           center2: other.point2,
           radius: other.thickness,
         ),
         posB,
       );
-    } else if (other is PolygonShape) {
+    } else if (other is Polygon2DShape) {
       // Delegate to the polygon side and flip the normal (a rounded
       // polygon's own test takes its corner radius in).
-      final m = other is RoundedPolygonShape
+      final m = other is RoundedPolygon2DShape
           ? other.getManifold(posB, this, posA)
           : other._satPolygonVsCapsule(posB, other, posA, this);
       if (!m.isColliding) return CollisionManifold.empty();
@@ -570,7 +558,7 @@ class CapsuleShape extends CollisionShape {
         normal: -m.normal,
         penetration: m.penetration,
       );
-    } else if (other is ChainShape) {
+    } else if (other is Chain2DShape) {
       // Delegate to the chain (which degrades to per-segment capsule tests)
       // and flip the normal so it points A→B.
       final m = other.getManifold(posB, this, posA);
@@ -586,7 +574,7 @@ class CapsuleShape extends CollisionShape {
 
   CollisionManifold _capsuleVsCircle(
     Offset posA,
-    CircleShape circle,
+    Circle2DShape circle,
     Offset posB,
   ) {
     final wa1 = Offset(posA.dx + center1.dx, posA.dy + center1.dy);
@@ -614,7 +602,7 @@ class CapsuleShape extends CollisionShape {
 
   CollisionManifold _capsuleVsCapsule(
     Offset posA,
-    CapsuleShape other,
+    Capsule2DShape other,
     Offset posB,
   ) {
     final wa1 = Offset(posA.dx + center1.dx, posA.dy + center1.dy);
@@ -720,12 +708,12 @@ class CapsuleShape extends CollisionShape {
 /// discrete: a body moving more than its own radius plus [thickness] in a
 /// step can come out the other side. For static geometry only — dynamic
 /// segment bodies are not physically meaningful.
-class SegmentShape extends CollisionShape {
+class Segment2DShape extends Shape2D {
   final Offset point1;
   final Offset point2;
   final double thickness;
 
-  SegmentShape(this.point1, this.point2, {this.thickness = 2.0});
+  Segment2DShape(this.point1, this.point2, {this.thickness = 2.0});
 
   @override
   double get area => 0;
@@ -745,13 +733,9 @@ class SegmentShape extends CollisionShape {
   }
 
   @override
-  CollisionManifold getManifold(
-    Offset posA,
-    CollisionShape other,
-    Offset posB,
-  ) {
+  CollisionManifold getManifold(Offset posA, Shape2D other, Offset posB) {
     // Treat the segment as a zero-mass thin capsule for all collision types.
-    final asCapsule = CapsuleShape(
+    final asCapsule = Capsule2DShape(
       center1: point1,
       center2: point2,
       radius: thickness,
@@ -763,16 +747,16 @@ class SegmentShape extends CollisionShape {
 /// A chain of connected line segments for complex terrain and loop-the-loops.
 ///
 /// When [loop] is true, the last vertex connects back to the first.
-/// Each segment uses [thickness] as a radius (like [SegmentShape]), and is
+/// Each segment uses [thickness] as a radius (like [Segment2DShape]), and is
 /// solid from both sides on both backends. Box2D gets a capsule per segment,
 /// or for a [thickness] of 0 its own chain, put in once each way round
 /// (a Box2D chain is solid on one side only).
-class ChainShape extends CollisionShape {
+class Chain2DShape extends Shape2D {
   final List<Offset> vertices;
   final bool loop;
   final double thickness;
 
-  ChainShape(this.vertices, {this.loop = false, this.thickness = 2.0});
+  Chain2DShape(this.vertices, {this.loop = false, this.thickness = 2.0});
 
   @override
   double get area => 0;
@@ -794,11 +778,7 @@ class ChainShape extends CollisionShape {
   }
 
   @override
-  CollisionManifold getManifold(
-    Offset posA,
-    CollisionShape other,
-    Offset posB,
-  ) {
+  CollisionManifold getManifold(Offset posA, Shape2D other, Offset posB) {
     if (vertices.length < 2) return CollisionManifold.empty();
 
     // Return the manifold from the deepest penetrating segment.
@@ -809,7 +789,7 @@ class ChainShape extends CollisionShape {
     for (int i = 0; i < segCount; i++) {
       final p1 = vertices[i];
       final p2 = vertices[(i + 1) % n];
-      final seg = SegmentShape(p1, p2, thickness: thickness);
+      final seg = Segment2DShape(p1, p2, thickness: thickness);
       final m = seg.getManifold(posA, other, posB);
       if (m.isColliding) {
         if (best == null || m.penetration > best.penetration) {
@@ -824,21 +804,21 @@ class ChainShape extends CollisionShape {
 
 /// A convex polygon with rounded corners.
 ///
-/// Behaves like [PolygonShape] but the shape is inflated outward by
+/// Behaves like [Polygon2DShape] but the shape is inflated outward by
 /// [cornerRadius], producing smooth rounded edges. Matches Box2D's
 /// `b2MakePolygon(&hull, radius)` semantics.
-class RoundedPolygonShape extends PolygonShape {
+class RoundedPolygon2DShape extends Polygon2DShape {
   final double cornerRadius;
 
-  RoundedPolygonShape(super.vertices, this.cornerRadius);
+  RoundedPolygon2DShape(super.vertices, this.cornerRadius);
 
   /// Convenience constructor for a rounded rectangle.
-  factory RoundedPolygonShape.rect({
+  factory RoundedPolygon2DShape.rect({
     required double width,
     required double height,
     required double cornerRadius,
   }) {
-    return RoundedPolygonShape([
+    return RoundedPolygon2DShape([
       Offset(-width / 2, -height / 2),
       Offset(width / 2, -height / 2),
       Offset(width / 2, height / 2),
@@ -865,36 +845,32 @@ class RoundedPolygonShape extends PolygonShape {
   }
 
   @override
-  CollisionManifold getManifold(
-    Offset posA,
-    CollisionShape other,
-    Offset posB,
-  ) {
-    if (other is CircleShape) {
+  CollisionManifold getManifold(Offset posA, Shape2D other, Offset posB) {
+    if (other is Circle2DShape) {
       return _roundedPolyVsCircle(posA, other, posB);
-    } else if (other is PolygonShape) {
+    } else if (other is Polygon2DShape) {
       return _roundedPolyVsPolygon(posA, other, posB);
-    } else if (other is CapsuleShape) {
+    } else if (other is Capsule2DShape) {
       // The corner radius moves onto the capsule: the polygon's core against
       // a capsule that much rounder.
       return _satPolygonVsCapsule(
         posA,
         this,
         posB,
-        CapsuleShape(
+        Capsule2DShape(
           center1: other.center1,
           center2: other.center2,
           radius: other.radius + cornerRadius,
         ),
       );
-    } else if (other is SegmentShape) {
-      final cap = CapsuleShape(
+    } else if (other is Segment2DShape) {
+      final cap = Capsule2DShape(
         center1: other.point1,
         center2: other.point2,
         radius: other.thickness + cornerRadius,
       );
       return _satPolygonVsCapsule(posA, this, posB, cap);
-    } else if (other is ChainShape) {
+    } else if (other is Chain2DShape) {
       // Delegate to the chain (which degrades to per-segment capsule tests)
       // and flip the normal so it points A→B.
       final m = other.getManifold(posB, this, posA);
@@ -910,14 +886,14 @@ class RoundedPolygonShape extends PolygonShape {
 
   CollisionManifold _roundedPolyVsCircle(
     Offset posA,
-    CircleShape circle,
+    Circle2DShape circle,
     Offset posB,
   ) {
     // Inflate the SAT test by treating the circle radius as (circle.radius + cornerRadius).
     final inflatedRadius = circle.radius + cornerRadius;
     final m = _satCircleVsPolygon(
       circle.centerAt(posB),
-      CircleShape(inflatedRadius),
+      Circle2DShape(inflatedRadius),
       posA,
       this,
     );
@@ -932,13 +908,13 @@ class RoundedPolygonShape extends PolygonShape {
 
   CollisionManifold _roundedPolyVsPolygon(
     Offset posA,
-    PolygonShape other,
+    Polygon2DShape other,
     Offset posB,
   ) {
     // SAT where each polygon's axis projections are inflated by its corner
     // radius (the other one may be rounded too).
     final r = cornerRadius;
-    final rB = other is RoundedPolygonShape ? other.cornerRadius : 0.0;
+    final rB = other is RoundedPolygon2DShape ? other.cornerRadius : 0.0;
     double minPen = double.infinity;
     double bestNx = 0, bestNy = 0;
     bool separated = false;

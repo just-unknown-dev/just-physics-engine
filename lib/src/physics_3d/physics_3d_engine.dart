@@ -2,11 +2,11 @@ import 'dart:typed_data';
 
 import 'package:just_dart/just_dart.dart';
 
-import 'results_3d.dart';
-import 'settings_3d.dart';
-import 'shapes_3d.dart';
+import 'physics_3d_results.dart';
+import 'physics_3d_settings.dart';
+import 'shape_3d.dart';
 
-/// A 3-D physics engine: makes [PhysicsWorld3D]s.
+/// A 3-D physics engine: makes [Physics3DWorld]s.
 ///
 /// `PhysicsEngineFactory.create3D` gives the platform's (`JoltPhysicsEngine`,
 /// Jolt Physics through just_jolt); `package:just_physics_engine/testing.dart`
@@ -15,7 +15,7 @@ import 'shapes_3d.dart';
 ///
 /// Units are metres, seconds and radians; +Y is down, so gravity is
 /// usually (0, +9.81, 0).
-abstract interface class PhysicsEngine3D {
+abstract interface class Physics3DEngine {
   /// A short name for logs: `jolt`, `fake`.
   String get name;
 
@@ -25,7 +25,7 @@ abstract interface class PhysicsEngine3D {
 
   /// Makes a world. Throws a [Physics3DUnsupportedError] saying why when
   /// [unavailableReason] is not null.
-  PhysicsWorld3D createWorld(PhysicsWorldSettings3D settings);
+  Physics3DWorld createWorld(Physics3DWorldSettings settings);
 
   /// Destroys every world this engine made in this process, whoever made
   /// it — for a hot restart, when the Dart objects that owned them are gone
@@ -50,7 +50,7 @@ final class Physics3DUnsupportedError extends UnsupportedError {
 /// 0 is never a handle. A handle can come back for a new body once its own
 /// was destroyed (Jolt reuses a body's id after 256 bodies have used its
 /// slot), so forget a handle when you destroy what it names.
-abstract interface class PhysicsWorld3D {
+abstract interface class Physics3DWorld {
   /// Whether [dispose] was called.
   bool get isDisposed;
 
@@ -69,7 +69,7 @@ abstract interface class PhysicsWorld3D {
   /// Makes a body of [shape]; 0 when it cannot be made (a shape that is
   /// not [Shape3D.isValid], a mesh or a height field on a body that is not
   /// static, a layer outside 0–15, a full world).
-  int createBody(Shape3D shape, BodySettings3D settings);
+  int createBody(Shape3D shape, Body3DSettings settings);
 
   /// Destroys [body] and every joint holding it. Only bodies [createBody]
   /// made: a character's body ([characterBody]) goes with its character.
@@ -127,7 +127,7 @@ abstract interface class PhysicsWorld3D {
   void setLayer(int body, int layer);
 
   /// Switches [body]'s continuous collision on or off.
-  void setMotionQuality(int body, MotionQuality3D quality);
+  void setMotionQuality(int body, Motion3DQuality quality);
 
   /// Wakes [body].
   void wake(int body);
@@ -140,7 +140,7 @@ abstract interface class PhysicsWorld3D {
   /// Joins [bodyA] to [bodyB], or to the world when [bodyB] is 0; 0 when
   /// it cannot be made. Both must be bodies [createBody] made, not a
   /// character's body.
-  int createJoint(int bodyA, int bodyB, JointSettings3D settings);
+  int createJoint(int bodyA, int bodyB, Joint3DSettings settings);
 
   /// Destroys [joint].
   void destroyJoint(int joint);
@@ -152,7 +152,7 @@ abstract interface class PhysicsWorld3D {
   void setJointEnabled(int joint, bool enabled);
 
   /// Drives a hinge or slider [joint].
-  void setJointMotor(int joint, MotorState3D state, double target);
+  void setJointMotor(int joint, Motor3DState state, double target);
 
   /// A hinge's angle (radians) or a slider's position (metres) — body A's,
   /// measured from body B (or the world) — the same quantity a position
@@ -163,7 +163,7 @@ abstract interface class PhysicsWorld3D {
 
   /// Makes a character whose feet are at [position]; 0 when it cannot be
   /// made.
-  int createCharacter(CharacterSettings3D settings, Vector3 position);
+  int createCharacter(Character3DSettings settings, Vector3 position);
 
   /// Destroys [character].
   void destroyCharacter(int character);
@@ -172,7 +172,7 @@ abstract interface class PhysicsWorld3D {
   bool isCharacter(int character);
 
   /// The body that stands in for [character] (see
-  /// [CharacterSettings3D.innerBody]), or 0.
+  /// [Character3DSettings.innerBody]), or 0.
   int characterBody(int character);
 
   /// Moves [character] for one update at [velocity]: it slides along walls,
@@ -183,20 +183,20 @@ abstract interface class PhysicsWorld3D {
     int character,
     double dt,
     Vector3 velocity,
-    CharacterState3D out, {
+    Character3DState out, {
     required Vector3 stepDown,
     required Vector3 stepUp,
   });
 
   /// Reads [character]'s state into [out] without moving it; a dead
   /// character reads as zeros, in the air.
-  void characterState(int character, CharacterState3D out);
+  void characterState(int character, Character3DState out);
 
   /// Teleports [character]'s feet to [position].
   void setCharacterPosition(int character, Vector3 position);
 
   /// What [character] touched in its last update.
-  List<CharacterContact3D> characterContacts(int character);
+  List<Character3DContact> characterContacts(int character);
 
   // ── Stepping and reading back ─────────────────────────────────────────
 
@@ -208,43 +208,43 @@ abstract interface class PhysicsWorld3D {
   /// The bodies that moved in the last step — awake bodies, and those that
   /// fell asleep since the last read — into [out]. Static bodies and
   /// characters' bodies are left out.
-  void readMovedBodies(BodyPoses3D out);
+  void readMovedBodies(Body3DPoses out);
 
   /// [bodies]' poses, in order, into [out]; dead ones read as zeros.
-  void readBodies(List<int> bodies, BodyPoses3D out);
+  void readBodies(List<int> bodies, Body3DPoses out);
 
   /// What happened since the last drain, oldest first.
-  List<PhysicsEvent3D> drainEvents();
+  List<Physics3DEvent> drainEvents();
 
   // ── Queries ───────────────────────────────────────────────────────────
 
   /// Casts a ray from [origin] along [direction], whose length is the
   /// ray's. The closest hit, or every hit nearest first when [allHits].
-  List<QueryHit3D> raycast(
+  List<Query3DHit> raycast(
     Vector3 origin,
     Vector3 direction, {
-    QueryFilter3D filter = QueryFilter3D.all,
+    Query3DFilter filter = Query3DFilter.all,
     bool allHits = false,
   });
 
   /// Sweeps [shape] from [position] and [rotation] along [direction]. The
   /// closest hit, or every hit nearest first when [allHits].
-  List<QueryHit3D> shapeCast(
+  List<Query3DHit> shapeCast(
     Shape3D shape,
     Vector3 position,
     Quaternion rotation,
     Vector3 direction, {
-    QueryFilter3D filter = QueryFilter3D.all,
+    Query3DFilter filter = Query3DFilter.all,
     bool allHits = false,
   });
 
   /// The bodies [shape] at [position] and [rotation] overlaps, one hit
   /// each.
-  List<QueryHit3D> overlap(
+  List<Query3DHit> overlap(
     Shape3D shape,
     Vector3 position,
     Quaternion rotation, {
-    QueryFilter3D filter = QueryFilter3D.all,
+    Query3DFilter filter = Query3DFilter.all,
   });
 
   // ── Debugging ─────────────────────────────────────────────────────────

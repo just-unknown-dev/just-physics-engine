@@ -9,9 +9,9 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:ffi/ffi.dart';
 import 'package:just_box_2d/ffi.dart' as box2d;
 
-// PhysicsBody, CollisionShape, CircleShape, RectangleShape, PolygonShape are
+// Physics2DBody, Shape2D, Circle2DShape, Rectangle2DShape, Polygon2DShape are
 // all part-files of physics_engine.dart — import the library, not the parts.
-import '../physics_2d/physics_engine.dart';
+import '../physics_2d/physics_2d_engine.dart';
 import '../physics_2d/ray_2d.dart';
 import 'box2d_body.dart';
 import 'box2d_world.dart';
@@ -19,12 +19,12 @@ import 'box2d_joint.dart';
 import 'physics_game_loop.dart';
 
 /// Box2D v3.2 physics engine adapter exposing the same duck-typed API as
-/// the pure-Dart [PhysicsEngine].
+/// the pure-Dart [Physics2DEngine].
 ///
 /// Drop-in replacement on native platforms — [PhysicsEngineFactory.create]
 /// returns this class. The existing ECS ([Physics2DSystem], [PhysicsBridgeSystem])
 /// requires no changes because both engines share the same API surface and
-/// communicate through [PhysicsBody] objects.
+/// communicate through [Physics2DBody] objects.
 ///
 /// Architecture:
 ///  - [Box2DWorld] owns the native world + fixed-step accumulator.
@@ -35,7 +35,7 @@ import 'physics_game_loop.dart';
 ///    fire CollisionEvents without coupling this package to the ECS.
 ///  - [registerImpactCallback] routes high-velocity collisions from native
 ///    worker threads to the Dart main isolate via [NativeCallable.listener].
-class Box2DPhysicsEngine extends PhysicsEngine {
+class Box2DPhysicsEngine extends Physics2DEngine {
   // ── Native world & loop ────────────────────────────────────────────────────
   // Nullable so that if initialize() fails (e.g. native lib not compiled yet),
   // update/dispose guard against LateInitializationError and fall back safely.
@@ -48,11 +48,11 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
   // ── Body registries ────────────────────────────────────────────────────────
 
-  /// PhysicsBody → Box2DBody: the primary mapping.
-  final Map<PhysicsBody, Box2DBody> _bodyMap = {};
+  /// Physics2DBody → Box2DBody: the primary mapping.
+  final Map<Physics2DBody, Box2DBody> _bodyMap = {};
 
-  /// Packed handle → PhysicsBody: reverse lookup for contact event callbacks.
-  final Map<int, PhysicsBody> _handleToBody = {};
+  /// Packed handle → Physics2DBody: reverse lookup for contact event callbacks.
+  final Map<int, Physics2DBody> _handleToBody = {};
 
   /// Every collision category — the filter value meaning "hit anything".
   /// b2QueryFilter uses 64-bit category/mask bits.
@@ -67,12 +67,12 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
   /// What was last pushed into each native body: its type, gravity scale
   /// and mass (see [_pushSettings]).
-  final Map<PhysicsBody, ({int type, double gravityScale, double mass})>
+  final Map<Physics2DBody, ({int type, double gravityScale, double mass})>
   _pushed = {};
 
   /// The two bodies of each native joint: a removed body takes its joints
   /// out of [joints], as Box2D destroys them with it.
-  final Map<Box2DJoint, (PhysicsBody, PhysicsBody)> _jointBodies = {};
+  final Map<Box2DJoint, (Physics2DBody, Physics2DBody)> _jointBodies = {};
 
   // ── Events, read after every native step ──────────────────────────────────
   // Box2D keeps only the last step's events, and a frame runs zero to five
@@ -80,16 +80,17 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   // and kept until the next update(), as the pure-Dart engine keeps its own:
   // none lost when a frame runs two steps, none repeated when it runs none.
 
-  final List<(PhysicsBody, PhysicsBody, double, double)> _contactBeginBuf = [];
-  final List<(PhysicsBody, PhysicsBody)> _contactEndBuf = [];
-  final List<({PhysicsBody sensor, PhysicsBody visitor})>
-  _nativeSensorBeginBuf = [];
-  final List<({PhysicsBody sensor, PhysicsBody visitor})> _nativeSensorEndBuf =
+  final List<(Physics2DBody, Physics2DBody, double, double)> _contactBeginBuf =
       [];
+  final List<(Physics2DBody, Physics2DBody)> _contactEndBuf = [];
+  final List<({Physics2DBody sensor, Physics2DBody visitor})>
+  _nativeSensorBeginBuf = [];
+  final List<({Physics2DBody sensor, Physics2DBody visitor})>
+  _nativeSensorEndBuf = [];
 
   /// The bodies that moved, each with whether it fell asleep in the last
   /// step it moved in.
-  final Map<PhysicsBody, bool> _moveBuf = {};
+  final Map<Physics2DBody, bool> _moveBuf = {};
 
   Pointer<Int64>? _eventBodies; // two handles
   Pointer<Float>? _eventNormal; // nx, ny
@@ -120,12 +121,12 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     this.subSteps = 4,
     this.numThreads = 0,
   }) : super.pureDart() {
-    // Set the inherited gravity vector from PhysicsEngine.
+    // Set the inherited gravity vector from Physics2DEngine.
     gravity.x = gravityX;
     gravity.y = gravityY;
   }
 
-  // ── Public API — mirrors PhysicsEngine ────────────────────────────────────
+  // ── Public API — mirrors Physics2DEngine ────────────────────────────────────
 
   @override
   void initialize() {
@@ -163,7 +164,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   ///
   /// Internally runs fixed-step accumulation: fires 0–N 1/60 s steps,
   /// then bulk-extracts all transforms in a single zero-copy FFI call, and
-  /// writes positions/velocities back into the [PhysicsBody] objects so the
+  /// writes positions/velocities back into the [Physics2DBody] objects so the
   /// existing ECS bridge ([PhysicsBridgeSystem]) continues to work without
   /// modification.
   @override
@@ -184,10 +185,10 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     // The interpolator's previous pose is the one before this frame's steps;
     // a frame that runs none keeps the pair it has.
     final stepping =
-        _world!.alpha + deltaTime / PhysicsEngine.fixedDeltaTime >= 1.0;
+        _world!.alpha + deltaTime / Physics2DEngine.fixedDeltaTime >= 1.0;
 
     // Push this frame's ECS-set velocity into the native body before
-    // stepping. PhysicsBody.velocity is a plain Dart field — writing it
+    // stepping. Physics2DBody.velocity is a plain Dart field — writing it
     // (e.g. Physics2DSystem._syncIn's per-frame push from VelocityComponent)
     // never reaches the native simulation on its own, since nothing else
     // bridges Dart → native for velocity. Without this, the native body's
@@ -197,8 +198,8 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     // the Dart-side value back to whatever native already had (unmoved).
     // Static bodies (mass <= 0) have no meaningful velocity — skip them.
     //
-    // PhysicsBody.applyForce()/applyTorque() only accumulate into the plain
-    // Dart fields `acceleration`/`torque` (see PhysicsBody) — nothing else
+    // Physics2DBody.applyForce()/applyTorque() only accumulate into the plain
+    // Dart fields `acceleration`/`torque` (see Physics2DBody) — nothing else
     // reads them on this backend, so without pushing them here they would
     // silently have zero effect on the native simulation. Convert
     // acceleration back to a force (F = a × m, undoing applyForce's ÷ mass)
@@ -252,9 +253,9 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   /// body — as the pure-Dart engine integrates it. Box2D holding a force
   /// across its sub-steps instead adds energy to a stiff spring (a mouse
   /// joint swung further every time).
-  void _pushForces(PhysicsBody body, Box2DBody b2Body) {
+  void _pushForces(Physics2DBody body, Box2DBody b2Body) {
     if (body.acceleration.x != 0.0 || body.acceleration.y != 0.0) {
-      const dt = PhysicsEngine.fixedDeltaTime;
+      const dt = Physics2DEngine.fixedDeltaTime;
       box2d.b2w_applyLinearImpulse(
         b2Body.handle,
         body.acceleration.x * body.mass * dt,
@@ -284,7 +285,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       for (final (body, b2Body) in held) {
         _readNative(body, b2Body);
       }
-      joint.applyConstraint(PhysicsEngine.fixedDeltaTime);
+      joint.applyConstraint(Physics2DEngine.fixedDeltaTime);
       for (final (body, b2Body) in held) {
         _pushForces(body, b2Body);
       }
@@ -295,7 +296,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   Pointer<Float>? _onePose; // 7 floats, as _syncTransformsFromNative reads
 
   /// [body]'s pose and velocity from [b2Body], between steps.
-  void _readNative(PhysicsBody body, Box2DBody b2Body) {
+  void _readNative(Physics2DBody body, Box2DBody b2Body) {
     final handle = _oneHandle ??= calloc<Int64>();
     final pose = _onePose ??= calloc<Float>(7);
     handle.value = b2Body.handle;
@@ -354,13 +355,13 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   /// fields a game may write at any time — touching only what changed.
   ///
   /// Box2D derives mass from shape area × density, not from
-  /// [PhysicsBody.mass], so the configured mass is set on top. Dynamic
+  /// [Physics2DBody.mass], so the configured mass is set on top. Dynamic
   /// bodies only: Box2D gates gravity on inverse mass, not on body type, so
   /// a positive mass on a kinematic body would make it fall.
-  void _pushSettings(PhysicsBody body, Box2DBody b2Body) {
+  void _pushSettings(Physics2DBody body, Box2DBody b2Body) {
     final type = body.effectiveBodyType;
     final scale = body.effectiveGravityScale;
-    final mass = type == BodyType.dynamic ? body.mass : 0.0;
+    final mass = type == Body2DType.dynamic ? body.mass : 0.0;
     final last = _pushed[body];
     if (last != null &&
         last.type == type.index &&
@@ -378,7 +379,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       // pure-Dart engine never puts one to sleep.
       box2d.b2w_setBodySleepEnabled(
         h,
-        type == BodyType.kinematic || !body.canSleep ? 0 : 1,
+        type == Body2DType.kinematic || !body.canSleep ? 0 : 1,
       );
     }
     if (last == null ? scale != 1.0 : (retyped || last.gravityScale != scale)) {
@@ -390,12 +391,12 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     _pushed[body] = (type: type.index, gravityScale: scale, mass: mass);
   }
 
-  /// Add a [PhysicsBody] to the simulation.
+  /// Add a [Physics2DBody] to the simulation.
   ///
   /// Creates a matching native body + shape fixture. The [body] object
   /// remains the shared state carrier that the ECS reads from.
   @override
-  void addBody(PhysicsBody body) {
+  void addBody(Physics2DBody body) {
     if (!_nativeReady) {
       super.addBody(body);
       return;
@@ -403,9 +404,9 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     if (_bodyMap.containsKey(body)) return;
 
     // effectiveBodyType folds in the long-standing `mass <= 0 means static`
-    // rule, so kinematic is opt-in and nothing that predates BodyType shifts.
+    // rule, so kinematic is opt-in and nothing that predates Body2DType shifts.
     final type = body.effectiveBodyType;
-    final isStatic = type == BodyType.static;
+    final isStatic = type == Body2DType.static;
 
     final b2Body = Box2DBody.ofType(
       worldHandle: _world!.handle,
@@ -486,7 +487,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     }
     // A sleeping kinematic body ignores the velocity it is given, and the
     // pure-Dart engine never puts one to sleep.
-    if (!body.canSleep || type == BodyType.kinematic) {
+    if (!body.canSleep || type == Body2DType.kinematic) {
       box2d.b2w_setBodySleepEnabled(b2Body.handle, 0);
     }
 
@@ -503,7 +504,12 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   // respawn, moving platforms and one-way platforms all depend on them.
 
   @override
-  void setBodyTransform(PhysicsBody body, double x, double y, {double? angle}) {
+  void setBodyTransform(
+    Physics2DBody body,
+    double x,
+    double y, {
+    double? angle,
+  }) {
     super.setBodyTransform(body, x, y, angle: angle);
     if (!_nativeReady) return;
     final b2Body = _bodyMap[body];
@@ -514,7 +520,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   }
 
   @override
-  void setBodyType(PhysicsBody body, BodyType type) {
+  void setBodyType(Physics2DBody body, Body2DType type) {
     super.setBodyType(body, type);
     if (!_nativeReady) return;
     final b2Body = _bodyMap[body];
@@ -526,7 +532,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   }
 
   @override
-  void setBodyGravityScale(PhysicsBody body, double scale) {
+  void setBodyGravityScale(Physics2DBody body, double scale) {
     super.setBodyGravityScale(body, scale);
     if (!_nativeReady) return;
     final b2Body = _bodyMap[body];
@@ -536,7 +542,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
   @override
   void setBodyFilter(
-    PhysicsBody body, {
+    Physics2DBody body, {
     int? categoryBits,
     int? maskBits,
     int? groupIndex,
@@ -560,7 +566,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
   @override
   void setBodyOneWay(
-    PhysicsBody body,
+    Physics2DBody body,
     bool enabled, {
     OneWayDirection direction = OneWayDirection.fromAbove,
   }) {
@@ -572,7 +578,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   }
 
   @override
-  void applyLinearImpulse(PhysicsBody body, double ix, double iy) {
+  void applyLinearImpulse(Physics2DBody body, double ix, double iy) {
     if (!_nativeReady) {
       super.applyLinearImpulse(body, ix, iy);
       return;
@@ -594,7 +600,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   }
 
   @override
-  void setBodyDamping(PhysicsBody body, double damping) {
+  void setBodyDamping(Physics2DBody body, double damping) {
     super.setBodyDamping(body, damping);
     if (!_nativeReady) return;
     final b2Body = _bodyMap[body];
@@ -603,7 +609,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   }
 
   @override
-  void setBodyAngularDamping(PhysicsBody body, double damping) {
+  void setBodyAngularDamping(Physics2DBody body, double damping) {
     super.setBodyAngularDamping(body, damping);
     if (!_nativeReady) return;
     final b2Body = _bodyMap[body];
@@ -612,20 +618,20 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   }
 
   @override
-  void setBodyCanSleep(PhysicsBody body, bool canSleep) {
+  void setBodyCanSleep(Physics2DBody body, bool canSleep) {
     super.setBodyCanSleep(body, canSleep);
     if (!_nativeReady) return;
     final b2Body = _bodyMap[body];
     if (b2Body == null) return;
     box2d.b2w_setBodySleepEnabled(
       b2Body.handle,
-      canSleep && body.effectiveBodyType != BodyType.kinematic ? 1 : 0,
+      canSleep && body.effectiveBodyType != Body2DType.kinematic ? 1 : 0,
     );
     if (!canSleep) box2d.b2w_setBodyAwake(b2Body.handle, 1);
   }
 
   @override
-  void setBodyBullet(PhysicsBody body, bool isBullet) {
+  void setBodyBullet(Physics2DBody body, bool isBullet) {
     super.setBodyBullet(body, isBullet);
     if (!_nativeReady) return;
     final b2Body = _bodyMap[body];
@@ -634,7 +640,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   }
 
   @override
-  void setBodyFriction(PhysicsBody body, double friction) {
+  void setBodyFriction(Physics2DBody body, double friction) {
     super.setBodyFriction(body, friction);
     if (!_nativeReady) return;
     final b2Body = _bodyMap[body];
@@ -643,7 +649,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   }
 
   @override
-  void setBodyRestitution(PhysicsBody body, double restitution) {
+  void setBodyRestitution(Physics2DBody body, double restitution) {
     super.setBodyRestitution(body, restitution);
     if (!_nativeReady) return;
     final b2Body = _bodyMap[body];
@@ -652,7 +658,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   }
 
   @override
-  void setBodySensor(PhysicsBody body, bool isSensor) {
+  void setBodySensor(Physics2DBody body, bool isSensor) {
     super.setBodySensor(body, isSensor);
     if (!_nativeReady) return;
     if (_bodyMap[body] == null) return;
@@ -680,7 +686,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   // Out-parameter buffers are allocated once per engine rather than per cast —
   // a calloc/free pair on every ground probe is real cost at 60 Hz.
 
-  /// How many hits one native [castRayAll]/[queryAABB] call has room for.
+  /// How many hits one native [raycastAll]/[queryAABB] call has room for.
   /// Box2D reports one hit per *shape*, so a compound body can take several;
   /// a call that fills the room is asked again with twice as much, up to
   /// [_maxQueryCapacity].
@@ -760,11 +766,11 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   /// and filter in Dart; otherwise the cheaper closest-hit call is enough.
   /// Either way a shape the ray starts inside is passed over.
   @override
-  RayBodyHit? castRay(Ray ray, {Set<PhysicsBody>? exclude}) {
-    if (!_nativeReady) return super.castRay(ray, exclude: exclude);
+  Ray2DHit? raycast(Ray2D ray, {Set<Physics2DBody>? exclude}) {
+    if (!_nativeReady) return super.raycast(ray, exclude: exclude);
 
     if (exclude != null && exclude.isNotEmpty) {
-      final all = castRayAll(ray, exclude: exclude);
+      final all = raycastAll(ray, exclude: exclude);
       return all.isEmpty ? null : all.first;
     }
 
@@ -793,7 +799,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     if (body == null) return null;
 
     final f = _rayFloatOut!;
-    return RayBodyHit(
+    return Ray2DHit(
       body: body,
       point: Offset(f[0], f[1]),
       normal: Offset(f[2], f[3]),
@@ -802,8 +808,8 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   }
 
   @override
-  List<RayBodyHit> castRayAll(Ray ray, {Set<PhysicsBody>? exclude}) {
-    if (!_nativeReady) return super.castRayAll(ray, exclude: exclude);
+  List<Ray2DHit> raycastAll(Ray2D ray, {Set<Physics2DBody>? exclude}) {
+    if (!_nativeReady) return super.raycastAll(ray, exclude: exclude);
 
     _ensureQueryBuffers();
     final origin = ray.origin;
@@ -827,12 +833,12 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
     // One hit per shape, in the tree's order: nearest first, then only a
     // body's nearest hit. A shape the ray starts inside is passed over, as
-    // [castRay] passes it (Box2D reports it at fraction 0 with no normal).
+    // [raycast] passes it (Box2D reports it at fraction 0 with no normal).
     final data = _queryDataBuffer!;
     final order = List<int>.generate(count, (i) => i)
       ..sort((i, j) => data[i * 5 + 4].compareTo(data[j * 5 + 4]));
-    final hits = <RayBodyHit>[];
-    final seen = <PhysicsBody>{};
+    final hits = <Ray2DHit>[];
+    final seen = <Physics2DBody>{};
     for (final i in order) {
       final base = i * 5;
       if (data[base + 4] == 0 && data[base + 2] == 0 && data[base + 3] == 0) {
@@ -843,7 +849,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       if (exclude != null && exclude.contains(body)) continue;
       if (!seen.add(body)) continue;
       hits.add(
-        RayBodyHit(
+        Ray2DHit(
           body: body,
           point: Offset(data[base], data[base + 1]),
           normal: Offset(data[base + 2], data[base + 3]),
@@ -867,7 +873,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   Pointer<Int64>? _moverBodies; // _maxMoverPlanes handles
 
   /// Writes [shape]'s core points into the buffer; returns their count.
-  int _moverShape(MoverShape shape) {
+  int _moverShape(Mover2DShape shape) {
     _moverPoints ??= calloc<Float>(16);
     _moverPlanes ??= calloc<Float>(_maxMoverPlanes * 5);
     _moverBodies ??= calloc<Int64>(_maxMoverPlanes);
@@ -880,16 +886,16 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     return points.length;
   }
 
-  int _moverIgnore(MoverFilter filter) {
+  int _moverIgnore(Mover2DFilter filter) {
     final ignore = filter.ignore;
     return ignore == null ? 0 : (_bodyMap[ignore]?.handle ?? 0);
   }
 
   @override
-  List<MoverPlane> collideMover(
-    MoverShape shape,
+  List<Mover2DPlane> collideMover(
+    Mover2DShape shape,
     Offset position, {
-    MoverFilter filter = const MoverFilter(),
+    Mover2DFilter filter = const Mover2DFilter(),
   }) {
     if (!_nativeReady) {
       return super.collideMover(shape, position, filter: filter);
@@ -910,9 +916,9 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       _maxMoverPlanes,
     );
     final f = _moverPlanes!;
-    final planes = <MoverPlane>[];
+    final planes = <Mover2DPlane>[];
     for (var i = 0; i < n; i++) {
-      final plane = MoverPlane(
+      final plane = Mover2DPlane(
         normal: Offset(f[5 * i], f[5 * i + 1]),
         offset: f[5 * i + 2],
         point: Offset(f[5 * i + 3] + position.dx, f[5 * i + 4] + position.dy),
@@ -934,10 +940,10 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
   @override
   double castMover(
-    MoverShape shape,
+    Mover2DShape shape,
     Offset position,
     Offset translation, {
-    MoverFilter filter = const MoverFilter(),
+    Mover2DFilter filter = const Mover2DFilter(),
   }) {
     if (!_nativeReady) {
       return super.castMover(shape, position, translation, filter: filter);
@@ -959,7 +965,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   }
 
   @override
-  List<PhysicsBody> queryAABB(Rect rect) {
+  List<Physics2DBody> queryAABB(Rect rect) {
     if (!_nativeReady) return super.queryAABB(rect);
 
     _ensureQueryBuffers();
@@ -978,7 +984,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       );
     } while (_queryFull(count));
 
-    final result = <PhysicsBody>[];
+    final result = <Physics2DBody>[];
     for (var i = 0; i < count; i++) {
       final body = _handleToBody[_queryBodyBuffer![i]];
       if (body != null) result.add(body);
@@ -987,7 +993,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   }
 
   @override
-  void removeBody(PhysicsBody body) {
+  void removeBody(Physics2DBody body) {
     if (!_nativeReady) {
       super.removeBody(body);
       return;
@@ -1049,25 +1055,25 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     }
   }
 
-  void _drawShape(Canvas canvas, CollisionShape shape, Paint paint) {
-    if (shape is CircleShape) {
+  void _drawShape(Canvas canvas, Shape2D shape, Paint paint) {
+    if (shape is Circle2DShape) {
       final c = shape.center;
       canvas.drawCircle(c, shape.radius, paint);
       canvas.drawLine(c, c + Offset(shape.radius, 0), paint);
-    } else if (shape is CapsuleShape) {
+    } else if (shape is Capsule2DShape) {
       canvas.drawCircle(shape.center1, shape.radius, paint);
       canvas.drawCircle(shape.center2, shape.radius, paint);
       canvas.drawLine(shape.center1, shape.center2, paint);
-    } else if (shape is ChainShape) {
+    } else if (shape is Chain2DShape) {
       for (int i = 0; i < shape.vertices.length - 1; i++) {
         canvas.drawLine(shape.vertices[i], shape.vertices[i + 1], paint);
       }
       if (shape.loop && shape.vertices.length > 1) {
         canvas.drawLine(shape.vertices.last, shape.vertices.first, paint);
       }
-    } else if (shape is SegmentShape) {
+    } else if (shape is Segment2DShape) {
       canvas.drawLine(shape.point1, shape.point2, paint);
-    } else if (shape is RectangleShape) {
+    } else if (shape is Rectangle2DShape) {
       canvas.drawRect(
         Rect.fromCenter(
           center: Offset.zero,
@@ -1076,7 +1082,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
         ),
         paint,
       );
-    } else if (shape is PolygonShape) {
+    } else if (shape is Polygon2DShape) {
       if (shape.vertices.isNotEmpty) {
         final path = Path()
           ..moveTo(shape.vertices.first.dx, shape.vertices.first.dy);
@@ -1116,7 +1122,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
         };
 
   @override
-  List<PhysicsBody> get bodies =>
+  List<Physics2DBody> get bodies =>
       _nativeReady ? List.unmodifiable(_bodyMap.keys) : super.bodies;
 
   @override
@@ -1139,11 +1145,11 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
   /// Iterate all begin-touch contact events from the last [update].
   ///
-  /// [fn] receives the two colliding [PhysicsBody] objects and the contact
+  /// [fn] receives the two colliding [Physics2DBody] objects and the contact
   /// normal (nx, ny). Calls [fn] only for pairs where both bodies are tracked.
   @override
   void pollContactBeginEvents(
-    void Function(PhysicsBody a, PhysicsBody b, double nx, double ny) fn,
+    void Function(Physics2DBody a, Physics2DBody b, double nx, double ny) fn,
   ) {
     if (!_nativeReady) {
       super.pollContactBeginEvents(fn);
@@ -1160,7 +1166,9 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   /// Unlike [pollContactBeginEvents] this has no contact normal — Box2D's
   /// end-touch event only reports which bodies stopped touching.
   @override
-  void pollContactEndEvents(void Function(PhysicsBody a, PhysicsBody b) fn) {
+  void pollContactEndEvents(
+    void Function(Physics2DBody a, Physics2DBody b) fn,
+  ) {
     if (!_nativeReady) {
       super.pollContactEndEvents(fn);
       return;
@@ -1174,7 +1182,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
   @override
   void pollBodyMoveEvents(
-    void Function(PhysicsBody body, {required bool fellAsleep}) fn,
+    void Function(Physics2DBody body, {required bool fellAsleep}) fn,
   ) {
     if (!_nativeReady) {
       super.pollBodyMoveEvents(fn);
@@ -1190,7 +1198,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   /// Iterate sensor-begin events (sensor body first touched by visitor).
   @override
   void pollSensorBeginEvents(
-    void Function(PhysicsBody sensor, PhysicsBody visitor) fn,
+    void Function(Physics2DBody sensor, Physics2DBody visitor) fn,
   ) {
     if (!_nativeReady) {
       super.pollSensorBeginEvents(fn);
@@ -1204,7 +1212,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   /// Iterate sensor-end events (visitor left the sensor).
   @override
   void pollSensorEndEvents(
-    void Function(PhysicsBody sensor, PhysicsBody visitor) fn,
+    void Function(Physics2DBody sensor, Physics2DBody visitor) fn,
   ) {
     if (!_nativeReady) {
       super.pollSensorEndEvents(fn);
@@ -1222,8 +1230,8 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   // Box2DJoint.applyConstraint() is a no-op — Box2D handles it natively.
 
   Box2DJoint? createRevoluteJoint(
-    PhysicsBody bodyA,
-    PhysicsBody bodyB,
+    Physics2DBody bodyA,
+    Physics2DBody bodyB,
     Offset worldAnchor,
   ) {
     if (!_nativeReady) return null;
@@ -1242,8 +1250,8 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   }
 
   Box2DJoint? createPrismaticJoint(
-    PhysicsBody bodyA,
-    PhysicsBody bodyB,
+    Physics2DBody bodyA,
+    Physics2DBody bodyB,
     Offset worldAnchor,
     Offset axis,
   ) {
@@ -1264,8 +1272,8 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   }
 
   Box2DJoint? createDistanceJoint(
-    PhysicsBody bodyA,
-    PhysicsBody bodyB, {
+    Physics2DBody bodyA,
+    Physics2DBody bodyB, {
     required double minLength,
     required double maxLength,
   }) {
@@ -1286,8 +1294,8 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   }
 
   Box2DJoint? createWeldJoint(
-    PhysicsBody bodyA,
-    PhysicsBody bodyB,
+    Physics2DBody bodyA,
+    Physics2DBody bodyB,
     Offset worldAnchor,
   ) {
     if (!_nativeReady) return null;
@@ -1306,8 +1314,8 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   }
 
   Box2DJoint? createWheelJoint(
-    PhysicsBody bodyA,
-    PhysicsBody bodyB,
+    Physics2DBody bodyA,
+    Physics2DBody bodyB,
     Offset worldAnchor,
     Offset axis,
   ) {
@@ -1330,9 +1338,9 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   // ── Unified joint API overrides (delegates to native Box2D) ─────────────
 
   @override
-  JointConstraint addRevoluteJoint(
-    PhysicsBody a,
-    PhysicsBody b,
+  Joint2D addRevoluteJoint(
+    Physics2DBody a,
+    Physics2DBody b,
     Offset worldAnchor,
   ) {
     final native = createRevoluteJoint(a, b, worldAnchor);
@@ -1340,9 +1348,9 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   }
 
   @override
-  JointConstraint addDistanceJoint(
-    PhysicsBody a,
-    PhysicsBody b, {
+  Joint2D addDistanceJoint(
+    Physics2DBody a,
+    Physics2DBody b, {
     double? length,
     double? minLength,
     double? maxLength,
@@ -1370,7 +1378,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   }
 
   @override
-  JointConstraint addWeldJoint(PhysicsBody a, PhysicsBody b) {
+  Joint2D addWeldJoint(Physics2DBody a, Physics2DBody b) {
     final anchor = Offset(
       (a.position.x + b.position.x) / 2,
       (a.position.y + b.position.y) / 2,
@@ -1380,14 +1388,14 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   }
 
   @override
-  JointConstraint addPrismaticJoint(PhysicsBody a, PhysicsBody b, Offset axis) {
+  Joint2D addPrismaticJoint(Physics2DBody a, Physics2DBody b, Offset axis) {
     final anchor = Offset(b.position.x, b.position.y);
     final native = createPrismaticJoint(a, b, anchor, axis);
     return native ?? super.addPrismaticJoint(a, b, axis);
   }
 
   @override
-  JointConstraint addWheelJoint(PhysicsBody a, PhysicsBody b, Offset axis) {
+  Joint2D addWheelJoint(Physics2DBody a, Physics2DBody b, Offset axis) {
     // The wheel turns about its own centre, as the pure-Dart wheel does.
     final anchor = Offset(b.position.x, b.position.y);
     final native = createWheelJoint(a, b, anchor, axis);
@@ -1402,7 +1410,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
   /// Removes [joint]; a native one is destroyed, so its bodies come apart.
   @override
-  void removeJoint(JointConstraint joint) {
+  void removeJoint(Joint2D joint) {
     if (joint is Box2DJoint) {
       joint.destroy();
       _jointBodies.remove(joint);
@@ -1420,7 +1428,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   ///
   /// [callback] receives packed body handles (int) and the speed they closed
   /// at.
-  /// Use [physicsBodyFromHandle] to resolve handles to [PhysicsBody] objects.
+  /// Use [bodyFromHandle] to resolve handles to [Physics2DBody] objects.
   void registerImpactCallback(
     void Function(int bodyA, int bodyB, double speed) callback, {
     double speedThreshold = 100.0,
@@ -1437,8 +1445,8 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     );
   }
 
-  /// Resolve a packed body handle (from the impact callback) to a [PhysicsBody].
-  PhysicsBody? physicsBodyFromHandle(int handle) => _handleToBody[handle];
+  /// Resolve a packed body handle (from the impact callback) to a [Physics2DBody].
+  Physics2DBody? bodyFromHandle(int handle) => _handleToBody[handle];
 
   /// Render interpolation alpha from the current frame (for ECS bridge use).
   @override
@@ -1505,7 +1513,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
   // ── Private helpers ───────────────────────────────────────────────────────
 
-  void _addShapeFixture(Box2DBody b2Body, PhysicsBody body) {
+  void _addShapeFixture(Box2DBody b2Body, Physics2DBody body) {
     // Box2D gives static and kinematic bodies no mass whatever their shapes'
     // density, so every shape has density 1: a body that turns dynamic later
     // then has its shapes' mass and rotational inertia, which
@@ -1531,12 +1539,12 @@ class Box2DPhysicsEngine extends PhysicsEngine {
 
   void _addSingleShape(
     int handle,
-    CollisionShape shape,
+    Shape2D shape,
     double density,
     double friction,
     double restitution,
   ) {
-    if (shape is CircleShape) {
+    if (shape is Circle2DShape) {
       box2d.b2w_addCircleShape(
         handle,
         shape.center.dx,
@@ -1546,7 +1554,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
         friction,
         restitution,
       );
-    } else if (shape is CapsuleShape) {
+    } else if (shape is Capsule2DShape) {
       box2d.b2w_addCapsuleShape(
         handle,
         shape.center1.dx,
@@ -1558,7 +1566,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
         friction,
         restitution,
       );
-    } else if (shape is SegmentShape) {
+    } else if (shape is Segment2DShape) {
       // The pure-Dart engine collides a segment as a capsule [thickness]
       // round it, so this one does too.
       _addLine(
@@ -1570,7 +1578,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
         friction,
         restitution,
       );
-    } else if (shape is ChainShape) {
+    } else if (shape is Chain2DShape) {
       if (shape.thickness > 0) {
         // A capsule per segment, [thickness] round it, as the pure-Dart
         // engine collides each one: solid from both sides, and smooth where
@@ -1611,7 +1619,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       } finally {
         calloc.free(ptr);
       }
-    } else if (shape is RectangleShape) {
+    } else if (shape is Rectangle2DShape) {
       box2d.b2w_addBoxShape(
         handle,
         shape.width / 2,
@@ -1620,7 +1628,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
         friction,
         restitution,
       );
-    } else if (shape is RoundedPolygonShape) {
+    } else if (shape is RoundedPolygon2DShape) {
       final verts = Float32List(shape.vertices.length * 2);
       for (int i = 0; i < shape.vertices.length; i++) {
         verts[i * 2] = shape.vertices[i].dx;
@@ -1641,7 +1649,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       } finally {
         calloc.free(ptr);
       }
-    } else if (shape is PolygonShape) {
+    } else if (shape is Polygon2DShape) {
       final verts = Float32List(shape.vertices.length * 2);
       for (int i = 0; i < shape.vertices.length; i++) {
         verts[i * 2] = shape.vertices[i].dx;
@@ -1720,7 +1728,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
   /// midpoint. Points closer than Box2D's linear slop to the one before are
   /// dropped first (a segment of no length has no normal). Null when there
   /// is no chain to make.
-  static Float32List? _chainPoints(ChainShape shape) {
+  static Float32List? _chainPoints(Chain2DShape shape) {
     const slop = 0.5; // B2_LINEAR_SLOP at 100 units a metre.
     final v = <Offset>[];
     for (final p in shape.vertices) {
@@ -1783,7 +1791,8 @@ class Box2DPhysicsEngine extends PhysicsEngine {
     // Scatter results back to Dart body objects.
     i = 0;
     for (final entry in _bodyMap.entries) {
-      final dartBody = entry.key; // PhysicsBody (ECS holds a reference to this)
+      final dartBody =
+          entry.key; // Physics2DBody (ECS holds a reference to this)
       final b2Body = entry.value; // Box2DBody (FFI handle + prev/current state)
       final base = i * 7;
 
@@ -1794,7 +1803,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       b2Body.velocityY = trs[base + 4];
       b2Body.angularVelocity = trs[base + 6];
 
-      // Write through to PhysicsBody so existing ECS bridge works unchanged.
+      // Write through to Physics2DBody so existing ECS bridge works unchanged.
       dartBody.position.x = b2Body.currentX;
       dartBody.position.y = b2Body.currentY;
       dartBody.angle = b2Body.currentAngle;
@@ -1802,7 +1811,7 @@ class Box2DPhysicsEngine extends PhysicsEngine {
       dartBody.velocity.y = b2Body.velocityY;
       dartBody.angularVelocity = b2Body.angularVelocity;
       // Sleep is a dynamic-body concept — static bodies always report
-      // "not awake" natively and would otherwise flip PhysicsBody.isAwake
+      // "not awake" natively and would otherwise flip Physics2DBody.isAwake
       // to false even though the user never asked for that.
       if (dartBody.mass > 0) {
         dartBody.isAwake = trs[base + 5] != 0.0;

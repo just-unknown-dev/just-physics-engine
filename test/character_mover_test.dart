@@ -15,21 +15,21 @@ const _gravity = 2000.0;
 class _Walker {
   _Walker(this.engine, this.shape, this.position);
 
-  final PhysicsEngine engine;
-  final MoverShape shape;
+  final Physics2DEngine engine;
+  final Mover2DShape shape;
   late final mover = CharacterMover2D(engine);
   Offset position;
   Offset velocity = Offset.zero;
   bool grounded = false;
-  GroundState2D state = GroundState2D.inAir;
-  PhysicsBody? ground;
+  Ground2DState state = Ground2DState.inAir;
+  Physics2DBody? ground;
 
   void step({
     double moveX = 0,
     double? jump,
     double stepHeight = 0,
     double stick = 0,
-    MoverFilter filter = const MoverFilter(),
+    Mover2DFilter filter = const Mover2DFilter(),
     double push = 0,
   }) {
     var vy = velocity.dy;
@@ -69,16 +69,16 @@ class _Walker {
   }
 }
 
-PhysicsBody _static(
+Physics2DBody _static(
   Offset at,
-  CollisionShape shape, {
+  Shape2D shape, {
   bool oneWay = false,
   bool sensor = false,
-}) => PhysicsBody(
+}) => Physics2DBody(
   position: Vector2(at.dx, at.dy),
   shape: shape,
   mass: 0,
-  bodyType: BodyType.static,
+  bodyType: Body2DType.static,
   isOneWay: oneWay,
   isSensor: sensor,
 );
@@ -86,9 +86,9 @@ PhysicsBody _static(
 void main() {
   group('GJK and shape cast', () {
     test('the distance between two cores, and its normal from A to B', () {
-      final d = ShapeDistance2D.between(
-        const ShapeProxy2D([Offset.zero], 1),
-        const ShapeProxy2D([Offset(5, 0), Offset(5, 4)], 1),
+      final d = Shape2DDistance.between(
+        const Shape2DProxy([Offset.zero], 1),
+        const Shape2DProxy([Offset(5, 0), Offset(5, 4)], 1),
       );
       expect(d.distance, closeTo(5, 1e-9));
       expect(d.normal.dx, closeTo(1, 1e-9));
@@ -97,22 +97,22 @@ void main() {
     });
 
     test('a point inside a box overlaps it', () {
-      final d = ShapeDistance2D.between(
-        const ShapeProxy2D([
+      final d = Shape2DDistance.between(
+        const Shape2DProxy([
           Offset(-2, -2),
           Offset(2, -2),
           Offset(2, 2),
           Offset(-2, 2),
         ], 0),
-        const ShapeProxy2D([Offset(0.5, 0.25)], 0),
+        const Shape2DProxy([Offset(0.5, 0.25)], 0),
       );
       expect(d.overlaps, isTrue);
     });
 
     test('a circle swept at a wall stops a slop short of it', () {
-      final hit = castShape2D(
-        const ShapeProxy2D([Offset(10, -5), Offset(10, 5)], 0),
-        const ShapeProxy2D([Offset.zero], 2),
+      final hit = shapeCast2D(
+        const Shape2DProxy([Offset(10, -5), Offset(10, 5)], 0),
+        const Shape2DProxy([Offset.zero], 2),
         const Offset(20, 0),
         linearSlop: moverLinearSlop,
       )!;
@@ -124,9 +124,9 @@ void main() {
 
     test('moving away is a miss', () {
       expect(
-        castShape2D(
-          const ShapeProxy2D([Offset(10, 0)], 1),
-          const ShapeProxy2D([Offset.zero], 1),
+        shapeCast2D(
+          const Shape2DProxy([Offset(10, 0)], 1),
+          const Shape2DProxy([Offset.zero], 1),
           const Offset(-5, 0),
           linearSlop: moverLinearSlop,
         ),
@@ -136,37 +136,37 @@ void main() {
   });
 
   test('the plane solver keeps out of a floor and clips the velocity', () {
-    final floor = MoverPlane(
+    final floor = Mover2DPlane(
       normal: const Offset(0, -1),
       offset: 0,
       point: Offset.zero,
     );
-    final r = MoverSolver.solvePlanes(const Offset(5, 10), [floor]);
+    final r = Mover2DSolver.solvePlanes(const Offset(5, 10), [floor]);
     expect(r.translation.dx, closeTo(5, 1e-9));
     // Box2D's solver leaves the mover a slop into the surface, so it keeps
     // touching what it stands on.
     expect(r.translation.dy, closeTo(moverLinearSlop, 1e-9));
-    final v = MoverSolver.clipVector(const Offset(300, 400), [floor]);
+    final v = Mover2DSolver.clipVector(const Offset(300, 400), [floor]);
     expect(v, const Offset(300, 0));
   });
 
   test('both backends walk the same course alike', () {
-    final native = PhysicsEngine()..initialize();
+    final native = Physics2DEngine()..initialize();
     addTearDown(native.dispose);
     if (native.stats['backend'] != 'box2d_v3') {
       markTestSkipped('native Box2D backend unavailable');
       return;
     }
-    final dart = PhysicsEngine.pureDart()..initialize();
+    final dart = Physics2DEngine.pureDart()..initialize();
     addTearDown(dart.dispose);
-    List<Offset> walk(PhysicsEngine engine) {
+    List<Offset> walk(Physics2DEngine engine) {
       engine
-        ..addBody(_static(const Offset(0, 120), RectangleShape(4000, 40)))
-        ..addBody(_static(const Offset(300, 94), RectangleShape(400, 12)))
+        ..addBody(_static(const Offset(0, 120), Rectangle2DShape(4000, 40)))
+        ..addBody(_static(const Offset(300, 94), Rectangle2DShape(400, 12)))
         ..addBody(
           _static(
             const Offset(500, 88),
-            PolygonShape([
+            Polygon2DShape([
               const Offset(0, 0),
               const Offset(150, 0),
               const Offset(150, -60),
@@ -174,11 +174,15 @@ void main() {
           ),
         )
         ..addBody(
-          _static(const Offset(250, 20), RectangleShape(120, 10), oneWay: true),
+          _static(
+            const Offset(250, 20),
+            Rectangle2DShape(120, 10),
+            oneWay: true,
+          ),
         );
       final w = _Walker(
         engine,
-        MoverShape.box(width: 24, height: 48),
+        Mover2DShape.box(width: 24, height: 48),
         const Offset(0, 40),
       );
       final trail = <Offset>[];
@@ -205,11 +209,11 @@ void main() {
   });
 
   for (final (name, make) in [
-    ('pure Dart', () => PhysicsEngine.pureDart()..initialize()),
-    ('native Box2D', () => PhysicsEngine()..initialize()),
+    ('pure Dart', () => Physics2DEngine.pureDart()..initialize()),
+    ('native Box2D', () => Physics2DEngine()..initialize()),
   ]) {
     group(name, () {
-      late PhysicsEngine engine;
+      late Physics2DEngine engine;
       setUp(() => engine = make());
       tearDown(() => engine.dispose());
 
@@ -222,13 +226,13 @@ void main() {
       }
 
       /// A long floor whose top is at y = 100.
-      PhysicsBody floor() {
-        final f = _static(const Offset(0, 120), RectangleShape(4000, 40));
+      Physics2DBody floor() {
+        final f = _static(const Offset(0, 120), Rectangle2DShape(4000, 40));
         engine.addBody(f);
         return f;
       }
 
-      final capsule = MoverShape.capsule(radius: 12, height: 48);
+      final capsule = Mover2DShape.capsule(radius: 12, height: 48);
 
       test('a capsule falls, lands and stands', () {
         if (skipped()) return;
@@ -260,7 +264,9 @@ void main() {
       test('a wall stops it', () {
         if (skipped()) return;
         floor();
-        engine.addBody(_static(const Offset(200, 0), RectangleShape(40, 200)));
+        engine.addBody(
+          _static(const Offset(200, 0), Rectangle2DShape(40, 200)),
+        );
         final w = _Walker(engine, capsule, const Offset(0, 70))
           ..run(120, moveX: 400);
         expect(
@@ -279,7 +285,7 @@ void main() {
         engine.addBody(
           _static(
             const Offset(100, 100),
-            PolygonShape([
+            Polygon2DShape([
               const Offset(0, 0),
               const Offset(200, 0),
               Offset(200, -rise),
@@ -292,14 +298,14 @@ void main() {
         expect(w.grounded, isTrue);
 
         // A 70° wall-like slope is not ground.
-        final e2 = PhysicsEngine.pureDart()..initialize();
+        final e2 = Physics2DEngine.pureDart()..initialize();
         addTearDown(e2.dispose);
-        e2.addBody(_static(const Offset(0, 120), RectangleShape(4000, 40)));
+        e2.addBody(_static(const Offset(0, 120), Rectangle2DShape(4000, 40)));
         final steep = 100 * math.tan(70 * math.pi / 180);
         e2.addBody(
           _static(
             const Offset(100, 100),
-            PolygonShape([
+            Polygon2DShape([
               const Offset(0, 0),
               const Offset(100, 0),
               Offset(100, -steep),
@@ -318,7 +324,7 @@ void main() {
         engine.addBody(
           _static(
             const Offset(100, 100),
-            PolygonShape([
+            Polygon2DShape([
               const Offset(0, 0),
               const Offset(100, 0),
               Offset(100, -steep),
@@ -334,10 +340,12 @@ void main() {
         if (skipped()) return;
         floor();
         // A 12-unit step from x = 100.
-        engine.addBody(_static(const Offset(300, 94), RectangleShape(400, 12)));
+        engine.addBody(
+          _static(const Offset(300, 94), Rectangle2DShape(400, 12)),
+        );
         final blocked = _Walker(
           engine,
-          MoverShape.box(width: 24, height: 48),
+          Mover2DShape.box(width: 24, height: 48),
           const Offset(0, 70),
         )..run(20);
         blocked.run(60, moveX: 200);
@@ -349,7 +357,7 @@ void main() {
 
         final climber = _Walker(
           engine,
-          MoverShape.box(width: 24, height: 48),
+          Mover2DShape.box(width: 24, height: 48),
           const Offset(0, 70),
         )..run(20);
         climber.run(60, moveX: 200, stepHeight: 16, stick: 8);
@@ -365,7 +373,7 @@ void main() {
       test('a ceiling stops a jump', () {
         if (skipped()) return;
         floor();
-        engine.addBody(_static(const Offset(0, 0), RectangleShape(400, 20)));
+        engine.addBody(_static(const Offset(0, 0), Rectangle2DShape(400, 20)));
         final w = _Walker(engine, capsule, const Offset(0, 70))..run(20);
         w.step(jump: 900);
         for (var i = 0; i < 5; i++) {
@@ -387,7 +395,7 @@ void main() {
         if (skipped()) return;
         floor();
         engine.addBody(
-          _static(const Offset(0, 20), RectangleShape(300, 10), oneWay: true),
+          _static(const Offset(0, 20), Rectangle2DShape(300, 10), oneWay: true),
         );
         final w = _Walker(engine, capsule, const Offset(0, 70))..run(20);
         w.step(jump: 1000);
@@ -404,11 +412,11 @@ void main() {
         if (skipped()) return;
         floor();
         engine.addBody(
-          _static(const Offset(0, 60), RectangleShape(100, 20), sensor: true),
+          _static(const Offset(0, 60), Rectangle2DShape(100, 20), sensor: true),
         );
         final own = _static(
           const Offset(0, -100),
-          CapsuleShape(
+          Capsule2DShape(
             center1: const Offset(0, -12),
             center2: const Offset(0, 12),
             radius: 12,
@@ -417,7 +425,7 @@ void main() {
         engine.addBody(own);
         final w = _Walker(engine, capsule, const Offset(0, -100));
         for (var i = 0; i < 90; i++) {
-          w.step(filter: MoverFilter(ignore: own));
+          w.step(filter: Mover2DFilter(ignore: own));
         }
         expect(
           w.position.dy,
@@ -433,7 +441,7 @@ void main() {
         engine.addBody(
           _static(
             const Offset(-200, 100),
-            PolygonShape([
+            Polygon2DShape([
               const Offset(0, 0),
               Offset(0, -rise),
               const Offset(200, 0),
@@ -454,9 +462,9 @@ void main() {
       test('it pushes a crate', () {
         if (skipped()) return;
         floor();
-        final crate = PhysicsBody(
+        final crate = Physics2DBody(
           position: Vector2(80, 84),
-          shape: RectangleShape(32, 32),
+          shape: Rectangle2DShape(32, 32),
           drag: 0,
           fixedRotation: true,
         );
@@ -471,12 +479,12 @@ void main() {
         if (skipped()) return;
         // A ledge ending at x = 0, top at y = 100.
         engine.addBody(
-          _static(const Offset(-200, 120), RectangleShape(400, 40)),
+          _static(const Offset(-200, 120), Rectangle2DShape(400, 40)),
         );
         // Centre 8 units past the edge: a 24-wide box still has 4 on it.
         final box = _Walker(
           engine,
-          MoverShape.box(width: 24, height: 48, cornerRadius: 2),
+          Mover2DShape.box(width: 24, height: 48, cornerRadius: 2),
           const Offset(8, 70),
         )..run(60);
         expect(box.grounded, isTrue);
@@ -489,11 +497,12 @@ void main() {
         );
       });
 
-      final box = MoverShape.box(width: 24, height: 48);
+      final box = Mover2DShape.box(width: 24, height: 48);
 
       /// A 16-high step whose left side is at x = 20, on [floor].
-      void stepUp() =>
-          engine.addBody(_static(const Offset(40, 92), RectangleShape(40, 16)));
+      void stepUp() => engine.addBody(
+        _static(const Offset(40, 92), Rectangle2DShape(40, 16)),
+      );
 
       test('a jump that clips a step carries on up', () {
         if (skipped()) return;
@@ -513,11 +522,11 @@ void main() {
         floor();
         // 400 long, 20 thick, turned a quarter: upright, x 90..110.
         engine.addBody(
-          PhysicsBody(
+          Physics2DBody(
             position: Vector2(100, 0),
-            shape: RectangleShape(400, 20),
+            shape: Rectangle2DShape(400, 20),
             mass: 0,
-            bodyType: BodyType.static,
+            bodyType: Body2DType.static,
             angle: math.pi / 2,
           ),
         );
@@ -530,7 +539,7 @@ void main() {
         if (skipped()) return;
         // One-way from above; its top at y = 45.
         engine.addBody(
-          _static(const Offset(0, 50), RectangleShape(200, 10), oneWay: true),
+          _static(const Offset(0, 50), Rectangle2DShape(200, 10), oneWay: true),
         );
         engine.update(_dt);
         // The capsule's core ends 12 above its bottom. Feet 6 into the

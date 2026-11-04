@@ -74,9 +74,9 @@ class Box2DBody implements Finalizable {
       ..prevAngle = angle;
   }
 
-  /// Create a body of any [BodyType].
+  /// Create a body of any [Body2DType].
   ///
-  /// [bodyTypeIndex] is `BodyType.index`, which matches Box2D's `b2BodyType`
+  /// [bodyTypeIndex] is `Body2DType.index`, which matches Box2D's `b2BodyType`
   /// ordinals exactly (static=0, kinematic=1, dynamic=2), so no translation
   /// table is needed. The `.dynamic`/`.static` factories above remain for
   /// existing callers.
@@ -122,7 +122,7 @@ class Box2DBody implements Finalizable {
     prevAngle = angle;
   }
 
-  /// This body's current [BodyType] index, as Box2D reports it.
+  /// This body's current [Body2DType] index, as Box2D reports it.
   int get typeIndex {
     _throwIfDestroyed();
     return box2d.b2w_getBodyType(_handle);

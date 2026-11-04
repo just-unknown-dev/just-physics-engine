@@ -1,10 +1,10 @@
 import 'package:just_jolt/ffi.dart';
 
-import '../physics_engine_3d.dart';
-import '../settings_3d.dart';
+import '../physics_3d_engine.dart';
+import '../physics_3d_settings.dart';
 import 'jolt_world.dart';
 
-/// Jolt Physics (through just_jolt) as a [PhysicsEngine3D].
+/// Jolt Physics (through just_jolt) as a [Physics3DEngine].
 ///
 /// `PhysicsEngineFactory.create3D()` makes one and throws when it cannot
 /// run. Where it cannot — the web, a 32-bit Android ABI, an app whose
@@ -14,7 +14,7 @@ import 'jolt_world.dart';
 /// [workerThreads] threads (cores minus one by default; the first engine
 /// started decides). Contacts bounce as much as the less bouncy of their
 /// two bodies, as in the 2-D engines.
-final class JoltPhysicsEngine implements PhysicsEngine3D {
+final class JoltPhysicsEngine implements Physics3DEngine {
   /// An engine whose job system has [workerThreads] threads; below 0 is
   /// "cores minus one".
   JoltPhysicsEngine({this.workerThreads = -1});
@@ -33,7 +33,7 @@ final class JoltPhysicsEngine implements PhysicsEngine3D {
   String? get joltVersion => unavailableReason == null ? Jolt.version : null;
 
   @override
-  PhysicsWorld3D createWorld(PhysicsWorldSettings3D settings) {
+  Physics3DWorld createWorld(Physics3DWorldSettings settings) {
     final reason = unavailableReason;
     if (reason != null) throw Physics3DUnsupportedError(reason);
     return JoltWorld(settings);

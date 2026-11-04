@@ -3,12 +3,12 @@ import 'dart:typed_data';
 
 import 'package:just_dart/just_dart.dart';
 
-import '../physics_3d/physics_engine_3d.dart';
-import '../physics_3d/results_3d.dart';
-import '../physics_3d/settings_3d.dart';
-import '../physics_3d/shapes_3d.dart';
+import '../physics_3d/physics_3d_engine.dart';
+import '../physics_3d/physics_3d_results.dart';
+import '../physics_3d/physics_3d_settings.dart';
+import '../physics_3d/shape_3d.dart';
 
-/// A [PhysicsEngine3D] for tests, in plain Dart.
+/// A [Physics3DEngine] for tests, in plain Dart.
 ///
 /// Every shape is its axis-aligned bounding box (a turned shape, the box
 /// round it) and the simulation turns nothing: dynamic bodies fall, land on
@@ -21,10 +21,10 @@ import '../physics_3d/shapes_3d.dart';
 /// results.
 ///
 /// Pass `unavailableReason` to stand in for an engine that cannot run.
-final class FakePhysicsEngine3D implements PhysicsEngine3D {
+final class FakePhysics3DEngine implements Physics3DEngine {
   /// A fake engine; unavailable, giving [unavailableReason], when that is
   /// not null.
-  FakePhysicsEngine3D({this.unavailableReason, this.collisions = true});
+  FakePhysics3DEngine({this.unavailableReason, this.collisions = true});
 
   @override
   String get name => 'fake';
@@ -37,16 +37,16 @@ final class FakePhysicsEngine3D implements PhysicsEngine3D {
   final bool collisions;
 
   /// The worlds it made that are not disposed.
-  final List<FakePhysicsWorld3D> worlds = [];
+  final List<FakePhysics3DWorld> worlds = [];
 
   /// How often [destroyAll] was called.
   int destroyAllCalls = 0;
 
   @override
-  PhysicsWorld3D createWorld(PhysicsWorldSettings3D settings) {
+  Physics3DWorld createWorld(Physics3DWorldSettings settings) {
     final reason = unavailableReason;
     if (reason != null) throw Physics3DUnsupportedError(reason);
-    final world = FakePhysicsWorld3D(
+    final world = FakePhysics3DWorld(
       settings,
       collisions: collisions,
       owner: this,
@@ -64,9 +64,9 @@ final class FakePhysicsEngine3D implements PhysicsEngine3D {
   }
 }
 
-/// A body in a [FakePhysicsWorld3D], open for tests to look at.
+/// A body in a [FakePhysics3DWorld], open for tests to look at.
 final class FakeBody3D {
-  FakeBody3D._(this.handle, this.shape, BodySettings3D s)
+  FakeBody3D._(this.handle, this.shape, Body3DSettings s)
     : type = s.type,
       layer = s.layer,
       isSensor = s.isSensor,
@@ -81,7 +81,7 @@ final class FakeBody3D {
       rotation = _unitOf(s.rotation),
       linearVelocity = Vector3.copy(s.linearVelocity),
       angularVelocity = Vector3.copy(s.angularVelocity),
-      awake = s.type != BodyType3D.static {
+      awake = s.type != Body3DType.static {
     _turn();
   }
 
@@ -100,7 +100,7 @@ final class FakeBody3D {
   final Shape3D shape;
 
   /// How it moves.
-  BodyType3D type;
+  Body3DType type;
 
   /// Its layer.
   int layer;
@@ -112,7 +112,7 @@ final class FakeBody3D {
   final bool allowSleeping;
 
   /// Its motion quality.
-  MotionQuality3D motionQuality;
+  Motion3DQuality motionQuality;
 
   /// Its friction, bounciness and gravity factor.
   double friction, restitution, gravityFactor;
@@ -168,12 +168,12 @@ final class FakeBody3D {
       ? 3
       : isSensor
       ? 2
-      : type == BodyType3D.static
+      : type == Body3DType.static
       ? 0
       : 1;
 }
 
-/// A joint in a [FakePhysicsWorld3D]: recorded, never simulated.
+/// A joint in a [FakePhysics3DWorld]: recorded, never simulated.
 final class FakeJoint3D {
   FakeJoint3D._(this.handle, this.bodyA, this.bodyB, this.settings)
     : motorState = settings.motorState,
@@ -186,19 +186,19 @@ final class FakeJoint3D {
   final int bodyA, bodyB;
 
   /// What it was made with.
-  final JointSettings3D settings;
+  final Joint3DSettings settings;
 
   /// Whether it is on.
   bool enabled = true;
 
   /// Its motor.
-  MotorState3D motorState;
+  Motor3DState motorState;
 
   /// Its motor's target.
   double motorTarget;
 }
 
-/// A character in a [FakePhysicsWorld3D].
+/// A character in a [FakePhysics3DWorld].
 final class FakeCharacter3D {
   FakeCharacter3D._(this.handle, this.settings, Vector3 position)
     : position = Vector3.copy(position);
@@ -207,7 +207,7 @@ final class FakeCharacter3D {
   final int handle;
 
   /// What it was made with.
-  final CharacterSettings3D settings;
+  final Character3DSettings settings;
 
   /// Where its feet are.
   final Vector3 position;
@@ -216,7 +216,7 @@ final class FakeCharacter3D {
   final Vector3 velocity = Vector3.zero();
 
   /// What it stood on after the last move.
-  GroundState3D groundState = GroundState3D.inAir;
+  Ground3DState groundState = Ground3DState.inAir;
 
   /// The body it stood on, or 0.
   int groundBody = 0;
@@ -230,24 +230,24 @@ final class FakeCharacter3D {
   double get _halfHeight => settings.halfHeight + settings.radius;
 }
 
-/// The world of a [FakePhysicsEngine3D]. Its bodies, joints and
+/// The world of a [FakePhysics3DEngine]. Its bodies, joints and
 /// characters are open for tests to look at.
-final class FakePhysicsWorld3D implements PhysicsWorld3D {
+final class FakePhysics3DWorld implements Physics3DWorld {
   /// A world made as [settings] says.
-  FakePhysicsWorld3D(
+  FakePhysics3DWorld(
     this.settings, {
     this.collisions = true,
-    FakePhysicsEngine3D? owner,
+    FakePhysics3DEngine? owner,
   }) : _owner = owner,
        _gravity = Vector3.copy(settings.gravity);
 
   /// What it was made with.
-  final PhysicsWorldSettings3D settings;
+  final Physics3DWorldSettings settings;
 
   /// Whether it resolves collisions.
   final bool collisions;
 
-  final FakePhysicsEngine3D? _owner;
+  final FakePhysics3DEngine? _owner;
   final Vector3 _gravity;
   static int _next = 1;
 
@@ -269,7 +269,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
   /// See [steps].
   double lastStep = 0;
 
-  final List<PhysicsEvent3D> _events = [];
+  final List<Physics3DEvent> _events = [];
   final List<int> _fellAsleep = [];
   final Map<(int, int), bool> _touching = {}; // pair → is a sensor pair
   bool _disposed = false;
@@ -318,10 +318,10 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
       _ => false,
     };
     if (!kinds) return false;
-    return a.type == BodyType3D.dynamic ||
-        b.type == BodyType3D.dynamic ||
-        (a.type == BodyType3D.kinematic && b.isSensor) ||
-        (b.type == BodyType3D.kinematic && a.isSensor);
+    return a.type == Body3DType.dynamic ||
+        b.type == Body3DType.dynamic ||
+        (a.type == Body3DType.kinematic && b.isSensor) ||
+        (b.type == Body3DType.kinematic && a.isSensor);
   }
 
   // ── Bodies ────────────────────────────────────────────────────────────
@@ -330,7 +330,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
   int get _maxBodies => settings.maxBodies > 0 ? settings.maxBodies : 10240;
 
   @override
-  int createBody(Shape3D shape, BodySettings3D settings) {
+  int createBody(Shape3D shape, Body3DSettings settings) {
     if (_disposed ||
         settings.layer < 0 ||
         settings.layer > 15 ||
@@ -338,7 +338,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
         bodies.length >= _maxBodies) {
       return 0;
     }
-    if (_mustBeStatic(shape) && settings.type != BodyType3D.static) return 0;
+    if (_mustBeStatic(shape) && settings.type != Body3DType.static) return 0;
     final body = FakeBody3D._(_next++, shape, settings);
     bodies[body.handle] = body;
     if (body.awake) _activated(body);
@@ -347,9 +347,9 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
 
   /// Meshes and height fields: static bodies only, as in Jolt.
   static bool _mustBeStatic(Shape3D shape) => switch (shape) {
-    HeightFieldShape3D() || MeshShape3D() => true,
-    TransformedShape3D(:final shape) => _mustBeStatic(shape),
-    CompoundShape3D(:final parts) => parts.any(_mustBeStatic),
+    HeightField3DShape() || Mesh3DShape() => true,
+    Transformed3DShape(:final shape) => _mustBeStatic(shape),
+    Compound3DShape(:final parts) => parts.any(_mustBeStatic),
     _ => false,
   };
 
@@ -387,7 +387,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
   /// character moves it), as Jolt's world treats them.
   FakeBody3D? _moving(int body) {
     final b = bodies[body];
-    return b == null || b.type == BodyType3D.static || b.character != 0
+    return b == null || b.type == Body3DType.static || b.character != 0
         ? null
         : b;
   }
@@ -400,7 +400,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
     double dt,
   ) {
     final b = _moving(body);
-    if (b == null || b.type != BodyType3D.kinematic || dt <= 0) return;
+    if (b == null || b.type != Body3DType.kinematic || dt <= 0) return;
     b._kinematicTarget = Vector3.copy(position);
     b.linearVelocity
       ..setFrom(position)
@@ -412,7 +412,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
   }
 
   void _wake(FakeBody3D b) {
-    if (b.type == BodyType3D.static) return;
+    if (b.type == Body3DType.static) return;
     final wasAsleep = !b.awake;
     b.awake = true;
     b._restSteps = 0;
@@ -422,7 +422,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
   void _activated(FakeBody3D b) {
     if (settings.reportActivation) {
       _events.add(
-        PhysicsEvent3D(PhysicsEventType3D.bodyActivated, b.handle, 0),
+        Physics3DEvent(Physics3DEventType.bodyActivated, b.handle, 0),
       );
     }
   }
@@ -433,7 +433,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
     _fellAsleep.add(b.handle);
     if (settings.reportActivation) {
       _events.add(
-        PhysicsEvent3D(PhysicsEventType3D.bodyDeactivated, b.handle, 0),
+        Physics3DEvent(Physics3DEventType.bodyDeactivated, b.handle, 0),
       );
     }
   }
@@ -457,7 +457,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
   @override
   void addForce(int body, Vector3 force) {
     final b = bodies[body];
-    if (b == null || b.type != BodyType3D.dynamic) return;
+    if (b == null || b.type != Body3DType.dynamic) return;
     b.force.add(force);
     _wake(b);
   }
@@ -465,7 +465,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
   @override
   void addTorque(int body, Vector3 torque) {
     final b = bodies[body];
-    if (b == null || b.type != BodyType3D.dynamic) return;
+    if (b == null || b.type != Body3DType.dynamic) return;
     b.torque.add(torque);
     _wake(b);
   }
@@ -473,7 +473,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
   @override
   void addImpulse(int body, Vector3 impulse) {
     final b = bodies[body];
-    if (b == null || b.type != BodyType3D.dynamic) return;
+    if (b == null || b.type != Body3DType.dynamic) return;
     b.linearVelocity.addScaled(impulse, 1 / b.mass);
     _wake(b);
   }
@@ -481,7 +481,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
   @override
   void addAngularImpulse(int body, Vector3 impulse) {
     final b = bodies[body];
-    if (b == null || b.type != BodyType3D.dynamic) return;
+    if (b == null || b.type != Body3DType.dynamic) return;
     b.angularVelocity.addScaled(impulse, 1 / b.mass);
     _wake(b);
   }
@@ -504,7 +504,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
   }
 
   @override
-  void setMotionQuality(int body, MotionQuality3D quality) =>
+  void setMotionQuality(int body, Motion3DQuality quality) =>
       _moving(body)?.motionQuality = quality;
 
   @override
@@ -519,14 +519,14 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
   // ── Joints ────────────────────────────────────────────────────────────
 
   @override
-  int createJoint(int bodyA, int bodyB, JointSettings3D settings) {
+  int createJoint(int bodyA, int bodyB, Joint3DSettings settings) {
     // Bodies createBody made: not a character's.
     if (bodies[bodyA]?.character != 0 ||
         (bodyB != 0 && bodies[bodyB]?.character != 0)) {
       return 0;
     }
     if (bodyA == bodyB) return 0;
-    if (settings.kind == JointKind3D.sixDof &&
+    if (settings.kind == Joint3DKind.sixDof &&
         (settings.sixDofModes.length < 6 ||
             settings.sixDofMin.length < 6 ||
             settings.sixDofMax.length < 6)) {
@@ -548,7 +548,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
       joints[joint]?.enabled = enabled;
 
   @override
-  void setJointMotor(int joint, MotorState3D state, double target) {
+  void setJointMotor(int joint, Motor3DState state, double target) {
     final j = joints[joint];
     if (j == null) return;
     j
@@ -561,9 +561,9 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
     final j = joints[joint];
     final measured =
         j != null &&
-        (j.settings.kind == JointKind3D.hinge ||
-            j.settings.kind == JointKind3D.slider);
-    return measured && j.motorState == MotorState3D.position
+        (j.settings.kind == Joint3DKind.hinge ||
+            j.settings.kind == Joint3DKind.slider);
+    return measured && j.motorState == Motor3DState.position
         ? j.motorTarget
         : 0;
   }
@@ -571,7 +571,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
   // ── Characters ────────────────────────────────────────────────────────
 
   @override
-  int createCharacter(CharacterSettings3D settings, Vector3 position) {
+  int createCharacter(Character3DSettings settings, Vector3 position) {
     if (_disposed ||
         settings.layer < 0 ||
         settings.layer > 15 ||
@@ -584,10 +584,10 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
     if (settings.innerBody) {
       final h = c._halfHeight;
       final inner = createBody(
-        BoxShape3D(settings.radius, h, settings.radius),
-        BodySettings3D(
+        Box3DShape(settings.radius, h, settings.radius),
+        Body3DSettings(
           position: Vector3(position.x, position.y - h, position.z),
-          type: BodyType3D.kinematic,
+          type: Body3DType.kinematic,
           layer: settings.layer,
           allowSleeping: false,
         ),
@@ -618,7 +618,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
     int character,
     double dt,
     Vector3 velocity,
-    CharacterState3D out, {
+    Character3DState out, {
     required Vector3 stepDown,
     required Vector3 stepUp,
   }) {
@@ -631,7 +631,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
     final r = c.settings.radius, h = c._halfHeight;
     final p = c.position;
     final start = Vector3.copy(p);
-    final wasGrounded = c.groundState == GroundState3D.onGround;
+    final wasGrounded = c.groundState == Ground3DState.onGround;
     final solids = [
       for (final b in bodies.values)
         if (b._isSolid && _collide(b.layer, c.settings.layer)) b,
@@ -711,17 +711,17 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
     }
     if (ground != null && vy >= 0) {
       p.y = ground.minY;
-      c.groundState = GroundState3D.onGround;
+      c.groundState = Ground3DState.onGround;
       c.groundBody = ground.handle;
     } else {
-      c.groundState = GroundState3D.inAir;
+      c.groundState = Ground3DState.inAir;
       c.groundBody = 0;
     }
     c.velocity
       ..setFrom(p)
       ..sub(start)
       ..scale(dt > 0 ? 1 / dt : 0);
-    if (c.groundState == GroundState3D.onGround) c.velocity.y = 0;
+    if (c.groundState == Ground3DState.onGround) c.velocity.y = 0;
     if (c.innerBody != 0) {
       bodies[c.innerBody]?.position.setValues(p.x, p.y - h, p.z);
     }
@@ -729,7 +729,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
   }
 
   @override
-  void characterState(int character, CharacterState3D out) {
+  void characterState(int character, Character3DState out) {
     final c = characters[character];
     if (c == null) {
       _clearState(out);
@@ -753,10 +753,10 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
   }
 
   /// What a dead character reads as: nothing, in the air.
-  static void _clearState(CharacterState3D out) {
+  static void _clearState(Character3DState out) {
     out.position.setZero();
     out.velocity.setZero();
-    out.groundState = GroundState3D.inAir;
+    out.groundState = Ground3DState.inAir;
     out.groundNormal.setZero();
     out.groundVelocity.setZero();
     out.groundPosition.setZero();
@@ -769,7 +769,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
     final c = characters[character];
     if (c == null) return;
     c.position.setFrom(position);
-    c.groundState = GroundState3D.inAir;
+    c.groundState = Ground3DState.inAir;
     c.groundBody = 0;
     if (c.innerBody != 0) {
       bodies[c.innerBody]?.position.setValues(
@@ -781,12 +781,12 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
   }
 
   @override
-  List<CharacterContact3D> characterContacts(int character) {
+  List<Character3DContact> characterContacts(int character) {
     final c = characters[character];
     final ground = c == null ? null : bodies[c.groundBody];
     if (c == null || ground == null) return const [];
     return [
-      CharacterContact3D(
+      Character3DContact(
         body: ground.handle,
         character: 0,
         position: Vector3(c.position.x, ground.minY, c.position.z),
@@ -809,7 +809,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
     final all = bodies.values.toList(growable: false);
     for (final b in all) {
       if (!b.awake) continue;
-      if (b.type == BodyType3D.kinematic) {
+      if (b.type == Body3DType.kinematic) {
         final target = b._kinematicTarget;
         if (target != null) {
           b.position.setFrom(target);
@@ -832,7 +832,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
         }
         continue;
       }
-      if (b.type != BodyType3D.dynamic) continue;
+      if (b.type != Body3DType.dynamic) continue;
       final v = b.linearVelocity;
       // Moving before this step's gravity: at rest, it wakes nothing.
       final moving = v.lengthSquared >= 0.05 * 0.05;
@@ -859,7 +859,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
     for (final o in all) {
       if (o.awake ||
           o.isSensor ||
-          o.type != BodyType3D.dynamic ||
+          o.type != Body3DType.dynamic ||
           !_collide(b.layer, o.layer) ||
           !_canTouch(b, o)) {
         continue;
@@ -924,7 +924,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
   }
 
   /// Whether [b] is awake, and a body that moves.
-  static bool _moves(FakeBody3D b) => b.awake && b.type != BodyType3D.static;
+  static bool _moves(FakeBody3D b) => b.awake && b.type != Body3DType.static;
 
   void _findContacts(List<FakeBody3D> all) {
     final now = <(int, int), (bool, FakeBody3D, FakeBody3D)>{};
@@ -959,12 +959,12 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
       );
       if (normal.normalize() == 0) normal.setValues(0, 1, 0);
       final type = sensor
-          ? PhysicsEventType3D.sensorBegin
+          ? Physics3DEventType.sensorBegin
           : known
-          ? PhysicsEventType3D.contactStay
-          : PhysicsEventType3D.contactBegin;
+          ? Physics3DEventType.contactStay
+          : Physics3DEventType.contactBegin;
       _events.add(
-        PhysicsEvent3D(
+        Physics3DEvent(
           type,
           a.handle,
           b.handle,
@@ -976,8 +976,8 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
     for (final MapEntry(key: pair, value: sensor) in _touching.entries) {
       if (now.containsKey(pair)) continue;
       _events.add(
-        PhysicsEvent3D(
-          sensor ? PhysicsEventType3D.sensorEnd : PhysicsEventType3D.contactEnd,
+        Physics3DEvent(
+          sensor ? Physics3DEventType.sensorEnd : Physics3DEventType.contactEnd,
           pair.$1,
           pair.$2,
         ),
@@ -989,10 +989,10 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
   }
 
   @override
-  void readMovedBodies(BodyPoses3D out) {
+  void readMovedBodies(Body3DPoses out) {
     final moved = [
       for (final b in bodies.values)
-        if (b.awake && b.type != BodyType3D.static && b.character == 0)
+        if (b.awake && b.type != Body3DType.static && b.character == 0)
           b.handle,
       ..._fellAsleep.where(bodies.containsKey),
     ];
@@ -1001,12 +1001,12 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
   }
 
   @override
-  void readBodies(List<int> handles, BodyPoses3D out) {
-    final data = Float32List(handles.length * BodyPoses3D.stride);
+  void readBodies(List<int> handles, Body3DPoses out) {
+    final data = Float32List(handles.length * Body3DPoses.stride);
     for (var i = 0; i < handles.length; i++) {
       final b = bodies[handles[i]];
       if (b == null) continue;
-      final o = i * BodyPoses3D.stride;
+      final o = i * Body3DPoses.stride;
       data
         ..[o] = b.position.x
         ..[o + 1] = b.position.y
@@ -1027,7 +1027,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
   }
 
   @override
-  List<PhysicsEvent3D> drainEvents() {
+  List<Physics3DEvent> drainEvents() {
     if (_disposed) return const [];
     final events = List.of(_events);
     _events.clear();
@@ -1036,27 +1036,27 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
 
   // ── Queries ───────────────────────────────────────────────────────────
 
-  bool _passes(FakeBody3D b, QueryFilter3D f) =>
+  bool _passes(FakeBody3D b, Query3DFilter f) =>
       b.handle != f.ignoreBody &&
       (f.layerMask >> b.layer) & 1 == 1 &&
       (f.includeSensors || !b.isSensor) &&
       (f.includeCharacters || b.character == 0);
 
   @override
-  List<QueryHit3D> raycast(
+  List<Query3DHit> raycast(
     Vector3 origin,
     Vector3 direction, {
-    QueryFilter3D filter = QueryFilter3D.all,
+    Query3DFilter filter = Query3DFilter.all,
     bool allHits = false,
   }) => _cast(origin, direction, Vector3.zero(), filter, allHits);
 
   @override
-  List<QueryHit3D> shapeCast(
+  List<Query3DHit> shapeCast(
     Shape3D shape,
     Vector3 position,
     Quaternion rotation,
     Vector3 direction, {
-    QueryFilter3D filter = QueryFilter3D.all,
+    Query3DFilter filter = Query3DFilter.all,
     bool allHits = false,
   }) {
     if (_disposed || !shape.isValid) return const [];
@@ -1077,14 +1077,14 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
 
   /// A ray from [origin] along [direction] against every box grown by
   /// [grow] (a swept box).
-  List<QueryHit3D> _cast(
+  List<Query3DHit> _cast(
     Vector3 origin,
     Vector3 direction,
     Vector3 grow,
-    QueryFilter3D f,
+    Query3DFilter f,
     bool all,
   ) {
-    final hits = <QueryHit3D>[];
+    final hits = <Query3DHit>[];
     final o = [origin.x, origin.y, origin.z],
         d = [direction.x, direction.y, direction.z];
     for (final b in bodies.values) {
@@ -1120,7 +1120,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
       if (axis == 1) normal.y = sign;
       if (axis == 2) normal.z = sign;
       hits.add(
-        QueryHit3D(
+        Query3DHit(
           body: b.handle,
           fraction: tMin,
           point: Vector3.copy(origin)..addScaled(direction, tMin),
@@ -1133,11 +1133,11 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
   }
 
   @override
-  List<QueryHit3D> overlap(
+  List<Query3DHit> overlap(
     Shape3D shape,
     Vector3 position,
     Quaternion rotation, {
-    QueryFilter3D filter = QueryFilter3D.all,
+    Query3DFilter filter = Query3DFilter.all,
   }) {
     if (_disposed || !shape.isValid) return const [];
     final (lo, hi) = _boundsOf(shape);
@@ -1153,7 +1153,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
             max.y > b.minY &&
             min.z < b.maxZ &&
             max.z > b.minZ)
-          QueryHit3D(
+          Query3DHit(
             body: b.handle,
             fraction: 0,
             point: Vector3.copy(b.position),
@@ -1169,26 +1169,26 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
 /// [shape]'s bounds in its own space.
 (Vector3, Vector3) _boundsOf(Shape3D shape) {
   switch (shape) {
-    case BoxShape3D(:final hx, :final hy, :final hz):
+    case Box3DShape(:final hx, :final hy, :final hz):
       return (Vector3(-hx, -hy, -hz), Vector3(hx, hy, hz));
-    case SphereShape3D(:final radius):
+    case Sphere3DShape(:final radius):
       return (
         Vector3(-radius, -radius, -radius),
         Vector3(radius, radius, radius),
       );
-    case CapsuleShape3D(:final halfHeight, :final radius):
+    case Capsule3DShape(:final halfHeight, :final radius):
       final h = halfHeight + radius;
       return (Vector3(-radius, -h, -radius), Vector3(radius, h, radius));
-    case CylinderShape3D(:final halfHeight, :final radius):
+    case Cylinder3DShape(:final halfHeight, :final radius):
       return (
         Vector3(-radius, -halfHeight, -radius),
         Vector3(radius, halfHeight, radius),
       );
-    case ConvexHullShape3D(:final points):
+    case ConvexHull3DShape(:final points):
       return _pointBounds(points);
-    case MeshShape3D(:final positions):
+    case Mesh3DShape(:final positions):
       return _pointBounds(positions);
-    case HeightFieldShape3D(
+    case HeightField3DShape(
       :final heights,
       :final sampleCount,
       :final cellSize,
@@ -1201,7 +1201,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
       final side = (sampleCount - 1) * cellSize;
       // Heights go up, towards −Y.
       return (Vector3(0, -high, 0), Vector3(side, -low, side));
-    case TransformedShape3D(
+    case Transformed3DShape(
       :final shape,
       :final x,
       :final y,
@@ -1215,7 +1215,7 @@ final class FakePhysicsWorld3D implements PhysicsWorld3D {
       final (min, max) = _turned(lo, hi, Quaternion(qx, qy, qz, qw));
       final offset = Vector3(x, y, z);
       return (min..add(offset), max..add(offset));
-    case CompoundShape3D(:final parts):
+    case Compound3DShape(:final parts):
       // The box round every part.
       final (min, max) = _boundsOf(parts.first);
       for (final part in parts.skip(1)) {

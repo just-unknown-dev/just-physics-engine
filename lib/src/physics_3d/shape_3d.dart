@@ -5,9 +5,9 @@ import 'dart:typed_data';
 ///
 /// Units are metres. Shapes compare by value, so a backend can share one
 /// native shape between every body that asks for an equal one. The big
-/// ones ([ConvexHullShape3D], [MeshShape3D], [HeightFieldShape3D]) compare
+/// ones ([ConvexHull3DShape], [Mesh3DShape], [HeightField3DShape]) compare
 /// their data by identity: reuse the same lists to share them, and leave a
-/// list (or a [CompoundShape3D]'s parts) unchanged once a shape holds it.
+/// list (or a [Compound3DShape]'s parts) unchanged once a shape holds it.
 sealed class Shape3D {
   const Shape3D();
 
@@ -21,26 +21,26 @@ sealed class Shape3D {
   /// — Jolt a hull whose points are all on one plane, or a mesh of only
   /// degenerate triangles — so check what `createBody` returns.
   bool get isValid => switch (this) {
-    BoxShape3D(:final hx, :final hy, :final hz) =>
+    Box3DShape(:final hx, :final hy, :final hz) =>
       _positive(hx) && _positive(hy) && _positive(hz),
-    SphereShape3D(:final radius) => _positive(radius),
-    CapsuleShape3D(:final halfHeight, :final radius) =>
+    Sphere3DShape(:final radius) => _positive(radius),
+    Capsule3DShape(:final halfHeight, :final radius) =>
       _positive(halfHeight) && _positive(radius),
-    CylinderShape3D(:final halfHeight, :final radius) =>
+    Cylinder3DShape(:final halfHeight, :final radius) =>
       _positive(halfHeight) && _positive(radius),
-    ConvexHullShape3D(:final points) =>
+    ConvexHull3DShape(:final points) =>
       points.length >= 12 && _allFinite(points),
-    MeshShape3D(:final positions, :final indices) => _validMesh(
+    Mesh3DShape(:final positions, :final indices) => _validMesh(
       positions,
       indices,
     ),
-    HeightFieldShape3D(:final heights, :final sampleCount, :final cellSize) =>
+    HeightField3DShape(:final heights, :final sampleCount, :final cellSize) =>
       sampleCount >= 4 &&
           heights.length >= sampleCount * sampleCount &&
           _positive(cellSize) &&
           _allFinite(heights),
-    final TransformedShape3D t => _validTransformed(t),
-    CompoundShape3D(:final parts) =>
+    final Transformed3DShape t => _validTransformed(t),
+    Compound3DShape(:final parts) =>
       parts.isNotEmpty && parts.every((part) => part.isValid),
   };
 
@@ -63,7 +63,7 @@ sealed class Shape3D {
     return true;
   }
 
-  static bool _validTransformed(TransformedShape3D t) {
+  static bool _validTransformed(Transformed3DShape t) {
     final q = t.qx * t.qx + t.qy * t.qy + t.qz * t.qz + t.qw * t.qw;
     return t.shape.isValid &&
         t.x.isFinite &&
@@ -75,48 +75,48 @@ sealed class Shape3D {
 }
 
 /// A box of half extents [hx], [hy], [hz] about its centre.
-final class BoxShape3D extends Shape3D {
+final class Box3DShape extends Shape3D {
   /// A box twice [hx] by twice [hy] by twice [hz].
-  const BoxShape3D(this.hx, this.hy, this.hz);
+  const Box3DShape(this.hx, this.hy, this.hz);
 
   /// Half its size along X, Y and Z.
   final double hx, hy, hz;
 
   @override
   bool operator ==(Object other) =>
-      other is BoxShape3D && other.hx == hx && other.hy == hy && other.hz == hz;
+      other is Box3DShape && other.hx == hx && other.hy == hy && other.hz == hz;
 
   @override
-  int get hashCode => Object.hash(BoxShape3D, hx, hy, hz);
+  int get hashCode => Object.hash(Box3DShape, hx, hy, hz);
 
   @override
-  String toString() => 'BoxShape3D($hx, $hy, $hz)';
+  String toString() => 'Box3DShape($hx, $hy, $hz)';
 }
 
 /// A sphere of [radius] about its centre.
-final class SphereShape3D extends Shape3D {
+final class Sphere3DShape extends Shape3D {
   /// A sphere of [radius].
-  const SphereShape3D(this.radius);
+  const Sphere3DShape(this.radius);
 
   /// Its radius.
   final double radius;
 
   @override
   bool operator ==(Object other) =>
-      other is SphereShape3D && other.radius == radius;
+      other is Sphere3DShape && other.radius == radius;
 
   @override
-  int get hashCode => Object.hash(SphereShape3D, radius);
+  int get hashCode => Object.hash(Sphere3DShape, radius);
 
   @override
-  String toString() => 'SphereShape3D($radius)';
+  String toString() => 'Sphere3DShape($radius)';
 }
 
 /// A capsule along Y about its centre: a cylinder [halfHeight] each way
 /// with a hemisphere of [radius] on each end.
-final class CapsuleShape3D extends Shape3D {
+final class Capsule3DShape extends Shape3D {
   /// A capsule whose straight part is twice [halfHeight] long.
-  const CapsuleShape3D(this.halfHeight, this.radius);
+  const Capsule3DShape(this.halfHeight, this.radius);
 
   /// Half the length of its straight part (not counting the caps).
   final double halfHeight;
@@ -126,21 +126,21 @@ final class CapsuleShape3D extends Shape3D {
 
   @override
   bool operator ==(Object other) =>
-      other is CapsuleShape3D &&
+      other is Capsule3DShape &&
       other.halfHeight == halfHeight &&
       other.radius == radius;
 
   @override
-  int get hashCode => Object.hash(CapsuleShape3D, halfHeight, radius);
+  int get hashCode => Object.hash(Capsule3DShape, halfHeight, radius);
 
   @override
-  String toString() => 'CapsuleShape3D($halfHeight, $radius)';
+  String toString() => 'Capsule3DShape($halfHeight, $radius)';
 }
 
 /// A cylinder along Y about its centre.
-final class CylinderShape3D extends Shape3D {
+final class Cylinder3DShape extends Shape3D {
   /// A cylinder twice [halfHeight] tall.
-  const CylinderShape3D(this.halfHeight, this.radius);
+  const Cylinder3DShape(this.halfHeight, this.radius);
 
   /// Half its height.
   final double halfHeight;
@@ -150,39 +150,39 @@ final class CylinderShape3D extends Shape3D {
 
   @override
   bool operator ==(Object other) =>
-      other is CylinderShape3D &&
+      other is Cylinder3DShape &&
       other.halfHeight == halfHeight &&
       other.radius == radius;
 
   @override
-  int get hashCode => Object.hash(CylinderShape3D, halfHeight, radius);
+  int get hashCode => Object.hash(Cylinder3DShape, halfHeight, radius);
 
   @override
-  String toString() => 'CylinderShape3D($halfHeight, $radius)';
+  String toString() => 'Cylinder3DShape($halfHeight, $radius)';
 }
 
 /// The convex hull of [points] (x, y, z each).
-final class ConvexHullShape3D extends Shape3D {
+final class ConvexHull3DShape extends Shape3D {
   /// The smallest convex shape holding every point.
-  const ConvexHullShape3D(this.points);
+  const ConvexHull3DShape(this.points);
 
   /// Three floats per point.
   final Float32List points;
 
   @override
   bool operator ==(Object other) =>
-      other is ConvexHullShape3D && identical(other.points, points);
+      other is ConvexHull3DShape && identical(other.points, points);
 
   @override
-  int get hashCode => Object.hash(ConvexHullShape3D, identityHashCode(points));
+  int get hashCode => Object.hash(ConvexHull3DShape, identityHashCode(points));
 }
 
 /// A triangle mesh: three indices per triangle into [positions]. Static
 /// bodies only: a body that moves needs a convex shape, or a
-/// [CompoundShape3D] of them.
-final class MeshShape3D extends Shape3D {
+/// [Compound3DShape] of them.
+final class Mesh3DShape extends Shape3D {
   /// A mesh of [indices] over [positions] (x, y, z each).
-  const MeshShape3D(this.positions, this.indices);
+  const Mesh3DShape(this.positions, this.indices);
 
   /// Three floats per vertex.
   final Float32List positions;
@@ -195,13 +195,13 @@ final class MeshShape3D extends Shape3D {
 
   @override
   bool operator ==(Object other) =>
-      other is MeshShape3D &&
+      other is Mesh3DShape &&
       identical(other.positions, positions) &&
       identical(other.indices, indices);
 
   @override
   int get hashCode => Object.hash(
-    MeshShape3D,
+    Mesh3DShape,
     identityHashCode(positions),
     identityHashCode(indices),
   );
@@ -215,10 +215,10 @@ final class MeshShape3D extends Shape3D {
 /// [cellSize] in the body's space. The grid starts at the body's origin and
 /// runs towards +X and +Z. A sample of [hole] or more is a hole: the cells
 /// round it are not there, and things fall through.
-final class HeightFieldShape3D extends Shape3D {
+final class HeightField3DShape extends Shape3D {
   /// A terrain of [sampleCount] × [sampleCount] [heights], [cellSize]
   /// metres apart.
-  const HeightFieldShape3D(this.heights, this.sampleCount, this.cellSize);
+  const HeightField3DShape(this.heights, this.sampleCount, this.cellSize);
 
   /// A height that marks a hole.
   static const double hole = 3.0e38;
@@ -234,14 +234,14 @@ final class HeightFieldShape3D extends Shape3D {
 
   @override
   bool operator ==(Object other) =>
-      other is HeightFieldShape3D &&
+      other is HeightField3DShape &&
       identical(other.heights, heights) &&
       other.sampleCount == sampleCount &&
       other.cellSize == cellSize;
 
   @override
   int get hashCode => Object.hash(
-    HeightFieldShape3D,
+    HeightField3DShape,
     identityHashCode(heights),
     sampleCount,
     cellSize,
@@ -250,9 +250,9 @@ final class HeightFieldShape3D extends Shape3D {
 
 /// [shape] moved by ([x], [y], [z]) and turned by the unit quaternion
 /// ([qx], [qy], [qz], [qw]) in its body's space: a collider's offset.
-final class TransformedShape3D extends Shape3D {
+final class Transformed3DShape extends Shape3D {
   /// [shape] at an offset and a rotation.
-  const TransformedShape3D(
+  const Transformed3DShape(
     this.shape, {
     this.x = 0,
     this.y = 0,
@@ -278,7 +278,7 @@ final class TransformedShape3D extends Shape3D {
 
   @override
   bool operator ==(Object other) =>
-      other is TransformedShape3D &&
+      other is Transformed3DShape &&
       other.shape == shape &&
       other.x == x &&
       other.y == y &&
@@ -290,26 +290,26 @@ final class TransformedShape3D extends Shape3D {
 
   @override
   int get hashCode =>
-      Object.hash(TransformedShape3D, shape, x, y, z, qx, qy, qz, qw);
+      Object.hash(Transformed3DShape, shape, x, y, z, qx, qy, qz, qw);
 
   @override
-  String toString() => 'TransformedShape3D($shape at ($x, $y, $z))';
+  String toString() => 'Transformed3DShape($shape at ($x, $y, $z))';
 }
 
 /// Several shapes as one: a staircase of boxes, an arch of hulls. Each part
-/// is placed in its body's space — a [TransformedShape3D] for one that is
+/// is placed in its body's space — a [Transformed3DShape] for one that is
 /// not at the body's origin. Any body type may have one, a dynamic body
 /// included, so a concave thing made of convex parts can tumble.
-final class CompoundShape3D extends Shape3D {
+final class Compound3DShape extends Shape3D {
   /// [parts], at least one.
-  const CompoundShape3D(this.parts);
+  const Compound3DShape(this.parts);
 
   /// The shapes it is made of.
   final List<Shape3D> parts;
 
   @override
   bool operator ==(Object other) {
-    if (other is! CompoundShape3D || other.parts.length != parts.length) {
+    if (other is! Compound3DShape || other.parts.length != parts.length) {
       return false;
     }
     for (var i = 0; i < parts.length; i++) {
@@ -319,8 +319,8 @@ final class CompoundShape3D extends Shape3D {
   }
 
   @override
-  int get hashCode => Object.hash(CompoundShape3D, Object.hashAll(parts));
+  int get hashCode => Object.hash(Compound3DShape, Object.hashAll(parts));
 
   @override
-  String toString() => 'CompoundShape3D(${parts.length} parts)';
+  String toString() => 'Compound3DShape(${parts.length} parts)';
 }

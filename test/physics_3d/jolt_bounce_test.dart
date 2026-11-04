@@ -10,21 +10,21 @@ final _backend = JoltPhysicsEngine();
 /// The highest a ball dropped 3 m onto a floor rises again after it first
 /// lands, in metres above where it lands (up is −Y).
 double _rebound(double floorRestitution) {
-  final w = _backend.createWorld(PhysicsWorldSettings3D());
+  final w = _backend.createWorld(Physics3DWorldSettings());
   addTearDown(w.dispose);
   w.createBody(
-    const BoxShape3D(10, 0.5, 10),
-    BodySettings3D(
+    const Box3DShape(10, 0.5, 10),
+    Body3DSettings(
       position: Vector3(0, 0.5, 0),
-      type: BodyType3D.static,
+      type: Body3DType.static,
       restitution: floorRestitution,
     ),
   );
   final ball = w.createBody(
-    const SphereShape3D(0.5),
-    BodySettings3D(position: Vector3(0, -3.5, 0), restitution: 0.8),
+    const Sphere3DShape(0.5),
+    Body3DSettings(position: Vector3(0, -3.5, 0), restitution: 0.8),
   );
-  final poses = BodyPoses3D();
+  final poses = Body3DPoses();
   final p = Vector3.zero();
   double? landed;
   var highest = double.infinity;

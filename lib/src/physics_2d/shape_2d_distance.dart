@@ -11,9 +11,9 @@ import 'dart:ui' show Offset;
 
 /// A convex shape as GJK sees it: its points' convex hull, grown by
 /// [radius]. A circle is one point, a capsule or segment two, a box four.
-final class ShapeProxy2D {
+final class Shape2DProxy {
   /// A proxy of [points] (at least one) grown by [radius].
-  const ShapeProxy2D(this.points, this.radius);
+  const Shape2DProxy(this.points, this.radius);
 
   /// The core's points.
   final List<Offset> points;
@@ -22,8 +22,8 @@ final class ShapeProxy2D {
   final double radius;
 
   /// The same proxy moved by [delta].
-  ShapeProxy2D shifted(Offset delta) =>
-      ShapeProxy2D([for (final p in points) p + delta], radius);
+  Shape2DProxy shifted(Offset delta) =>
+      Shape2DProxy([for (final p in points) p + delta], radius);
 
   /// The point furthest along ([dx], [dy]).
   int _support(double dx, double dy) {
@@ -41,8 +41,8 @@ final class ShapeProxy2D {
 }
 
 /// The closest points between two proxies' cores.
-final class ShapeDistance2D {
-  const ShapeDistance2D._(this.pointA, this.pointB, this.normal, this.distance);
+final class Shape2DDistance {
+  const Shape2DDistance._(this.pointA, this.pointB, this.normal, this.distance);
 
   /// The closest point on A's core.
   final Offset pointA;
@@ -63,7 +63,7 @@ final class ShapeDistance2D {
 
   /// The distance between [a]'s and [b]'s cores (Box2D's b2ShapeDistance,
   /// without radii).
-  static ShapeDistance2D between(ShapeProxy2D a, ShapeProxy2D b) {
+  static Shape2DDistance between(Shape2DProxy a, Shape2DProxy b) {
     final s = _Simplex();
     final v1 = s.v1
       ..indexA = 0
@@ -121,18 +121,18 @@ final class ShapeDistance2D {
     final length = math.sqrt(nx * nx + ny * ny);
     final normal = length == 0 ? Offset.zero : Offset(nx / length, ny / length);
     final (pa, pb) = s.witnessPoints();
-    return ShapeDistance2D._(pa, pb, normal, (pa - pb).distance);
+    return Shape2DDistance._(pa, pb, normal, (pa - pb).distance);
   }
 
-  static ShapeDistance2D _overlap(_Simplex s) {
+  static Shape2DDistance _overlap(_Simplex s) {
     final (pa, pb) = s.witnessPoints();
-    return ShapeDistance2D._(pa, pb, Offset.zero, 0);
+    return Shape2DDistance._(pa, pb, Offset.zero, 0);
   }
 }
 
 /// Where a shape moving along a translation first touches another.
-final class ShapeCastHit2D {
-  const ShapeCastHit2D._(this.fraction, this.point, this.normal);
+final class ShapeCast2DHit {
+  const ShapeCast2DHit._(this.fraction, this.point, this.normal);
 
   /// How much of the translation it moves before touching; 0 when it
   /// started out touching (an initial overlap).
@@ -155,9 +155,9 @@ final class ShapeCastHit2D {
 /// [linearSlop] is Box2D's B2_LINEAR_SLOP in world units (0.005 m, so 0.5
 /// at 100 units per metre). With [canEncroach], a shape already touching
 /// may move a little closer instead of reporting an initial overlap.
-ShapeCastHit2D? castShape2D(
-  ShapeProxy2D still,
-  ShapeProxy2D moving,
+ShapeCast2DHit? shapeCast2D(
+  Shape2DProxy still,
+  Shape2DProxy moving,
   Offset translation, {
   required double linearSlop,
   double maxFraction = 1,
@@ -171,7 +171,7 @@ ShapeCastHit2D? castShape2D(
   var fraction = 0.0;
   var current = moving;
   for (var iteration = 0; iteration < 20; iteration++) {
-    final d = ShapeDistance2D.between(still, current);
+    final d = Shape2DDistance.between(still, current);
     if (d.distance < target + tolerance) {
       if (iteration == 0) {
         if (canEncroach && d.distance > 2 * linearSlop) {
@@ -180,10 +180,10 @@ ShapeCastHit2D? castShape2D(
           // Initial overlap: a common point between the two surfaces.
           final c1 = d.pointA + d.normal * still.radius;
           final c2 = d.pointB - d.normal * moving.radius;
-          return ShapeCastHit2D._(0, (c1 + c2) / 2, Offset.zero);
+          return ShapeCast2DHit._(0, (c1 + c2) / 2, Offset.zero);
         }
       } else {
-        return ShapeCastHit2D._(
+        return ShapeCast2DHit._(
           fraction,
           d.pointA + d.normal * still.radius,
           d.normal,

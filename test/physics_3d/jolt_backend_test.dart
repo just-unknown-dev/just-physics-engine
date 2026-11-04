@@ -1,4 +1,4 @@
-// JoltPhysicsEngine through the PhysicsEngine3D interface: bodies, batch reads,
+// JoltPhysicsEngine through the Physics3DEngine interface: bodies, batch reads,
 // queries, events, layers, shapes and joints in a +Y-down world in metres.
 
 import 'dart:math' as math;
@@ -12,14 +12,14 @@ import 'package:just_physics_engine/physics_3d.dart';
 const _dt = 1 / 60;
 final _backend = JoltPhysicsEngine();
 
-PhysicsWorld3D _world({
+Physics3DWorld _world({
   List<int>? masks,
   bool stay = false,
   bool activation = false,
   Vector3? gravity,
 }) {
   final world = _backend.createWorld(
-    PhysicsWorldSettings3D(
+    Physics3DWorldSettings(
       layerMasks: masks,
       reportContactStay: stay,
       reportActivation: activation,
@@ -31,36 +31,36 @@ PhysicsWorld3D _world({
 }
 
 /// A 20 m floor whose top is at y = 0.
-int _floor(PhysicsWorld3D w, {int layer = 0}) => w.createBody(
-  const BoxShape3D(10, 0.5, 10),
-  BodySettings3D(
+int _floor(Physics3DWorld w, {int layer = 0}) => w.createBody(
+  const Box3DShape(10, 0.5, 10),
+  Body3DSettings(
     position: Vector3(0, 0.5, 0),
-    type: BodyType3D.static,
+    type: Body3DType.static,
     layer: layer,
   ),
 );
 
 int _box(
-  PhysicsWorld3D w,
+  Physics3DWorld w,
   Vector3 at, {
   double half = 0.5,
-  BodyType3D type = BodyType3D.dynamic,
+  Body3DType type = Body3DType.dynamic,
   int layer = 0,
   bool sensor = false,
 }) => w.createBody(
-  BoxShape3D(half, half, half),
-  BodySettings3D(position: at, type: type, layer: layer, isSensor: sensor),
+  Box3DShape(half, half, half),
+  Body3DSettings(position: at, type: type, layer: layer, isSensor: sensor),
 );
 
-Vector3 _position(PhysicsWorld3D w, int body) {
-  final poses = BodyPoses3D();
+Vector3 _position(Physics3DWorld w, int body) {
+  final poses = Body3DPoses();
   w.readBodies([body], poses);
   final p = Vector3.zero();
   poses.positionInto(0, p);
   return p;
 }
 
-void _run(PhysicsWorld3D w, int steps) {
+void _run(Physics3DWorld w, int steps) {
   for (var i = 0; i < steps; i++) {
     w.step(_dt);
   }
@@ -94,7 +94,7 @@ void main() {
         final boxes = [
           for (var i = 0; i < 5; i++) _box(w, Vector3(i * 2.0, -1, 0)),
         ];
-        final poses = BodyPoses3D();
+        final poses = Body3DPoses();
         w.step(_dt);
         w.readMovedBodies(poses);
         expect(poses.count, 5, reason: 'the static floor is left out');
@@ -136,7 +136,7 @@ void main() {
         _run(w, 60);
         expect(_position(w, box).z, closeTo(1, 0.1));
 
-        final wall = _box(w, Vector3(10, 0, 0), type: BodyType3D.static);
+        final wall = _box(w, Vector3(10, 0, 0), type: Body3DType.static);
         w.setLinearVelocity(wall, Vector3(5, 0, 0));
         w.addForce(wall, Vector3(1e6, 0, 0));
         w.moveKinematic(wall, Vector3(20, 0, 0), Quaternion.identity(), _dt);
@@ -153,7 +153,7 @@ void main() {
         final pusher = _box(
           w,
           Vector3(-2, -0.5, 0),
-          type: BodyType3D.kinematic,
+          type: Body3DType.kinematic,
         );
         final crate = _box(w, Vector3(0, -0.5, 0));
         for (var i = 1; i <= 60; i++) {
@@ -194,17 +194,17 @@ void main() {
       () {
         final w = _world();
         // Two triangles: a 10 m square at y = 0, facing up (−Y).
-        final mesh = MeshShape3D(
+        final mesh = Mesh3DShape(
           Float32List.fromList([-5, 0, -5, 5, 0, -5, 5, 0, 5, -5, 0, 5]),
           Uint32List.fromList([0, 1, 2, 0, 2, 3]),
         );
         expect(
-          w.createBody(mesh, BodySettings3D(type: BodyType3D.static)),
+          w.createBody(mesh, Body3DSettings(type: Body3DType.static)),
           isNot(0),
         );
         final ball = w.createBody(
-          const SphereShape3D(0.5),
-          BodySettings3D(position: Vector3(0, -2, 0)),
+          const Sphere3DShape(0.5),
+          Body3DSettings(position: Vector3(0, -2, 0)),
         );
         _run(w, 120);
         expect(
@@ -213,19 +213,19 @@ void main() {
           reason: 'resting on the mesh',
         );
 
-        final field = HeightFieldShape3D(
+        final field = HeightField3DShape(
           Float32List(16)..fillRange(0, 16, 1),
           4,
           2,
         );
         final ground = w.createBody(
           field,
-          BodySettings3D(position: Vector3(20, 0, 0), type: BodyType3D.static),
+          Body3DSettings(position: Vector3(20, 0, 0), type: Body3DType.static),
         );
         expect(ground, isNot(0));
         final rock = w.createBody(
-          const SphereShape3D(0.5),
-          BodySettings3D(position: Vector3(23, -4, 3)),
+          const Sphere3DShape(0.5),
+          Body3DSettings(position: Vector3(23, -4, 3)),
         );
         _run(w, 120);
         expect(
@@ -235,26 +235,26 @@ void main() {
         );
 
         expect(
-          w.createBody(field, BodySettings3D()), // dynamic, the default
+          w.createBody(field, Body3DSettings()), // dynamic, the default
           0,
         );
 
         // Holes: four samples in the middle of an 8 × 8 field, 2 m apart.
         final holed = Float32List(64)..fillRange(0, 64, 1);
         for (final (row, column) in [(3, 3), (3, 4), (4, 3), (4, 4)]) {
-          holed[row * 8 + column] = HeightFieldShape3D.hole;
+          holed[row * 8 + column] = HeightField3DShape.hole;
         }
         w.createBody(
-          HeightFieldShape3D(holed, 8, 2),
-          BodySettings3D(position: Vector3(-40, 0, 0), type: BodyType3D.static),
+          HeightField3DShape(holed, 8, 2),
+          Body3DSettings(position: Vector3(-40, 0, 0), type: Body3DType.static),
         );
         final through = w.createBody(
-          const SphereShape3D(0.3),
-          BodySettings3D(position: Vector3(-33, -4, 7)),
+          const Sphere3DShape(0.3),
+          Body3DSettings(position: Vector3(-33, -4, 7)),
         );
         final beside = w.createBody(
-          const SphereShape3D(0.3),
-          BodySettings3D(position: Vector3(-38, -4, 1)),
+          const Sphere3DShape(0.3),
+          Body3DSettings(position: Vector3(-38, -4, 1)),
         );
         _run(w, 120);
         expect(_position(w, through).y, greaterThan(2), reason: 'fell through the hole');
@@ -265,14 +265,14 @@ void main() {
         final big = Float32List(129 * 129)..fillRange(0, 129 * 129, 2);
         expect(
           w.createBody(
-            HeightFieldShape3D(big, 129, 0.5),
-            BodySettings3D(position: Vector3(0, 0, 40), type: BodyType3D.static),
+            HeightField3DShape(big, 129, 0.5),
+            Body3DSettings(position: Vector3(0, 0, 40), type: Body3DType.static),
           ),
           isNot(0),
         );
         final pebble = w.createBody(
-          const SphereShape3D(0.3),
-          BodySettings3D(position: Vector3(50, -6, 90)),
+          const Sphere3DShape(0.3),
+          Body3DSettings(position: Vector3(50, -6, 90)),
         );
         _run(w, 120);
         expect(_position(w, pebble).y, closeTo(-2.3, 0.05), reason: 'on the far side of it too');
@@ -288,12 +288,12 @@ void main() {
             for (final z in [-0.5, 0.5]) ...[x, y, z],
       ]);
       final hull = w.createBody(
-        ConvexHullShape3D(cube),
-        BodySettings3D(position: Vector3(0, -2, 0)),
+        ConvexHull3DShape(cube),
+        Body3DSettings(position: Vector3(0, -2, 0)),
       );
       final shifted = w.createBody(
-        const TransformedShape3D(BoxShape3D(0.5, 0.5, 0.5), y: -1),
-        BodySettings3D(position: Vector3(4, -3, 0), lockRotation: true),
+        const Transformed3DShape(Box3DShape(0.5, 0.5, 0.5), y: -1),
+        Body3DSettings(position: Vector3(4, -3, 0), lockRotation: true),
       );
       _run(w, 180);
       expect(_position(w, hull).y, closeTo(-0.5, 0.05));
@@ -350,13 +350,13 @@ void main() {
       final w = _world();
       final floor = _floor(w);
       final box = _box(w, Vector3(0, -2, 0));
-      final events = <PhysicsEvent3D>[];
+      final events = <Physics3DEvent>[];
       for (var i = 0; i < 90; i++) {
         w.step(_dt);
         events.addAll(w.drainEvents());
       }
       final begins = events
-          .where((e) => e.type == PhysicsEventType3D.contactBegin)
+          .where((e) => e.type == Physics3DEventType.contactBegin)
           .toList();
       expect(begins, hasLength(1));
       expect({begins.single.bodyA, begins.single.bodyB}, {box, floor});
@@ -368,7 +368,7 @@ void main() {
         events.addAll(w.drainEvents());
       }
       expect(
-        events.where((e) => e.type == PhysicsEventType3D.contactEnd),
+        events.where((e) => e.type == Physics3DEventType.contactEnd),
         hasLength(1),
       );
     });
@@ -379,14 +379,14 @@ void main() {
         final w = _world();
         final floor = _floor(w);
         final box = _box(w, Vector3(0, -1, 0));
-        final types = <PhysicsEventType3D>[];
+        final types = <Physics3DEventType>[];
         for (var i = 0; i < 600; i++) {
           w.step(_dt);
           types.addAll(w.drainEvents().map((e) => e.type));
         }
         expect(w.isAwake(box), isFalse, reason: 'asleep by now');
         expect(types, [
-          PhysicsEventType3D.contactBegin,
+          Physics3DEventType.contactBegin,
         ], reason: 'no end for falling asleep');
 
         // Woken where it lies: still touching, nothing new.
@@ -397,7 +397,7 @@ void main() {
         w.setLinearVelocity(box, Vector3(0, -6, 0));
         _run(w, 10);
         expect(w.drainEvents().map((e) => e.type), [
-          PhysicsEventType3D.contactEnd,
+          Physics3DEventType.contactEnd,
         ]);
 
         // A sleeping body destroyed ends its contacts too.
@@ -410,7 +410,7 @@ void main() {
         w.step(_dt);
         final ended = w
             .drainEvents()
-            .where((e) => e.type == PhysicsEventType3D.contactEnd)
+            .where((e) => e.type == Physics3DEventType.contactEnd)
             .toList();
         expect(ended, hasLength(1));
         expect({ended.single.bodyA, ended.single.bodyB}, {floor, other});
@@ -423,14 +423,14 @@ void main() {
         w,
         Vector3(0, -3, 0),
         half: 1,
-        type: BodyType3D.static,
+        type: Body3DType.static,
         sensor: true,
       );
       final ball = w.createBody(
-        const SphereShape3D(0.25),
-        BodySettings3D(position: Vector3(0, -6, 0)),
+        const Sphere3DShape(0.25),
+        Body3DSettings(position: Vector3(0, -6, 0)),
       );
-      final events = <PhysicsEvent3D>[];
+      final events = <Physics3DEvent>[];
       for (var i = 0; i < 90; i++) {
         w.step(_dt);
         events.addAll(w.drainEvents());
@@ -439,8 +439,8 @@ void main() {
       expect(
         types,
         containsAllInOrder([
-          PhysicsEventType3D.sensorBegin,
-          PhysicsEventType3D.sensorEnd,
+          Physics3DEventType.sensorBegin,
+          Physics3DEventType.sensorEnd,
         ]),
       );
       expect({events.first.bodyA, events.first.bodyB}, {zone, ball});
@@ -454,22 +454,22 @@ void main() {
       final loud = _world(stay: true, activation: true);
       _floor(loud);
       _box(loud, Vector3(0, -0.6, 0));
-      final quietTypes = <PhysicsEventType3D>{},
-          loudTypes = <PhysicsEventType3D>{};
+      final quietTypes = <Physics3DEventType>{},
+          loudTypes = <Physics3DEventType>{};
       for (var i = 0; i < 600; i++) {
         quiet.step(_dt);
         loud.step(_dt);
         quietTypes.addAll(quiet.drainEvents().map((e) => e.type));
         loudTypes.addAll(loud.drainEvents().map((e) => e.type));
       }
-      expect(quietTypes, {PhysicsEventType3D.contactBegin});
+      expect(quietTypes, {Physics3DEventType.contactBegin});
       expect(
         loudTypes,
         containsAll([
-          PhysicsEventType3D.contactBegin,
-          PhysicsEventType3D.contactStay,
-          PhysicsEventType3D.bodyActivated,
-          PhysicsEventType3D.bodyDeactivated,
+          Physics3DEventType.contactBegin,
+          Physics3DEventType.contactStay,
+          Physics3DEventType.bodyActivated,
+          Physics3DEventType.bodyDeactivated,
         ]),
       );
     });
@@ -477,11 +477,11 @@ void main() {
     test('a thousand events in one step are all drained', () {
       final w = _world(gravity: Vector3.zero(), stay: true);
       // 40 boxes overlapping a sensor plate, and each other in pairs.
-      _box(w, Vector3.zero(), half: 30, type: BodyType3D.static, sensor: true);
+      _box(w, Vector3.zero(), half: 30, type: Body3DType.static, sensor: true);
       for (var i = 0; i < 1100; i++) {
         w.createBody(
-          const SphereShape3D(0.1),
-          BodySettings3D(
+          const Sphere3DShape(0.1),
+          Body3DSettings(
             position: Vector3((i % 40) * 1.0 - 20, 0, (i ~/ 40) * 1.0 - 14),
           ),
         );
@@ -489,7 +489,7 @@ void main() {
       w.step(_dt);
       final events = w.drainEvents();
       expect(
-        events.where((e) => e.type == PhysicsEventType3D.sensorBegin),
+        events.where((e) => e.type == Physics3DEventType.sensorBegin),
         hasLength(1100),
       );
     });
@@ -501,11 +501,11 @@ void main() {
       () {
         final w = _world();
         final floor = _floor(w, layer: 1);
-        final crate = _box(w, Vector3.zero(), type: BodyType3D.static);
+        final crate = _box(w, Vector3.zero(), type: Body3DType.static);
         final zone = _box(
           w,
           Vector3(0, -3, 0),
-          type: BodyType3D.static,
+          type: Body3DType.static,
           sensor: true,
         );
         final origin = Vector3(0, -10, 0), down = Vector3(0, 20, 0);
@@ -525,14 +525,14 @@ void main() {
 
         expect(
           w
-              .raycast(origin, down, filter: const QueryFilter3D(layerMask: 2))
+              .raycast(origin, down, filter: const Query3DFilter(layerMask: 2))
               .single
               .body,
           floor,
         );
         expect(
           w
-              .raycast(origin, down, filter: QueryFilter3D(ignoreBody: crate))
+              .raycast(origin, down, filter: Query3DFilter(ignoreBody: crate))
               .single
               .body,
           floor,
@@ -542,7 +542,7 @@ void main() {
               .raycast(
                 origin,
                 down,
-                filter: const QueryFilter3D(includeSensors: true),
+                filter: const Query3DFilter(includeSensors: true),
               )
               .single
               .body,
@@ -557,9 +557,9 @@ void main() {
       () {
         final w = _world();
         final floor = _floor(w);
-        final crate = _box(w, Vector3(0, -0.5, 0), type: BodyType3D.static);
+        final crate = _box(w, Vector3(0, -0.5, 0), type: Body3DType.static);
         final hit = w.shapeCast(
-          const SphereShape3D(0.5),
+          const Sphere3DShape(0.5),
           Vector3(0, -10, 0),
           Quaternion.identity(),
           Vector3(0, 20, 0),
@@ -573,14 +573,14 @@ void main() {
         expect(hit.single.normal.y, closeTo(-1, 0.01));
 
         final touching = w.overlap(
-          const BoxShape3D(2, 0.1, 2),
+          const Box3DShape(2, 0.1, 2),
           Vector3(0, -0.05, 0),
           Quaternion.identity(),
         );
         expect(touching.map((h) => h.body).toSet(), {floor, crate});
         expect(
           w.overlap(
-            const SphereShape3D(0.2),
+            const Sphere3DShape(0.2),
             Vector3(5, -5, 5),
             Quaternion.identity(),
           ),
@@ -596,14 +596,14 @@ void main() {
       () {
         final w = _world(gravity: Vector3.zero());
         final door = w.createBody(
-          const BoxShape3D(0.5, 1, 0.05),
-          BodySettings3D(position: Vector3(0.5, 0, 0)),
+          const Box3DShape(0.5, 1, 0.05),
+          Body3DSettings(position: Vector3(0.5, 0, 0)),
         );
         final hinge = w.createJoint(
           door,
           0,
-          JointSettings3D(
-            kind: JointKind3D.hinge,
+          Joint3DSettings(
+            kind: Joint3DKind.hinge,
             pointA: Vector3.zero(),
             axis: Vector3(0, 1, 0),
             normal: Vector3(1, 0, 0),
@@ -635,17 +635,17 @@ void main() {
       () {
         final w = _world(gravity: Vector3.zero());
         final wheel = w.createBody(
-          const CylinderShape3D(0.1, 0.5),
-          BodySettings3D(position: Vector3.zero()),
+          const Cylinder3DShape(0.1, 0.5),
+          Body3DSettings(position: Vector3.zero()),
         );
         final axle = w.createJoint(
           wheel,
           0,
-          JointSettings3D(
-            kind: JointKind3D.hinge,
+          Joint3DSettings(
+            kind: Joint3DKind.hinge,
             axis: Vector3(0, 1, 0),
             normal: Vector3(1, 0, 0),
-            motorState: MotorState3D.velocity,
+            motorState: Motor3DState.velocity,
             motorTarget: 1,
           ),
         );
@@ -653,14 +653,14 @@ void main() {
         final rail = w.createJoint(
           cart,
           0,
-          JointSettings3D(
-            kind: JointKind3D.slider,
+          Joint3DSettings(
+            kind: Joint3DKind.slider,
             pointA: Vector3(0, 0, 5),
             axis: Vector3(1, 0, 0),
             normal: Vector3(0, 1, 0),
           ),
         );
-        w.setJointMotor(rail, MotorState3D.position, 2);
+        w.setJointMotor(rail, Motor3DState.position, 2);
         _run(w, 120);
         expect(
           w.jointValue(axle).abs(),
@@ -682,14 +682,14 @@ void main() {
       () {
         final w = _world();
         final bob = w.createBody(
-          const SphereShape3D(0.2),
-          BodySettings3D(position: Vector3(2, -5, 0)),
+          const Sphere3DShape(0.2),
+          Body3DSettings(position: Vector3(2, -5, 0)),
         );
         w.createJoint(
           bob,
           0,
-          JointSettings3D(
-            kind: JointKind3D.distance,
+          Joint3DSettings(
+            kind: Joint3DKind.distance,
             pointA: Vector3(2, -5, 0),
             pointB: Vector3(0, -5, 0),
             hasLimits: true,
@@ -701,28 +701,28 @@ void main() {
         w.createJoint(
           a,
           b,
-          JointSettings3D(
-            kind: JointKind3D.fixed,
+          Joint3DSettings(
+            kind: Joint3DKind.fixed,
             pointA: Vector3(10.5, -5, 0),
           ),
         );
         w.createJoint(
           a,
           0,
-          JointSettings3D(kind: JointKind3D.point, pointA: Vector3(10, -6, 0)),
+          Joint3DSettings(kind: Joint3DKind.point, pointA: Vector3(10, -6, 0)),
         );
         final slider = _box(w, Vector3(20, -5, 0));
         w.createJoint(
           slider,
           0,
-          JointSettings3D(
-            kind: JointKind3D.sixDof,
+          Joint3DSettings(
+            kind: Joint3DKind.sixDof,
             pointA: Vector3(20, -5, 0),
             axis: Vector3(1, 0, 0),
             normal: Vector3(0, 1, 0),
             sixDofModes: [
-              SixDofAxisMode3D.free,
-              ...List.filled(5, SixDofAxisMode3D.fixed),
+              SixDofAxis3DMode.free,
+              ...List.filled(5, SixDofAxis3DMode.fixed),
             ],
           ),
         );
@@ -749,13 +749,13 @@ void main() {
       final j = w.createJoint(
         a,
         b,
-        JointSettings3D(kind: JointKind3D.fixed, pointA: Vector3(1, 0, 0)),
+        Joint3DSettings(kind: Joint3DKind.fixed, pointA: Vector3(1, 0, 0)),
       );
       expect(w.isJoint(j), isTrue);
       w.destroyBody(b);
       expect(w.isJoint(j), isFalse);
       expect(
-        w.createJoint(a, b, JointSettings3D(kind: JointKind3D.fixed)),
+        w.createJoint(a, b, Joint3DSettings(kind: Joint3DKind.fixed)),
         0,
         reason: 'a dead body',
       );
@@ -763,7 +763,7 @@ void main() {
   });
 
   test('a disposed world answers everything with nothing', () {
-    final w = _backend.createWorld(PhysicsWorldSettings3D());
+    final w = _backend.createWorld(Physics3DWorldSettings());
     final box = _box(w, Vector3.zero());
     w.dispose();
     w.dispose();
@@ -773,7 +773,7 @@ void main() {
     w.step(_dt);
     expect(w.drainEvents(), isEmpty);
     expect(w.raycast(Vector3.zero(), Vector3(0, 1, 0)), isEmpty);
-    expect(w.createBody(const SphereShape3D(1), BodySettings3D()), 0);
+    expect(w.createBody(const Sphere3DShape(1), Body3DSettings()), 0);
   });
 
   test('debug lines need the dev flavour', () {

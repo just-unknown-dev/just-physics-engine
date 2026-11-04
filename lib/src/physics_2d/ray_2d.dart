@@ -1,11 +1,11 @@
-/// Ray — a 2-D ray descriptor with origin, normalised direction, and max distance.
+/// Ray2D — a 2-D ray descriptor with origin, normalised direction, and max distance.
 library;
 
 import 'package:flutter/material.dart' show Offset;
 
 /// A ray in 2-D world space with an origin, normalised direction, and maximum
 /// travel distance.
-class Ray {
+class Ray2D {
   /// Starting point in world space.
   final Offset origin;
 
@@ -19,7 +19,7 @@ class Ray {
   ///
   /// [direction] is normalised automatically; passing [Offset.zero] falls back
   /// to the positive-x axis so no division-by-zero can occur.
-  Ray({
+  Ray2D({
     required this.origin,
     required Offset direction,
     this.maxDistance = 2000.0,
@@ -28,9 +28,9 @@ class Ray {
   /// Convenience constructor — builds a ray from [from] aimed at [to].
   ///
   /// If [maxDistance] is omitted the distance between the two points is used.
-  factory Ray.fromPoints(Offset from, Offset to, {double? maxDistance}) {
+  factory Ray2D.fromPoints(Offset from, Offset to, {double? maxDistance}) {
     final delta = to - from;
-    return Ray(
+    return Ray2D(
       origin: from,
       direction: delta,
       maxDistance: maxDistance ?? delta.distance,

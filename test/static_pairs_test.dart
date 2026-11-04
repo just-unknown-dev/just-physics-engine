@@ -11,17 +11,17 @@ import 'package:just_dart/just_dart.dart';
 import 'package:just_physics_engine/just_physics_engine.dart';
 
 void main() {
-  PhysicsBody staticBox(double x, double y, {bool sensor = false}) =>
-      PhysicsBody(
+  Physics2DBody staticBox(double x, double y, {bool sensor = false}) =>
+      Physics2DBody(
         position: Vector2(x, y),
-        shape: RectangleShape(32, 32),
-        bodyType: BodyType.static,
+        shape: Rectangle2DShape(32, 32),
+        bodyType: Body2DType.static,
         useGravity: false,
         isSensor: sensor,
       );
 
   test('overlapping static bodies raise no contacts and no sensor events', () {
-    final engine = PhysicsEngine.pureDart()..initialize();
+    final engine = Physics2DEngine.pureDart()..initialize();
     // A row of pieces that overlap their neighbours, plus a static sensor
     // lying across all of them.
     for (var i = 0; i < 100; i++) {
@@ -43,12 +43,12 @@ void main() {
   });
 
   test('a moving body still lands on a static one', () {
-    final engine = PhysicsEngine.pureDart()..initialize();
+    final engine = Physics2DEngine.pureDart()..initialize();
     engine.addBody(staticBox(0, 0));
     engine.addBody(staticBox(30, 0));
-    final ball = PhysicsBody(
+    final ball = Physics2DBody(
       position: Vector2(0, -40),
-      shape: CircleShape(8),
+      shape: Circle2DShape(8),
       restitution: 0,
     );
     engine.addBody(ball);

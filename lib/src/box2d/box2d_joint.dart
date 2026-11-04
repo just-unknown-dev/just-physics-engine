@@ -6,20 +6,20 @@ import 'dart:ffi';
 import 'package:ffi/ffi.dart';
 import 'package:flutter/material.dart' show Offset;
 
-import '../physics_2d/physics_engine.dart';
+import '../physics_2d/physics_2d_engine.dart';
 import 'package:just_box_2d/ffi.dart' as box2d;
 
-/// Wraps a native Box2D joint and implements [JointConstraint] as a no-op
+/// Wraps a native Box2D joint and implements [Joint2D] as a no-op
 /// (Box2D solves the constraint internally each step).
 ///
 /// Obtain instances via [Box2DPhysicsEngine.createRevoluteJoint] etc.
 /// Call [destroy] to release the native joint; after [destroy] all other
 /// method calls are silently ignored.
-class Box2DJoint extends JointConstraint {
+class Box2DJoint extends Joint2D {
   int _handle;
   bool _destroyed = false;
 
-  Box2DJoint._(super.type, this._handle);
+  Box2DJoint._(super.kind, this._handle);
 
   bool get isDestroyed => _destroyed;
 
@@ -112,12 +112,12 @@ class Box2DJoint extends JointConstraint {
 
   // ── Internal factory ──────────────────────────────────────────────────────
 
-  static Box2DJoint _wrap(JointType type, int handle) =>
-      Box2DJoint._(type, handle);
+  static Box2DJoint _wrap(Joint2DKind kind, int handle) =>
+      Box2DJoint._(kind, handle);
 }
 
 /// Native joints made from raw handles: what [Box2DPhysicsEngine]'s
-/// `create*Joint` methods use. Prefer those, which take [PhysicsBody]
+/// `create*Joint` methods use. Prefer those, which take [Physics2DBody]
 /// objects and track the joint.
 ///
 /// All methods require the native world and body handles to be valid.
@@ -135,7 +135,7 @@ extension Box2DJointFactory on Object {
       worldAnchor.dx,
       worldAnchor.dy,
     );
-    return Box2DJoint._wrap(JointType.revolute, h);
+    return Box2DJoint._wrap(Joint2DKind.revolute, h);
   }
 
   static Box2DJoint createPrismatic(
@@ -154,7 +154,7 @@ extension Box2DJointFactory on Object {
       axis.dx,
       axis.dy,
     );
-    return Box2DJoint._wrap(JointType.prismatic, h);
+    return Box2DJoint._wrap(Joint2DKind.prismatic, h);
   }
 
   static Box2DJoint createDistance(
@@ -171,7 +171,7 @@ extension Box2DJointFactory on Object {
       minLen,
       maxLen,
     );
-    return Box2DJoint._wrap(JointType.distance, h);
+    return Box2DJoint._wrap(Joint2DKind.distance, h);
   }
 
   static Box2DJoint createWeld(
@@ -187,7 +187,7 @@ extension Box2DJointFactory on Object {
       worldAnchor.dx,
       worldAnchor.dy,
     );
-    return Box2DJoint._wrap(JointType.weld, h);
+    return Box2DJoint._wrap(Joint2DKind.weld, h);
   }
 
   static Box2DJoint createWheel(
@@ -206,6 +206,6 @@ extension Box2DJointFactory on Object {
       axis.dx,
       axis.dy,
     );
-    return Box2DJoint._wrap(JointType.wheel, h);
+    return Box2DJoint._wrap(Joint2DKind.wheel, h);
   }
 }

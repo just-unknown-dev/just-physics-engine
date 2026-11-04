@@ -6,20 +6,20 @@ import 'package:just_dart/just_dart.dart';
 import 'package:just_physics_engine/just_physics_engine.dart';
 
 void main() {
-  // ── PhysicsEngine lifecycle ──────────────────────────────────────────────
+  // ── Physics2DEngine lifecycle ──────────────────────────────────────────────
 
-  group('PhysicsEngine lifecycle', () {
+  group('Physics2DEngine lifecycle', () {
     test('initialize and dispose without error', () {
-      final engine = PhysicsEngine();
+      final engine = Physics2DEngine();
       engine.initialize();
       engine.dispose();
     });
 
     test('addBody and removeBody', () {
-      final engine = PhysicsEngine()..initialize();
-      final body = PhysicsBody(
+      final engine = Physics2DEngine()..initialize();
+      final body = Physics2DBody(
         position: Vector2(0, 0),
-        shape: CircleShape(10.0),
+        shape: Circle2DShape(10.0),
       );
       engine.addBody(body);
       expect(engine.bodies.length, 1);
@@ -29,10 +29,10 @@ void main() {
     });
 
     test('addBody is idempotent — duplicate add is ignored', () {
-      final engine = PhysicsEngine()..initialize();
-      final body = PhysicsBody(
+      final engine = Physics2DEngine()..initialize();
+      final body = Physics2DBody(
         position: Vector2(0, 0),
-        shape: CircleShape(5.0),
+        shape: Circle2DShape(5.0),
       );
       engine.addBody(body);
       engine.addBody(body);
@@ -41,17 +41,17 @@ void main() {
     });
 
     test('removeBody on unregistered body does not throw', () {
-      final engine = PhysicsEngine()..initialize();
-      final body = PhysicsBody(
+      final engine = Physics2DEngine()..initialize();
+      final body = Physics2DBody(
         position: Vector2(0, 0),
-        shape: CircleShape(5.0),
+        shape: Circle2DShape(5.0),
       );
       expect(() => engine.removeBody(body), returnsNormally);
       engine.dispose();
     });
 
     test('stats map contains expected keys after update', () {
-      final engine = PhysicsEngine()..initialize();
+      final engine = Physics2DEngine()..initialize();
       engine.update(0.016);
       final s = engine.stats;
       // These keys are guaranteed by both the pure-Dart and Box2D backends.
@@ -65,26 +65,26 @@ void main() {
     });
   });
 
-  // ── PhysicsEngine gravity & integration ───────────────────────────────────
+  // ── Physics2DEngine gravity & integration ───────────────────────────────────
 
-  group('PhysicsEngine gravity & integration', () {
+  group('Physics2DEngine gravity & integration', () {
     test('default gravity is 981 units/s²', () {
-      final engine = PhysicsEngine();
+      final engine = Physics2DEngine();
       expect(engine.gravity.y, closeTo(981.0, 1e-6));
     });
 
     test('setGravity updates gravity vector', () {
-      final engine = PhysicsEngine();
+      final engine = Physics2DEngine();
       engine.setGravity(0, 500);
       expect(engine.gravity.x, closeTo(0, 1e-6));
       expect(engine.gravity.y, closeTo(500, 1e-6));
     });
 
     test('body falls under gravity over one second', () {
-      final engine = PhysicsEngine()..initialize();
-      final body = PhysicsBody(
+      final engine = Physics2DEngine()..initialize();
+      final body = Physics2DBody(
         position: Vector2(0, 0),
-        shape: CircleShape(5.0),
+        shape: Circle2DShape(5.0),
         drag: 0.0,
         sleepVelocityThreshold: 0.0,
       );
@@ -105,10 +105,10 @@ void main() {
     });
 
     test('static body (mass=0) does not move under gravity', () {
-      final engine = PhysicsEngine()..initialize();
-      final body = PhysicsBody(
+      final engine = Physics2DEngine()..initialize();
+      final body = Physics2DBody(
         position: Vector2(100, 200),
-        shape: CircleShape(10.0),
+        shape: Circle2DShape(10.0),
         mass: 0.0,
       );
       engine.addBody(body);
@@ -119,10 +119,10 @@ void main() {
     });
 
     test('useGravity=false body is unaffected by world gravity', () {
-      final engine = PhysicsEngine()..initialize();
-      final body = PhysicsBody(
+      final engine = Physics2DEngine()..initialize();
+      final body = Physics2DBody(
         position: Vector2(0, 0),
-        shape: CircleShape(5.0),
+        shape: Circle2DShape(5.0),
         useGravity: false,
         drag: 0.0,
       );
@@ -133,10 +133,10 @@ void main() {
     });
 
     test('applied force accelerates body', () {
-      final engine = PhysicsEngine()..initialize();
-      final body = PhysicsBody(
+      final engine = Physics2DEngine()..initialize();
+      final body = Physics2DBody(
         position: Vector2(0, 0),
-        shape: CircleShape(5.0),
+        shape: Circle2DShape(5.0),
         useGravity: false,
         drag: 0.0,
         sleepVelocityThreshold: 0.0,
@@ -165,10 +165,10 @@ void main() {
 
   group('Sleep system', () {
     test('body below sleep threshold eventually sleeps', () {
-      final engine = PhysicsEngine()..initialize();
-      final body = PhysicsBody(
+      final engine = Physics2DEngine()..initialize();
+      final body = Physics2DBody(
         position: Vector2(0, 0),
-        shape: CircleShape(5.0),
+        shape: Circle2DShape(5.0),
         useGravity: false,
         drag: 0.0,
         sleepVelocityThreshold: 100.0,
@@ -188,19 +188,19 @@ void main() {
     });
 
     test('collision wakes a sleeping body', () {
-      final engine = PhysicsEngine()..initialize();
-      final sleeper = PhysicsBody(
+      final engine = Physics2DEngine()..initialize();
+      final sleeper = Physics2DBody(
         position: Vector2(0, 0),
-        shape: CircleShape(10.0),
+        shape: Circle2DShape(10.0),
         useGravity: false,
         drag: 0.0,
         sleepVelocityThreshold: 100.0,
         sleepTimeThreshold: 0.01,
         isAwake: false,
       );
-      final mover = PhysicsBody(
+      final mover = Physics2DBody(
         position: Vector2(30, 0),
-        shape: CircleShape(10.0),
+        shape: Circle2DShape(10.0),
         useGravity: false,
         drag: 0.0,
         velocity: Vector2(-500, 0),
@@ -223,7 +223,7 @@ void main() {
 
   group('Shape caching', () {
     test('cachePolygonShape and getCachedPolygonShape round-trip', () {
-      final engine = PhysicsEngine();
+      final engine = Physics2DEngine();
       const id = 'triangle';
       final verts = [
         const Offset(0, 0),
@@ -236,7 +236,7 @@ void main() {
     });
 
     test('getCachedPolygonShape returns null for unknown id', () {
-      final engine = PhysicsEngine();
+      final engine = Physics2DEngine();
       expect(engine.getCachedPolygonShape('missing'), isNull);
     });
   });
@@ -264,40 +264,40 @@ void main() {
     });
   });
 
-  // ── PhysicsBody ───────────────────────────────────────────────────────────
+  // ── Physics2DBody ───────────────────────────────────────────────────────────
 
-  group('PhysicsBody', () {
+  group('Physics2DBody', () {
     test('inverseMass is 1/mass for positive mass', () {
-      final body = PhysicsBody(
+      final body = Physics2DBody(
         position: Vector2.zero(),
-        shape: CircleShape(1),
+        shape: Circle2DShape(1),
         mass: 4.0,
       );
       expect(body.inverseMass, closeTo(0.25, 1e-9));
     });
 
     test('inverseMass is 0 for static body (mass=0)', () {
-      final body = PhysicsBody(
+      final body = Physics2DBody(
         position: Vector2.zero(),
-        shape: CircleShape(1),
+        shape: Circle2DShape(1),
         mass: 0.0,
       );
       expect(body.inverseMass, 0.0);
     });
 
     test('inverseInertia is 0 when inertia is 0', () {
-      final body = PhysicsBody(
+      final body = Physics2DBody(
         position: Vector2.zero(),
-        shape: CircleShape(1),
+        shape: Circle2DShape(1),
         inertia: 0.0,
       );
       expect(body.inverseInertia, 0.0);
     });
 
     test('applyForce accumulates into acceleration', () {
-      final body = PhysicsBody(
+      final body = Physics2DBody(
         position: Vector2.zero(),
-        shape: CircleShape(1),
+        shape: Circle2DShape(1),
         mass: 2.0,
       );
       body.applyForce(Vector2(10, 0));
@@ -306,9 +306,9 @@ void main() {
     });
 
     test('applyForce does nothing for static body', () {
-      final body = PhysicsBody(
+      final body = Physics2DBody(
         position: Vector2.zero(),
-        shape: CircleShape(1),
+        shape: Circle2DShape(1),
         mass: 0.0,
       );
       body.applyForce(Vector2(999, 999));
@@ -317,16 +317,19 @@ void main() {
     });
 
     test('applyImpulse changes velocity directly', () {
-      final body = PhysicsBody(position: Vector2.zero(), shape: CircleShape(1));
+      final body = Physics2DBody(
+        position: Vector2.zero(),
+        shape: Circle2DShape(1),
+      );
       body.applyImpulse(Vector2(5, -3));
       expect(body.velocity.x, closeTo(5.0, 1e-9));
       expect(body.velocity.y, closeTo(-3.0, 1e-9));
     });
 
     test('applyTorque accumulates', () {
-      final body = PhysicsBody(
+      final body = Physics2DBody(
         position: Vector2.zero(),
-        shape: CircleShape(1),
+        shape: Circle2DShape(1),
         inertia: 2.0,
       );
       body.applyTorque(10.0);
@@ -334,43 +337,13 @@ void main() {
     });
 
     test('applyTorque does nothing when inertia is 0', () {
-      final body = PhysicsBody(
+      final body = Physics2DBody(
         position: Vector2.zero(),
-        shape: CircleShape(1),
+        shape: Circle2DShape(1),
         inertia: 0.0,
       );
       body.applyTorque(999.0);
       expect(body.torque, 0.0);
-    });
-  });
-
-  // ── RigidBody ─────────────────────────────────────────────────────────────
-
-  group('RigidBody', () {
-    test('integrate applies force → velocity → position', () {
-      final rb = RigidBody();
-      rb.applyForce(10, 0);
-      rb.integrate(1.0);
-      expect(rb.velocity.x, closeTo(10.0, 1e-9));
-      expect(rb.position.x, closeTo(10.0, 1e-9));
-    });
-
-    test('integrate resets force after each step', () {
-      final rb = RigidBody();
-      rb.applyForce(10, 0);
-      rb.integrate(1.0);
-      rb.integrate(1.0);
-      // Second step: no new force, velocity stays at 10, position += 10
-      expect(rb.velocity.x, closeTo(10.0, 1e-9));
-      expect(rb.position.x, closeTo(20.0, 1e-9));
-    });
-
-    test('integrate does nothing for zero mass', () {
-      final rb = RigidBody()..mass = 0.0;
-      rb.applyForce(1000, 1000);
-      rb.integrate(1.0);
-      expect(rb.velocity.x, 0.0);
-      expect(rb.position.x, 0.0);
     });
   });
 
@@ -392,9 +365,9 @@ void main() {
       'applyGravity adds gravity to active awake bodies with useGravity',
       () {
         final fm = ForceManager();
-        final body = PhysicsBody(
+        final body = Physics2DBody(
           position: Vector2.zero(),
-          shape: CircleShape(1),
+          shape: Circle2DShape(1),
         );
         fm.applyGravity([body]);
         expect(body.acceleration.y, closeTo(981.0, 1e-6));
@@ -403,9 +376,9 @@ void main() {
 
     test('applyGravity skips static bodies', () {
       final fm = ForceManager();
-      final body = PhysicsBody(
+      final body = Physics2DBody(
         position: Vector2.zero(),
-        shape: CircleShape(1),
+        shape: Circle2DShape(1),
         mass: 0.0,
       );
       fm.applyGravity([body]);
@@ -414,9 +387,9 @@ void main() {
 
     test('applyGravity skips bodies with useGravity=false', () {
       final fm = ForceManager();
-      final body = PhysicsBody(
+      final body = Physics2DBody(
         position: Vector2.zero(),
-        shape: CircleShape(1),
+        shape: Circle2DShape(1),
         useGravity: false,
       );
       fm.applyGravity([body]);
@@ -424,12 +397,12 @@ void main() {
     });
   });
 
-  // ── CircleShape collision ─────────────────────────────────────────────────
+  // ── Circle2DShape collision ─────────────────────────────────────────────────
 
-  group('CircleShape collision', () {
+  group('Circle2DShape collision', () {
     test('overlapping circles produce a collision manifold', () {
-      final a = CircleShape(10.0);
-      final b = CircleShape(10.0);
+      final a = Circle2DShape(10.0);
+      final b = Circle2DShape(10.0);
       final m = a.getManifold(const Offset(0, 0), b, const Offset(15, 0));
       expect(m.isColliding, isTrue);
       expect(m.penetration, closeTo(5.0, 1e-6));
@@ -437,15 +410,15 @@ void main() {
     });
 
     test('separated circles return no collision', () {
-      final a = CircleShape(5.0);
-      final b = CircleShape(5.0);
+      final a = Circle2DShape(5.0);
+      final b = Circle2DShape(5.0);
       final m = a.getManifold(const Offset(0, 0), b, const Offset(20, 0));
       expect(m.isColliding, isFalse);
     });
 
     test('concentric circles use fallback normal', () {
-      final a = CircleShape(10.0);
-      final b = CircleShape(10.0);
+      final a = Circle2DShape(10.0);
+      final b = Circle2DShape(10.0);
       // distance == 0: fallback normal should be (1, 0)
       final m = a.getManifold(const Offset(0, 0), b, const Offset(0, 0));
       expect(m.isColliding, isTrue);
@@ -453,7 +426,7 @@ void main() {
     });
 
     test('getBounds returns correct AABB', () {
-      final s = CircleShape(5.0);
+      final s = Circle2DShape(5.0);
       final r = s.getBounds(const Offset(10, 20));
       expect(r.left, closeTo(5.0, 1e-9));
       expect(r.top, closeTo(15.0, 1e-9));
@@ -462,26 +435,26 @@ void main() {
     });
   });
 
-  // ── RectangleShape collision ──────────────────────────────────────────────
+  // ── Rectangle2DShape collision ──────────────────────────────────────────────
 
-  group('RectangleShape collision', () {
+  group('Rectangle2DShape collision', () {
     test('overlapping rectangles produce a collision', () {
-      final a = RectangleShape(20, 20);
-      final b = RectangleShape(20, 20);
+      final a = Rectangle2DShape(20, 20);
+      final b = Rectangle2DShape(20, 20);
       final m = a.getManifold(const Offset(0, 0), b, const Offset(15, 0));
       expect(m.isColliding, isTrue);
       expect(m.penetration, greaterThan(0));
     });
 
     test('separated rectangles return no collision', () {
-      final a = RectangleShape(10, 10);
-      final b = RectangleShape(10, 10);
+      final a = Rectangle2DShape(10, 10);
+      final b = Rectangle2DShape(10, 10);
       final m = a.getManifold(const Offset(0, 0), b, const Offset(30, 0));
       expect(m.isColliding, isFalse);
     });
 
     test('getBounds returns correct AABB', () {
-      final s = RectangleShape(20, 10);
+      final s = Rectangle2DShape(20, 10);
       final r = s.getBounds(const Offset(50, 50));
       expect(r.left, closeTo(40, 1e-9));
       expect(r.top, closeTo(45, 1e-9));
@@ -490,10 +463,10 @@ void main() {
     });
   });
 
-  // ── PolygonShape collision ────────────────────────────────────────────────
+  // ── Polygon2DShape collision ────────────────────────────────────────────────
 
-  group('PolygonShape collision', () {
-    PolygonShape makeSquare(double size) => PolygonShape([
+  group('Polygon2DShape collision', () {
+    Polygon2DShape makeSquare(double size) => Polygon2DShape([
       Offset(-size / 2, -size / 2),
       Offset(size / 2, -size / 2),
       Offset(size / 2, size / 2),
@@ -517,7 +490,7 @@ void main() {
 
     test('polygon vs circle — overlapping produces collision', () {
       final poly = makeSquare(20);
-      final circle = CircleShape(5.0);
+      final circle = Circle2DShape(5.0);
       final m = poly.getManifold(
         const Offset(0, 0),
         circle,
@@ -528,7 +501,7 @@ void main() {
 
     test('polygon vs circle — separated returns no collision', () {
       final poly = makeSquare(10);
-      final circle = CircleShape(5.0);
+      final circle = Circle2DShape(5.0);
       final m = poly.getManifold(
         const Offset(0, 0),
         circle,
@@ -547,7 +520,7 @@ void main() {
     });
 
     test('empty polygon getBounds returns Rect.zero', () {
-      final poly = PolygonShape([]);
+      final poly = Polygon2DShape([]);
       expect(poly.getBounds(const Offset(0, 0)), equals(Rect.zero));
     });
   });
@@ -565,8 +538,8 @@ void main() {
   // ── SpatialGrid ───────────────────────────────────────────────────────────
 
   group('SpatialGrid', () {
-    PhysicsBody makeBody(double x, double y, double r) =>
-        PhysicsBody(position: Vector2(x, y), shape: CircleShape(r));
+    Physics2DBody makeBody(double x, double y, double r) =>
+        Physics2DBody(position: Vector2(x, y), shape: Circle2DShape(r));
 
     test('insert and getPotentialCollisions finds nearby pair', () {
       final grid = SpatialGrid(100.0);
@@ -621,9 +594,9 @@ void main() {
 
     test('inactive body is not inserted into grid', () {
       final grid = SpatialGrid(100.0);
-      final body = PhysicsBody(
+      final body = Physics2DBody(
         position: Vector2(0, 0),
-        shape: CircleShape(10),
+        shape: Circle2DShape(10),
         isActive: false,
       );
       grid.insert(body);
@@ -647,8 +620,14 @@ void main() {
   group('CollisionDetector', () {
     test('detects overlapping bodies', () {
       final detector = CollisionDetector();
-      final a = PhysicsBody(position: Vector2(0, 0), shape: CircleShape(10));
-      final b = PhysicsBody(position: Vector2(5, 0), shape: CircleShape(10));
+      final a = Physics2DBody(
+        position: Vector2(0, 0),
+        shape: Circle2DShape(10),
+      );
+      final b = Physics2DBody(
+        position: Vector2(5, 0),
+        shape: Circle2DShape(10),
+      );
       detector.addBody(a);
       detector.addBody(b);
       final pairs = detector.detectCollisions();
@@ -657,8 +636,11 @@ void main() {
 
     test('does not report separated bodies', () {
       final detector = CollisionDetector();
-      final a = PhysicsBody(position: Vector2(0, 0), shape: CircleShape(5));
-      final b = PhysicsBody(position: Vector2(100, 0), shape: CircleShape(5));
+      final a = Physics2DBody(position: Vector2(0, 0), shape: Circle2DShape(5));
+      final b = Physics2DBody(
+        position: Vector2(100, 0),
+        shape: Circle2DShape(5),
+      );
       detector.addBody(a);
       detector.addBody(b);
       expect(detector.detectCollisions(), isEmpty);
@@ -666,8 +648,14 @@ void main() {
 
     test('removeBody stops it from being detected', () {
       final detector = CollisionDetector();
-      final a = PhysicsBody(position: Vector2(0, 0), shape: CircleShape(10));
-      final b = PhysicsBody(position: Vector2(5, 0), shape: CircleShape(10));
+      final a = Physics2DBody(
+        position: Vector2(0, 0),
+        shape: Circle2DShape(10),
+      );
+      final b = Physics2DBody(
+        position: Vector2(5, 0),
+        shape: Circle2DShape(10),
+      );
       detector.addBody(a);
       detector.addBody(b);
       detector.removeBody(b);
@@ -676,10 +664,13 @@ void main() {
 
     test('inactive body is not included in pairs', () {
       final detector = CollisionDetector();
-      final a = PhysicsBody(position: Vector2(0, 0), shape: CircleShape(10));
-      final b = PhysicsBody(
+      final a = Physics2DBody(
+        position: Vector2(0, 0),
+        shape: Circle2DShape(10),
+      );
+      final b = Physics2DBody(
         position: Vector2(5, 0),
-        shape: CircleShape(10),
+        shape: Circle2DShape(10),
         isActive: false,
       );
       detector.addBody(a);
@@ -688,11 +679,11 @@ void main() {
     });
   });
 
-  // ── Ray ───────────────────────────────────────────────────────────────────
+  // ── Ray2D ───────────────────────────────────────────────────────────────────
 
-  group('Ray', () {
+  group('Ray2D', () {
     test('direction is normalised on construction', () {
-      final ray = Ray(
+      final ray = Ray2D(
         origin: const Offset(0, 0),
         direction: const Offset(3, 4),
       );
@@ -704,12 +695,12 @@ void main() {
     });
 
     test('zero direction falls back to positive-x axis', () {
-      final ray = Ray(origin: const Offset(0, 0), direction: Offset.zero);
+      final ray = Ray2D(origin: const Offset(0, 0), direction: Offset.zero);
       expect(ray.direction, const Offset(1, 0));
     });
 
     test('at(t) returns correct world-space point', () {
-      final ray = Ray(
+      final ray = Ray2D(
         origin: const Offset(1, 2),
         direction: const Offset(1, 0),
       );
@@ -719,14 +710,14 @@ void main() {
     });
 
     test('fromPoints builds ray toward target', () {
-      final ray = Ray.fromPoints(const Offset(0, 0), const Offset(10, 0));
+      final ray = Ray2D.fromPoints(const Offset(0, 0), const Offset(10, 0));
       expect(ray.direction.dx, closeTo(1.0, 1e-9));
       expect(ray.direction.dy, closeTo(0.0, 1e-9));
       expect(ray.maxDistance, closeTo(10.0, 1e-9));
     });
 
     test('fromPoints with explicit maxDistance overrides distance', () {
-      final ray = Ray.fromPoints(
+      final ray = Ray2D.fromPoints(
         const Offset(0, 0),
         const Offset(10, 0),
         maxDistance: 999.0,
@@ -739,14 +730,26 @@ void main() {
 
   group('BodyPair', () {
     test('(a,b) equals (b,a)', () {
-      final a = PhysicsBody(position: Vector2.zero(), shape: CircleShape(1));
-      final b = PhysicsBody(position: Vector2.zero(), shape: CircleShape(1));
+      final a = Physics2DBody(
+        position: Vector2.zero(),
+        shape: Circle2DShape(1),
+      );
+      final b = Physics2DBody(
+        position: Vector2.zero(),
+        shape: Circle2DShape(1),
+      );
       expect(BodyPair(a, b), equals(BodyPair(b, a)));
     });
 
     test('hashCode is symmetric', () {
-      final a = PhysicsBody(position: Vector2.zero(), shape: CircleShape(1));
-      final b = PhysicsBody(position: Vector2.zero(), shape: CircleShape(1));
+      final a = Physics2DBody(
+        position: Vector2.zero(),
+        shape: Circle2DShape(1),
+      );
+      final b = Physics2DBody(
+        position: Vector2.zero(),
+        shape: Circle2DShape(1),
+      );
       expect(BodyPair(a, b).hashCode, equals(BodyPair(b, a).hashCode));
     });
   });
@@ -755,19 +758,19 @@ void main() {
 
   group('Collision resolution', () {
     test('two circles bouncing apart separate after resolution', () {
-      final engine = PhysicsEngine()..initialize();
+      final engine = Physics2DEngine()..initialize();
       engine.setGravity(0, 0);
-      final a = PhysicsBody(
+      final a = Physics2DBody(
         position: Vector2(0, 0),
-        shape: CircleShape(10),
+        shape: Circle2DShape(10),
         drag: 0.0,
         velocity: Vector2(100, 0),
         useGravity: false,
         sleepVelocityThreshold: 0.0,
       );
-      final b = PhysicsBody(
+      final b = Physics2DBody(
         position: Vector2(18, 0),
-        shape: CircleShape(10),
+        shape: Circle2DShape(10),
         drag: 0.0,
         useGravity: false,
         sleepVelocityThreshold: 0.0,
@@ -787,18 +790,19 @@ void main() {
 
   // ── Joint constraints ─────────────────────────────────────────────────────
 
-  PhysicsEngine dartEngine() => PhysicsEngine.pureDart()..initialize();
+  Physics2DEngine dartEngine() => Physics2DEngine.pureDart()..initialize();
 
-  PhysicsBody makeBody(double x, double y, {double mass = 1.0}) => PhysicsBody(
-    position: Vector2(x, y),
-    shape: CircleShape(10),
-    mass: mass,
-    useGravity: false,
-    drag: 0.0,
-    sleepVelocityThreshold: 0.0,
-  );
+  Physics2DBody makeBody(double x, double y, {double mass = 1.0}) =>
+      Physics2DBody(
+        position: Vector2(x, y),
+        shape: Circle2DShape(10),
+        mass: mass,
+        useGravity: false,
+        drag: 0.0,
+        sleepVelocityThreshold: 0.0,
+      );
 
-  group('DistanceJoint', () {
+  group('DistanceJoint2D', () {
     test('rigid distance is maintained', () {
       final engine = dartEngine();
       final a = makeBody(0, 0);
@@ -836,7 +840,7 @@ void main() {
     });
   });
 
-  group('WeldJoint', () {
+  group('WeldJoint2D', () {
     test('bodies remain at fixed relative offset', () {
       final engine = dartEngine();
       final a = makeBody(0, 0);
@@ -859,7 +863,7 @@ void main() {
     });
   });
 
-  group('RevoluteJoint', () {
+  group('RevoluteJoint2D', () {
     test('anchor points on both bodies converge', () {
       final engine = dartEngine();
       final a = makeBody(0, 0)..mass = 0; // static pivot
@@ -887,7 +891,7 @@ void main() {
       engine.addBody(a);
       engine.addBody(b);
       final j =
-          engine.addRevoluteJoint(a, b, const Offset(0, 0)) as RevoluteJoint;
+          engine.addRevoluteJoint(a, b, const Offset(0, 0)) as RevoluteJoint2D;
       j.motorEnabled = true;
       j.motorSpeed = 5.0;
       // maxMotorTorque * inverseInertia * dt must be < motorSpeed to avoid
@@ -902,12 +906,12 @@ void main() {
     });
   });
 
-  group('MouseJoint', () {
+  group('MouseJoint2D', () {
     test('body is pulled toward target', () {
       final engine = dartEngine();
       final b = makeBody(0, 0);
       engine.addBody(b);
-      final j = engine.addMouseJoint(b, Vector2(200, 0)) as MouseJoint;
+      final j = engine.addMouseJoint(b, Vector2(200, 0)) as MouseJoint2D;
       j.setTarget(200, 0);
 
       for (int i = 0; i < 20; i++) {
@@ -918,7 +922,7 @@ void main() {
     });
   });
 
-  group('PrismaticJoint', () {
+  group('PrismaticJoint2D', () {
     test('off-axis displacement goes back to where it started', () {
       final engine = dartEngine();
       final a = makeBody(0, 0)..mass = 0;
@@ -944,7 +948,8 @@ void main() {
       engine.addBody(a);
       engine.addBody(b);
       final j =
-          engine.addPrismaticJoint(a, b, const Offset(1, 0)) as PrismaticJoint;
+          engine.addPrismaticJoint(a, b, const Offset(1, 0))
+              as PrismaticJoint2D;
       j.motorEnabled = true;
       j.motorSpeed = 100;
       j.maxMotorForce = 500;

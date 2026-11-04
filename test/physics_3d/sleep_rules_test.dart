@@ -6,27 +6,27 @@ import 'package:just_physics_engine/physics_3d.dart';
 import 'package:just_physics_engine/testing.dart';
 
 void main() {
-  for (final (name, make) in <(String, PhysicsEngine3D Function())>[
+  for (final (name, make) in <(String, Physics3DEngine Function())>[
     ('jolt', PhysicsEngineFactory.create3D),
-    ('fake', FakePhysicsEngine3D.new),
+    ('fake', FakePhysics3DEngine.new),
   ]) {
     group(name, () {
-      late PhysicsEngine3D engine;
+      late Physics3DEngine engine;
       setUp(() => engine = make());
 
       /// A world with a floor, its top at y = 0, and a crate asleep on it.
-      (PhysicsWorld3D, int) crateAsleep({bool stays = false}) {
+      (Physics3DWorld, int) crateAsleep({bool stays = false}) {
         final w = engine.createWorld(
-          PhysicsWorldSettings3D(reportContactStay: stays),
+          Physics3DWorldSettings(reportContactStay: stays),
         );
         addTearDown(w.dispose);
         w.createBody(
-          const BoxShape3D(10, 0.5, 10),
-          BodySettings3D(position: Vector3(0, 0.5, 0), type: BodyType3D.static),
+          const Box3DShape(10, 0.5, 10),
+          Body3DSettings(position: Vector3(0, 0.5, 0), type: Body3DType.static),
         );
         final crate = w.createBody(
-          const BoxShape3D(0.5, 0.5, 0.5),
-          BodySettings3D(position: Vector3(0, -0.6, 0)),
+          const Box3DShape(0.5, 0.5, 0.5),
+          Body3DSettings(position: Vector3(0, -0.6, 0)),
         );
         for (var i = 0; i < 600; i++) {
           w.step(1 / 60);
@@ -38,10 +38,10 @@ void main() {
       test('a moving kinematic sensor wakes nothing it passes', () {
         final (w, crate) = crateAsleep();
         final sensor = w.createBody(
-          const BoxShape3D(1, 1, 1),
-          BodySettings3D(
+          const Box3DShape(1, 1, 1),
+          Body3DSettings(
             position: Vector3(-4, -0.6, 0),
-            type: BodyType3D.kinematic,
+            type: Body3DType.kinematic,
             isSensor: true,
           ),
         );
@@ -60,7 +60,7 @@ void main() {
         }
         expect(
           w.drainEvents().where(
-            (e) => e.type == PhysicsEventType3D.contactStay,
+            (e) => e.type == Physics3DEventType.contactStay,
           ),
           isEmpty,
         );

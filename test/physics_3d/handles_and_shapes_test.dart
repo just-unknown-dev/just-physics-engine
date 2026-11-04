@@ -10,38 +10,38 @@ import 'package:just_physics_engine/physics_3d.dart';
 import 'package:just_physics_engine/testing.dart';
 
 void main() {
-  for (final (name, make) in <(String, PhysicsEngine3D Function())>[
+  for (final (name, make) in <(String, Physics3DEngine Function())>[
     ('jolt', PhysicsEngineFactory.create3D),
-    ('fake', FakePhysicsEngine3D.new),
+    ('fake', FakePhysics3DEngine.new),
   ]) {
     group(name, () {
-      late PhysicsEngine3D engine;
+      late Physics3DEngine engine;
       setUp(() => engine = make());
 
-      PhysicsWorld3D world() {
-        final w = engine.createWorld(PhysicsWorldSettings3D());
+      Physics3DWorld world() {
+        final w = engine.createWorld(Physics3DWorldSettings());
         addTearDown(w.dispose);
         return w;
       }
 
       int box(
-        PhysicsWorld3D w, {
-        BodyType3D type = BodyType3D.dynamic,
+        Physics3DWorld w, {
+        Body3DType type = Body3DType.dynamic,
         double y = 0,
       }) => w.createBody(
-        const BoxShape3D(0.5, 0.5, 0.5),
-        BodySettings3D(position: Vector3(0, y, 0), type: type),
+        const Box3DShape(0.5, 0.5, 0.5),
+        Body3DSettings(position: Vector3(0, y, 0), type: type),
       );
 
       test("a character's body is neither destroyed nor joined alone", () {
         final w = world();
-        final c = w.createCharacter(CharacterSettings3D(), Vector3.zero());
+        final c = w.createCharacter(Character3DSettings(), Vector3.zero());
         final inner = w.characterBody(c);
         expect(inner, isNot(0));
         w.destroyBody(inner);
         expect(w.isBody(inner), isTrue);
         final crate = box(w, y: -5);
-        final joint = JointSettings3D(kind: JointKind3D.fixed);
+        final joint = Joint3DSettings(kind: Joint3DKind.fixed);
         expect(w.createJoint(inner, crate, joint), 0);
         expect(w.createJoint(crate, inner, joint), 0);
         expect(w.createJoint(crate, 0, joint), isNot(0));
@@ -54,7 +54,7 @@ void main() {
       test('handles of another world are passed over', () {
         final a = world(), b = world();
         final body = box(b);
-        final c = b.createCharacter(CharacterSettings3D(), Vector3(3, 0, 0));
+        final c = b.createCharacter(Character3DSettings(), Vector3(3, 0, 0));
         a.destroyBody(body);
         a.destroyCharacter(c);
         expect(b.isBody(body), isTrue);
@@ -65,8 +65,8 @@ void main() {
 
       test('a dead character reads as zeros, in the air', () {
         final w = world();
-        final c = w.createCharacter(CharacterSettings3D(), Vector3(1, -2, 3));
-        final out = CharacterState3D();
+        final c = w.createCharacter(Character3DSettings(), Vector3(1, -2, 3));
+        final out = Character3DState();
         w.characterState(c, out);
         expect(out.position.x, closeTo(1, 1e-5));
         w.destroyCharacter(c);
@@ -80,7 +80,7 @@ void main() {
         );
         expect(out.position.length, 0);
         expect(out.velocity.length, 0);
-        expect(out.groundState, GroundState3D.inAir);
+        expect(out.groundState, Ground3DState.inAir);
         expect(out.groundBody, 0);
         expect(out.contactCount, 0);
       });
@@ -88,28 +88,28 @@ void main() {
       test('shapes that cannot be made make no body', () {
         final w = world();
         final positions = Float32List.fromList([0, 0, 0, 1, 0, 0, 0, 0, 1]);
-        final mesh = MeshShape3D(positions, Uint32List.fromList([0, 1, 2]));
-        BodySettings3D of(BodyType3D type) => BodySettings3D(type: type);
-        expect(w.createBody(mesh, of(BodyType3D.static)), isNot(0));
-        expect(w.createBody(mesh, of(BodyType3D.kinematic)), 0);
-        expect(w.createBody(mesh, of(BodyType3D.dynamic)), 0);
-        final pastTheEnd = MeshShape3D(
+        final mesh = Mesh3DShape(positions, Uint32List.fromList([0, 1, 2]));
+        Body3DSettings of(Body3DType type) => Body3DSettings(type: type);
+        expect(w.createBody(mesh, of(Body3DType.static)), isNot(0));
+        expect(w.createBody(mesh, of(Body3DType.kinematic)), 0);
+        expect(w.createBody(mesh, of(Body3DType.dynamic)), 0);
+        final pastTheEnd = Mesh3DShape(
           positions,
           Uint32List.fromList([0, 1, 9]),
         );
         expect(pastTheEnd.isValid, isFalse);
-        expect(w.createBody(pastTheEnd, of(BodyType3D.static)), 0);
+        expect(w.createBody(pastTheEnd, of(Body3DType.static)), 0);
         for (final shape in <Shape3D>[
-          const BoxShape3D(double.nan, 1, 1),
-          const BoxShape3D(0, 1, 1),
-          const SphereShape3D(-1),
-          const CompoundShape3D([]),
-          ConvexHullShape3D(Float32List(9)),
-          const TransformedShape3D(SphereShape3D(1), qw: 0),
+          const Box3DShape(double.nan, 1, 1),
+          const Box3DShape(0, 1, 1),
+          const Sphere3DShape(-1),
+          const Compound3DShape([]),
+          ConvexHull3DShape(Float32List(9)),
+          const Transformed3DShape(Sphere3DShape(1), qw: 0),
         ]) {
           expect(shape.isValid, isFalse, reason: '$shape');
           expect(
-            w.createBody(shape, of(BodyType3D.dynamic)),
+            w.createBody(shape, of(Body3DType.dynamic)),
             0,
             reason: '$shape',
           );
@@ -133,9 +133,9 @@ void main() {
         final w = world();
         // 2 m along X, turned a quarter about Z: upright, reaching y ±1.
         final b = w.createBody(
-          const BoxShape3D(1, 0.1, 0.1),
-          BodySettings3D(
-            type: BodyType3D.static,
+          const Box3DShape(1, 0.1, 0.1),
+          Body3DSettings(
+            type: Body3DType.static,
             rotation: Quaternion(
               0,
               0,
@@ -150,7 +150,7 @@ void main() {
 
       test('a rotation of no length is read as none', () {
         final w = world();
-        final b = box(w, type: BodyType3D.static);
+        final b = box(w, type: Body3DType.static);
         w.setBodyPose(b, Vector3.zero(), Quaternion(0, 0, 0, 0));
         expect(
           w.raycast(Vector3(-5, 0, 0), Vector3(10, 0, 0)).map((h) => h.body),
@@ -161,8 +161,8 @@ void main() {
       test('bodies at rest together sleep together', () {
         final w = world();
         w.createBody(
-          const BoxShape3D(10, 0.5, 10),
-          BodySettings3D(position: Vector3(0, 0.5, 0), type: BodyType3D.static),
+          const Box3DShape(10, 0.5, 10),
+          Body3DSettings(position: Vector3(0, 0.5, 0), type: Body3DType.static),
         );
         final low = box(w, y: -0.6), high = box(w, y: -1.7);
         for (var i = 0; i < 600; i++) {
@@ -173,10 +173,10 @@ void main() {
       });
 
       test('a full world still makes a character, without its body', () {
-        final w = engine.createWorld(PhysicsWorldSettings3D(maxBodies: 1));
+        final w = engine.createWorld(Physics3DWorldSettings(maxBodies: 1));
         addTearDown(w.dispose);
         expect(box(w), isNot(0));
-        final c = w.createCharacter(CharacterSettings3D(), Vector3(3, 0, 0));
+        final c = w.createCharacter(Character3DSettings(), Vector3(3, 0, 0));
         expect(c, isNot(0));
         expect(w.characterBody(c), 0);
       });
@@ -188,7 +188,7 @@ void main() {
           w.createJoint(
             a,
             b,
-            JointSettings3D(kind: JointKind3D.hinge, sixDofMin: const []),
+            Joint3DSettings(kind: Joint3DKind.hinge, sixDofMin: const []),
           ),
           isNot(0),
         );
@@ -196,7 +196,7 @@ void main() {
           w.createJoint(
             a,
             b,
-            JointSettings3D(kind: JointKind3D.sixDof, sixDofMin: const []),
+            Joint3DSettings(kind: Joint3DKind.sixDof, sixDofMin: const []),
           ),
           0,
         );
@@ -204,22 +204,22 @@ void main() {
 
       test("a character's body is moved by its character only", () {
         final w = world();
-        final c = w.createCharacter(CharacterSettings3D(), Vector3.zero());
+        final c = w.createCharacter(Character3DSettings(), Vector3.zero());
         final inner = w.characterBody(c);
         w.setLinearVelocity(inner, Vector3(5, 0, 0));
         w.wake(inner);
         expect(w.isAwake(inner), isFalse);
         w.step(1 / 60);
-        final poses = BodyPoses3D();
+        final poses = Body3DPoses();
         w.readBodies([inner], poses);
         expect(poses.data[7], 0, reason: 'no velocity of its own');
       });
 
       test('a rotation of no length reads back as none', () {
         final w = world();
-        final b = box(w, type: BodyType3D.static);
+        final b = box(w, type: Body3DType.static);
         w.setBodyPose(b, Vector3.zero(), Quaternion(0, 0, 0, 0));
-        final poses = BodyPoses3D();
+        final poses = Body3DPoses();
         w.readBodies([b], poses);
         expect(
           [poses.data[3], poses.data[4], poses.data[5], poses.data[6]],
@@ -228,10 +228,10 @@ void main() {
       });
 
       test('poses read before dispose stay readable after it', () {
-        final w = engine.createWorld(PhysicsWorldSettings3D());
+        final w = engine.createWorld(Physics3DWorldSettings());
         final b = box(w);
         w.step(1 / 60);
-        final poses = BodyPoses3D();
+        final poses = Body3DPoses();
         w.readMovedBodies(poses);
         expect(poses.count, 1);
         expect(poses.bodies.first, b);
@@ -241,7 +241,7 @@ void main() {
       });
 
       test('destroyAll leaves the worlds it ended disposed', () {
-        final w = engine.createWorld(PhysicsWorldSettings3D());
+        final w = engine.createWorld(Physics3DWorldSettings());
         final b = box(w);
         engine.destroyAll();
         expect(w.isDisposed, isTrue);

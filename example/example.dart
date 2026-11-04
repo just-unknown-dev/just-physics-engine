@@ -5,19 +5,19 @@ import 'package:just_dart/just_dart.dart';
 import 'package:just_physics_engine/just_physics_engine.dart';
 
 void main() {
-  final engine = PhysicsEngine()..initialize();
+  final engine = Physics2DEngine()..initialize();
 
-  final floor = PhysicsBody(
+  final floor = Physics2DBody(
     position: Vector2(320, 520),
-    shape: RectangleShape(640, 40),
+    shape: Rectangle2DShape(640, 40),
     mass: 0.0, // Static body.
     restitution: 0.2,
     friction: 0.8,
   );
 
-  final ball = PhysicsBody(
+  final ball = Physics2DBody(
     position: Vector2(320, 120),
-    shape: CircleShape(20),
+    shape: Circle2DShape(20),
     restitution: 0.55,
     friction: 0.35,
     drag: 0.02,

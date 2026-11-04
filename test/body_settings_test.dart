@@ -7,24 +7,24 @@ import 'package:just_dart/just_dart.dart';
 import 'package:just_physics_engine/just_physics_engine.dart';
 
 void main() {
-  final backends = <(String, PhysicsEngine Function())>[
-    ('platform backend', PhysicsEngine.new),
-    ('pure-Dart backend', PhysicsEngine.pureDart),
+  final backends = <(String, Physics2DEngine Function())>[
+    ('platform backend', Physics2DEngine.new),
+    ('pure-Dart backend', Physics2DEngine.pureDart),
   ];
 
   for (final (name, make) in backends) {
     group(name, () {
-      late PhysicsEngine engine;
+      late Physics2DEngine engine;
       setUp(() => engine = make()..initialize());
       tearDown(() => engine.dispose());
 
       // A floor whose top is at y = 0.
       void floor() => engine.addBody(
-        PhysicsBody(
+        Physics2DBody(
           position: Vector2(0, 16),
-          shape: RectangleShape(400, 32),
+          shape: Rectangle2DShape(400, 32),
           mass: 0,
-          bodyType: BodyType.static,
+          bodyType: Body2DType.static,
           restitution: 0,
         ),
       );
@@ -37,9 +37,9 @@ void main() {
 
       test('an off-centre circle rests on its centre, not the body\'s', () {
         floor();
-        final ball = PhysicsBody(
+        final ball = Physics2DBody(
           position: Vector2(0, -100),
-          shape: CircleShape(8, center: const Offset(0, 20)),
+          shape: Circle2DShape(8, center: const Offset(0, 20)),
           restitution: 0,
           drag: 0,
           fixedRotation: true,
@@ -51,10 +51,10 @@ void main() {
       });
 
       test('angular damping slows the spin, and drag leaves it alone', () {
-        PhysicsBody spinner({double drag = 0, double angularDamping = 0}) =>
-            PhysicsBody(
+        Physics2DBody spinner({double drag = 0, double angularDamping = 0}) =>
+            Physics2DBody(
               position: Vector2(0, -500),
-              shape: CircleShape(10),
+              shape: Circle2DShape(10),
               useGravity: false,
               drag: drag,
               angularDamping: angularDamping,
@@ -73,9 +73,9 @@ void main() {
       test('a body that cannot sleep stays awake at rest', () {
         // Weightless and still: the pure-Dart backend counts gravity as
         // something acting on a body, so only these ever sleep there.
-        PhysicsBody box({required bool canSleep}) => PhysicsBody(
+        Physics2DBody box({required bool canSleep}) => Physics2DBody(
           position: Vector2(canSleep ? -100 : 100, -10),
-          shape: RectangleShape(20, 20),
+          shape: Rectangle2DShape(20, 20),
           useGravity: false,
           canSleep: canSleep,
         );
@@ -96,7 +96,10 @@ void main() {
       });
 
       test('continuous collision can be switched at runtime', () {
-        final b = PhysicsBody(position: Vector2.zero(), shape: CircleShape(4));
+        final b = Physics2DBody(
+          position: Vector2.zero(),
+          shape: Circle2DShape(4),
+        );
         engine.addBody(b);
         engine.setBodyBullet(b, true);
         expect(b.isBullet, isTrue);

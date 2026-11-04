@@ -8,32 +8,32 @@ import 'package:just_physics_engine/just_physics_engine.dart';
 
 void main() {
   test('a circle is pi r squared, wherever its centre is', () {
-    expect(CircleShape(10).area, closeTo(math.pi * 100, 1e-9));
+    expect(Circle2DShape(10).area, closeTo(math.pi * 100, 1e-9));
     expect(
-      CircleShape(10, center: const Offset(5, -3)).area,
+      Circle2DShape(10, center: const Offset(5, -3)).area,
       closeTo(math.pi * 100, 1e-9),
     );
   });
 
   test('a rectangle and a polygon, either way round', () {
-    expect(RectangleShape(32, 48).area, closeTo(1536, 1e-9));
+    expect(Rectangle2DShape(32, 48).area, closeTo(1536, 1e-9));
     const triangle = [Offset(0, 0), Offset(10, 0), Offset(0, 10)];
-    expect(PolygonShape(triangle).area, closeTo(50, 1e-9));
+    expect(Polygon2DShape(triangle).area, closeTo(50, 1e-9));
     expect(
-      PolygonShape(triangle.reversed.toList()).area,
+      Polygon2DShape(triangle.reversed.toList()).area,
       closeTo(50, 1e-9),
       reason: 'clockwise or not, an area is positive',
     );
   });
 
   test('a capsule is its middle box and one whole circle', () {
-    final capsule = CapsuleShape.vertical(height: 48, radius: 16);
+    final capsule = Capsule2DShape.vertical(height: 48, radius: 16);
     // 16 between the centres, 32 wide, plus a circle of radius 16.
     expect(capsule.area, closeTo(16 * 32 + math.pi * 256, 1e-9));
   });
 
   test('a rounded rectangle is the box grown by its corner radius', () {
-    final rounded = RoundedPolygonShape.rect(
+    final rounded = RoundedPolygon2DShape.rect(
       width: 20,
       height: 10,
       cornerRadius: 2,
@@ -43,9 +43,9 @@ void main() {
   });
 
   test('a line covers nothing', () {
-    expect(SegmentShape(Offset.zero, const Offset(100, 0)).area, 0);
+    expect(Segment2DShape(Offset.zero, const Offset(100, 0)).area, 0);
     expect(
-      ChainShape(const [Offset(0, 0), Offset(50, 0), Offset(50, 50)]).area,
+      Chain2DShape(const [Offset(0, 0), Offset(50, 0), Offset(50, 50)]).area,
       0,
     );
   });

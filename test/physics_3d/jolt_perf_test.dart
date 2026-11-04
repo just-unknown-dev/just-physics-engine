@@ -8,22 +8,22 @@ const _dt = 1 / 60;
 
 void main() {
   test('500 bodies: step, batch read and event drain', () {
-    final w = JoltPhysicsEngine().createWorld(PhysicsWorldSettings3D());
+    final w = JoltPhysicsEngine().createWorld(Physics3DWorldSettings());
     addTearDown(w.dispose);
     w.createBody(
-      const BoxShape3D(30, 0.5, 30),
-      BodySettings3D(position: Vector3(0, 0.5, 0), type: BodyType3D.static),
+      const Box3DShape(30, 0.5, 30),
+      Body3DSettings(position: Vector3(0, 0.5, 0), type: Body3DType.static),
     );
     for (var i = 0; i < 500; i++) {
       final x = (i % 10) * 1.5 - 7,
           z = ((i ~/ 10) % 10) * 1.5 - 7,
           y = -1 - (i ~/ 100) * 1.5;
       final shape = i.isEven
-          ? const BoxShape3D(0.5, 0.5, 0.5)
-          : const SphereShape3D(0.5);
-      w.createBody(shape, BodySettings3D(position: Vector3(x, y, z)));
+          ? const Box3DShape(0.5, 0.5, 0.5)
+          : const Sphere3DShape(0.5);
+      w.createBody(shape, Body3DSettings(position: Vector3(x, y, z)));
     }
-    final poses = BodyPoses3D();
+    final poses = Body3DPoses();
     // Warm up.
     for (var i = 0; i < 30; i++) {
       w.step(_dt);

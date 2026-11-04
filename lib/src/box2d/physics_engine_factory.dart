@@ -1,26 +1,26 @@
-import '../physics_2d/physics_engine.dart';
+import '../physics_2d/physics_2d_engine.dart';
 // Native by default (what the analyzer and the API docs see); the web's stubs
 // where there is no dart:ffi.
 import '../physics_3d/jolt/jolt_physics_engine.dart'
     if (dart.library.js_interop) '../physics_3d/jolt/jolt_physics_engine_stub.dart';
-import '../physics_3d/physics_engine_3d.dart';
+import '../physics_3d/physics_3d_engine.dart';
 import '_box2d_engine_native.dart'
     if (dart.library.js_interop) '_box2d_engine_stub.dart';
 
 /// The platform's physics engines.
 ///
-/// [create] gives the 2-D engine: [Box2DPhysicsEngine] (Box2D v3.2 through
+/// [create2D] gives the 2-D engine: [Box2DPhysicsEngine] (Box2D v3.2 through
 /// just_box_2d) on native platforms, which falls back to the pure-Dart
-/// engine where the library is not built, and the pure-Dart [PhysicsEngine]
+/// engine where the library is not built, and the pure-Dart [Physics2DEngine]
 /// on the web. [create3D] gives the 3-D engine, Jolt Physics, where it can
 /// run; [supports3D] and [unavailable3DReason] ask first.
 ///
 /// ```dart
-/// final physics = PhysicsEngineFactory.create()..initialize();
+/// final physics = PhysicsEngineFactory.create2D()..initialize();
 /// ```
 abstract final class PhysicsEngineFactory {
-  /// Create the best available physics engine for the current platform.
-  static PhysicsEngine create() => createPhysicsEngine();
+  /// Create the best available 2-D physics engine for the current platform.
+  static Physics2DEngine create2D() => createPhysics2DEngine();
 
   /// The platform's 3-D physics engine: Jolt Physics, through just_jolt, its
   /// job system started with [workerThreads] threads (below 0: cores minus
@@ -30,7 +30,7 @@ abstract final class PhysicsEngineFactory {
   /// 32-bit Android ABI, or an app whose pubspec does not ask for Jolt to be
   /// built (`hooks: user_defines: just_jolt: build: true`). Nothing 3-D is in
   /// an app that never calls it.
-  static PhysicsEngine3D create3D({int workerThreads = -1}) {
+  static Physics3DEngine create3D({int workerThreads = -1}) {
     final engine = JoltPhysicsEngine(workerThreads: workerThreads);
     final reason = engine.unavailableReason;
     if (reason != null) throw Physics3DUnsupportedError(reason);

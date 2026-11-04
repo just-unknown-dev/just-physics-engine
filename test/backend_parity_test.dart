@@ -11,44 +11,45 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:just_dart/just_dart.dart';
 import 'package:just_physics_engine/just_physics_engine.dart';
 
-PhysicsBody _static(Offset at, CollisionShape shape, {bool sensor = false}) =>
-    PhysicsBody(
+Physics2DBody _static(Offset at, Shape2D shape, {bool sensor = false}) =>
+    Physics2DBody(
       position: Vector2(at.dx, at.dy),
       shape: shape,
       mass: 0,
       isSensor: sensor,
     );
 
-PhysicsBody _ball(Offset at, {double radius = 5, bool gravity = true}) =>
-    PhysicsBody(
+Physics2DBody _ball(Offset at, {double radius = 5, bool gravity = true}) =>
+    Physics2DBody(
       position: Vector2(at.dx, at.dy),
-      shape: CircleShape(radius),
+      shape: Circle2DShape(radius),
       restitution: 0,
       drag: 0,
       useGravity: gravity,
     );
 
 /// A floor 40 m wide, its top at y = 0 (+Y is down).
-PhysicsBody _floor() => _static(const Offset(0, 20), RectangleShape(4000, 40));
+Physics2DBody _floor() =>
+    _static(const Offset(0, 20), Rectangle2DShape(4000, 40));
 
-void _run(PhysicsEngine engine, int frames, {double dt = 1 / 60}) {
+void _run(Physics2DEngine engine, int frames, {double dt = 1 / 60}) {
   for (var i = 0; i < frames; i++) {
     engine.update(dt);
   }
 }
 
-double _distance(PhysicsBody a, PhysicsBody b) =>
+double _distance(Physics2DBody a, Physics2DBody b) =>
     (b.position - a.position).length;
 
 void main() {
-  final backends = <String, PhysicsEngine Function()>{
-    'pure Dart': PhysicsEngine.pureDart,
+  final backends = <String, Physics2DEngine Function()>{
+    'pure Dart': Physics2DEngine.pureDart,
     'Box2D': Box2DPhysicsEngine.new,
   };
 
   for (final MapEntry(key: name, value: make) in backends.entries) {
     group(name, () {
-      late PhysicsEngine engine;
+      late Physics2DEngine engine;
       setUp(() => engine = make()..initialize());
       tearDown(() => engine.dispose());
 
@@ -83,7 +84,7 @@ void main() {
             if (unavailable()) return markTestSkipped('no native Box2D');
             final sensor = _static(
               const Offset(0, -100),
-              RectangleShape(100, 20),
+              Rectangle2DShape(100, 20),
               sensor: true,
             );
             final ball = _ball(const Offset(0, -200));
@@ -113,10 +114,10 @@ void main() {
       group('bodies changed at runtime', () {
         test('a static body turned dynamic falls, and turns', () {
           if (unavailable()) return markTestSkipped('no native Box2D');
-          final body = PhysicsBody(
+          final body = Physics2DBody(
             position: Vector2(0, -100),
-            shape: RectangleShape(20, 20),
-            bodyType: BodyType.static,
+            shape: Rectangle2DShape(20, 20),
+            bodyType: Body2DType.static,
             useGravity: false,
             drag: 0,
           );
@@ -125,7 +126,7 @@ void main() {
           expect(body.position.y, -100);
 
           body.useGravity = true;
-          engine.setBodyType(body, BodyType.dynamic);
+          engine.setBodyType(body, Body2DType.dynamic);
           _run(engine, 20);
           expect(body.position.y, greaterThan(-90));
 
@@ -148,10 +149,10 @@ void main() {
 
         test('a kinematic body at rest moves when it is told to', () {
           if (unavailable()) return markTestSkipped('no native Box2D');
-          final platform = PhysicsBody(
+          final platform = Physics2DBody(
             position: Vector2(0, 0),
-            shape: RectangleShape(100, 10),
-            bodyType: BodyType.kinematic,
+            shape: Rectangle2DShape(100, 10),
+            bodyType: Body2DType.kinematic,
           );
           engine.addBody(platform);
           _run(engine, 120); // long enough for Box2D to put it to sleep
@@ -162,18 +163,18 @@ void main() {
       });
 
       group('queries', () {
-        test('castRayAll reports every body, nearest first, past 32', () {
+        test('raycastAll reports every body, nearest first, past 32', () {
           if (unavailable()) return markTestSkipped('no native Box2D');
           for (var i = 0; i < 40; i++) {
             engine.addBody(
-              _static(Offset(i * 20.0, 0), RectangleShape(10, 10)),
+              _static(Offset(i * 20.0, 0), Rectangle2DShape(10, 10)),
             );
           }
           final far = _ball(const Offset(900, 0), gravity: false);
           engine.addBody(far);
           _run(engine, 1);
-          final hits = engine.castRayAll(
-            Ray(
+          final hits = engine.raycastAll(
+            Ray2D(
               origin: const Offset(-50, 0),
               direction: const Offset(1, 0),
               maxDistance: 1000,
@@ -188,47 +189,50 @@ void main() {
 
         test("a ray hits a compound body's nearest shape", () {
           if (unavailable()) return markTestSkipped('no native Box2D');
-          final body = PhysicsBody(
+          final body = Physics2DBody(
             position: Vector2(100, 0),
-            shape: RectangleShape(20, 20),
-            additionalShapes: [CircleShape(10, center: const Offset(-60, 0))],
+            shape: Rectangle2DShape(20, 20),
+            additionalShapes: [Circle2DShape(10, center: const Offset(-60, 0))],
             mass: 0,
           );
           engine.addBody(body);
           _run(engine, 1);
-          final ray = Ray(
+          final ray = Ray2D(
             origin: Offset.zero,
             direction: const Offset(1, 0),
             maxDistance: 500,
           );
-          expect(engine.castRay(ray)!.distance, closeTo(30, 0.5));
-          expect(engine.castRayAll(ray).single.distance, closeTo(30, 0.5));
+          expect(engine.raycast(ray)!.distance, closeTo(30, 0.5));
+          expect(engine.raycastAll(ray).single.distance, closeTo(30, 0.5));
         });
 
         test('a ray passes the shape it starts in, excluding or not', () {
           if (unavailable()) return markTestSkipped('no native Box2D');
-          final inside = _static(Offset.zero, RectangleShape(40, 40));
-          final beyond = _static(const Offset(100, 0), RectangleShape(20, 20));
+          final inside = _static(Offset.zero, Rectangle2DShape(40, 40));
+          final beyond = _static(
+            const Offset(100, 0),
+            Rectangle2DShape(20, 20),
+          );
           final other = _ball(const Offset(0, 500), gravity: false);
           engine
             ..addBody(inside)
             ..addBody(beyond)
             ..addBody(other);
           _run(engine, 1);
-          final ray = Ray(
+          final ray = Ray2D(
             origin: Offset.zero,
             direction: const Offset(1, 0),
             maxDistance: 500,
           );
-          expect(engine.castRay(ray)!.body, same(beyond));
-          expect(engine.castRay(ray, exclude: {other})!.body, same(beyond));
+          expect(engine.raycast(ray)!.body, same(beyond));
+          expect(engine.raycast(ray, exclude: {other})!.body, same(beyond));
         });
 
         test('queryAABB finds every body, past 32', () {
           if (unavailable()) return markTestSkipped('no native Box2D');
           for (var i = 0; i < 50; i++) {
             engine.addBody(
-              _static(Offset(i * 20.0, 0), RectangleShape(10, 10)),
+              _static(Offset(i * 20.0, 0), Rectangle2DShape(10, 10)),
             );
           }
           _run(engine, 1);
@@ -238,18 +242,18 @@ void main() {
           );
         });
 
-        test('castCircle stops where the circle touches', () {
+        test('circleCast stops where the circle touches', () {
           if (unavailable()) return markTestSkipped('no native Box2D');
-          final box = _static(const Offset(60, 0), RectangleShape(20, 20));
+          final box = _static(const Offset(60, 0), Rectangle2DShape(20, 20));
           engine.addBody(box);
           _run(engine, 1);
-          final head = engine.castCircle(Offset.zero, 10, const Offset(100, 0));
+          final head = engine.circleCast(Offset.zero, 10, const Offset(100, 0));
           expect(head!.body, same(box));
           expect(head.toi, closeTo(0.4, 0.01));
           expect(head.normal.dx, closeTo(-1, 1e-3));
           // Grazing the top: the circle spans y 5..25, the box -10..10.
           expect(
-            engine.castCircle(const Offset(0, 15), 10, const Offset(100, 0)),
+            engine.circleCast(const Offset(0, 15), 10, const Offset(100, 0)),
             isNotNull,
           );
         });
@@ -257,8 +261,8 @@ void main() {
 
       group('shapes', () {
         /// Where a body of [shape] dropped at [x] comes to rest.
-        double rest(CollisionShape shape, {double x = 0}) {
-          final body = PhysicsBody(
+        double rest(Shape2D shape, {double x = 0}) {
+          final body = Physics2DBody(
             position: Vector2(x, -60),
             shape: shape,
             restitution: 0,
@@ -274,14 +278,14 @@ void main() {
           engine.addBody(
             _static(
               Offset.zero,
-              ChainShape(const [
+              Chain2DShape(const [
                 Offset(200, 0),
                 Offset(0, 0),
                 Offset(-200, 0),
               ], thickness: 0),
             ),
           );
-          expect(rest(CircleShape(5)), closeTo(-5, 0.6));
+          expect(rest(Circle2DShape(5)), closeTo(-5, 0.6));
         });
 
         test("a chain's thickness holds a ball off it", () {
@@ -289,14 +293,14 @@ void main() {
           engine.addBody(
             _static(
               Offset.zero,
-              ChainShape(const [
+              Chain2DShape(const [
                 Offset(-200, 0),
                 Offset(0, 0),
                 Offset(200, 0),
               ], thickness: 4),
             ),
           );
-          expect(rest(CircleShape(5)), closeTo(-9, 0.6));
+          expect(rest(Circle2DShape(5)), closeTo(-9, 0.6));
         });
 
         test("a segment's thickness holds a ball off it", () {
@@ -304,21 +308,21 @@ void main() {
           engine.addBody(
             _static(
               Offset.zero,
-              SegmentShape(
+              Segment2DShape(
                 const Offset(-200, 0),
                 const Offset(200, 0),
                 thickness: 3,
               ),
             ),
           );
-          expect(rest(CircleShape(5)), closeTo(-8, 0.6));
+          expect(rest(Circle2DShape(5)), closeTo(-8, 0.6));
         });
 
         test('a capsule lands on a segment added after it', () {
           if (unavailable()) return markTestSkipped('no native Box2D');
-          final capsule = PhysicsBody(
+          final capsule = Physics2DBody(
             position: Vector2(0, -40),
-            shape: CapsuleShape.vertical(height: 40, radius: 10),
+            shape: Capsule2DShape.vertical(height: 40, radius: 10),
             restitution: 0,
             fixedRotation: true,
           );
@@ -327,7 +331,7 @@ void main() {
             ..addBody(
               _static(
                 Offset.zero,
-                SegmentShape(const Offset(-200, 0), const Offset(200, 0)),
+                Segment2DShape(const Offset(-200, 0), const Offset(200, 0)),
               ),
             );
           _run(engine, 120);
@@ -340,7 +344,7 @@ void main() {
           engine.addBody(
             _static(
               Offset.zero,
-              PolygonShape(const [
+              Polygon2DShape(const [
                 Offset(-100, 40),
                 Offset(100, 40),
                 Offset(100, 60),
@@ -348,9 +352,9 @@ void main() {
               ]),
             ),
           );
-          final crate = PhysicsBody(
+          final crate = Physics2DBody(
             position: Vector2(0, -50),
-            shape: RectangleShape(20, 20),
+            shape: Rectangle2DShape(20, 20),
             restitution: 0,
             fixedRotation: true,
           );
@@ -365,22 +369,22 @@ void main() {
           engine.addBody(
             _static(
               Offset.zero,
-              RoundedPolygonShape.rect(
+              RoundedPolygon2DShape.rect(
                 width: 200,
                 height: 20,
                 cornerRadius: 10,
               ),
             ),
           );
-          final y = rest(CapsuleShape.vertical(height: 40, radius: 10));
+          final y = rest(Capsule2DShape.vertical(height: 40, radius: 10));
           expect(y, closeTo(-40, 1));
         });
       });
 
       group('joints', () {
         /// A static anchor at the origin, and a ball [length] to its right.
-        (PhysicsBody, PhysicsBody) pendulum({double length = 100}) {
-          final anchor = _static(Offset.zero, CircleShape(2));
+        (Physics2DBody, Physics2DBody) pendulum({double length = 100}) {
+          final anchor = _static(Offset.zero, Circle2DShape(2));
           final bob = _ball(Offset(length, 0));
           engine
             ..addBody(anchor)
@@ -432,7 +436,7 @@ void main() {
 
         test('a slider holds its line', () {
           if (unavailable()) return markTestSkipped('no native Box2D');
-          final a = _static(Offset.zero, CircleShape(2));
+          final a = _static(Offset.zero, Circle2DShape(2));
           final b = _ball(const Offset(0, 50));
           engine
             ..addBody(a)
@@ -461,7 +465,7 @@ void main() {
 
         test('a wheel turns about its own centre', () {
           if (unavailable()) return markTestSkipped('no native Box2D');
-          final chassis = _static(Offset.zero, RectangleShape(100, 20));
+          final chassis = _static(Offset.zero, Rectangle2DShape(100, 20));
           final wheel = _ball(const Offset(0, 50), radius: 10, gravity: false);
           engine
             ..addBody(chassis)
@@ -474,7 +478,7 @@ void main() {
           switch (joint) {
             case Box2DJoint():
               joint.setWheelMotor(5, 1e9);
-            case WheelJoint():
+            case WheelJoint2D():
               joint.setWheelMotor(5, 1e9);
           }
           for (var i = 0; i < 60; i++) {
@@ -487,10 +491,10 @@ void main() {
 
         test('a joint does not move a kinematic body', () {
           if (unavailable()) return markTestSkipped('no native Box2D');
-          final platform = PhysicsBody(
+          final platform = Physics2DBody(
             position: Vector2(0, 0),
-            shape: RectangleShape(100, 10),
-            bodyType: BodyType.kinematic,
+            shape: Rectangle2DShape(100, 10),
+            bodyType: Body2DType.kinematic,
           );
           final lamp = _ball(const Offset(0, 100));
           engine
@@ -506,8 +510,8 @@ void main() {
   }
 
   group('pure Dart only', () {
-    late PhysicsEngine engine;
-    setUp(() => engine = PhysicsEngine.pureDart()..initialize());
+    late Physics2DEngine engine;
+    setUp(() => engine = Physics2DEngine.pureDart()..initialize());
     tearDown(() => engine.dispose());
 
     test('a removed body ends no contact, and leaves no joint', () {
@@ -529,14 +533,14 @@ void main() {
     });
 
     test('shapes of no size do not poison the world', () {
-      final a = PhysicsBody(
+      final a = Physics2DBody(
         position: Vector2(0, 0),
-        shape: RectangleShape(0, 0),
+        shape: Rectangle2DShape(0, 0),
         useGravity: false,
       );
-      final b = PhysicsBody(
+      final b = Physics2DBody(
         position: Vector2(50, 0),
-        shape: RectangleShape(0, 0),
+        shape: Rectangle2DShape(0, 0),
         useGravity: false,
       );
       engine
@@ -547,13 +551,13 @@ void main() {
     });
 
     test('a slider stops at its limits, from where it started', () {
-      final a = _static(Offset.zero, CircleShape(2));
+      final a = _static(Offset.zero, Circle2DShape(2));
       final b = _ball(const Offset(100, 0), gravity: false);
       engine
         ..addBody(a)
         ..addBody(b);
       final joint =
-          engine.addPrismaticJoint(a, b, const Offset(3, 0)) as PrismaticJoint
+          engine.addPrismaticJoint(a, b, const Offset(3, 0)) as PrismaticJoint2D
             ..limitEnabled = true
             ..lowerLimit = -20
             ..upperLimit = 20;
@@ -565,7 +569,7 @@ void main() {
     });
 
     test('a distance spring settles', () {
-      final anchor = _static(Offset.zero, CircleShape(2));
+      final anchor = _static(Offset.zero, Circle2DShape(2));
       final bob = _ball(const Offset(0, 100), gravity: false);
       engine
         ..addBody(anchor)

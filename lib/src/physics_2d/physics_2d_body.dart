@@ -1,4 +1,4 @@
-part of 'physics_engine.dart';
+part of 'physics_2d_engine.dart';
 
 /// How a body participates in the simulation.
 ///
@@ -6,10 +6,10 @@ part of 'physics_engine.dart';
 /// dynamic=2) so the value can cross the FFI boundary as `index` with no
 /// translation table.
 ///
-/// [PhysicsBody.mass] `<= 0` still forces [BodyType.static] via
-/// [PhysicsBody.effectiveBodyType] — that inference predates this enum and
-/// several call sites depend on it, so [BodyType.kinematic] is purely opt-in.
-enum BodyType {
+/// [Physics2DBody.mass] `<= 0` still forces [Body2DType.static] via
+/// [Physics2DBody.effectiveBodyType] — that inference predates this enum and
+/// several call sites depend on it, so [Body2DType.kinematic] is purely opt-in.
+enum Body2DType {
   /// Never moves, infinite mass. Level geometry.
   static,
 
@@ -46,7 +46,7 @@ enum OneWayDirection {
 ///
 /// Uses [Vector2] for position/velocity/acceleration to avoid per-frame
 /// [Offset] allocations.
-class PhysicsBody {
+class Physics2DBody {
   /// Mutable position.
   final Vector2 position;
 
@@ -57,7 +57,7 @@ class PhysicsBody {
   final Vector2 acceleration;
 
   /// The physical shape used for collision detection
-  CollisionShape shape;
+  Shape2D shape;
 
   /// Mass (0 means infinite mass / static body)
   double mass;
@@ -192,14 +192,14 @@ class PhysicsBody {
   bool fixedRotation;
 
   /// How this body participates in the simulation. Defaults to
-  /// [BodyType.dynamic]; see [effectiveBodyType] for the `mass <= 0` override.
-  BodyType bodyType;
+  /// [Body2DType.dynamic]; see [effectiveBodyType] for the `mass <= 0` override.
+  Body2DType bodyType;
 
   /// Additional collision shapes attached to this body (compound body support).
   ///
   /// All shapes share the same position as [position]. The [shape] field is
   /// always the primary shape; [additionalShapes] are extra fixtures.
-  final List<CollisionShape> additionalShapes;
+  final List<Shape2D> additionalShapes;
 
   /// Collision filter category bits.
   int categoryBits;
@@ -215,7 +215,7 @@ class PhysicsBody {
   int groupIndex;
 
   /// Create a physics body
-  PhysicsBody({
+  Physics2DBody({
     required Vector2 position,
     required this.shape,
     Vector2? velocity,
@@ -243,8 +243,8 @@ class PhysicsBody {
     this.oneWayDirection = OneWayDirection.fromAbove,
     this.isBullet = false,
     this.fixedRotation = false,
-    this.bodyType = BodyType.dynamic,
-    List<CollisionShape>? additionalShapes,
+    this.bodyType = Body2DType.dynamic,
+    List<Shape2D>? additionalShapes,
     this.categoryBits = 0x0001,
     this.maskBits = 0xFFFF,
     this.groupIndex = 0,
@@ -266,21 +266,21 @@ class PhysicsBody {
   /// `mass <= 0` has meant "static" since before [bodyType] existed, and
   /// `Physics2DSystem` still expresses staticness that way, so that inference
   /// wins over an explicitly-set [bodyType].
-  BodyType get effectiveBodyType => mass <= 0 ? BodyType.static : bodyType;
+  Body2DType get effectiveBodyType => mass <= 0 ? Body2DType.static : bodyType;
 
   /// True when this body is fully simulated (moved by gravity and forces, and
   /// pushed by collisions).
-  bool get isDynamic => effectiveBodyType == BodyType.dynamic;
+  bool get isDynamic => effectiveBodyType == Body2DType.dynamic;
 
   /// True when this body moves only by explicit velocity writes and cannot be
   /// pushed by anything.
-  bool get isKinematic => effectiveBodyType == BodyType.kinematic;
+  bool get isKinematic => effectiveBodyType == Body2DType.kinematic;
 
   /// True when this body never moves.
-  bool get isStatic => effectiveBodyType == BodyType.static;
+  bool get isStatic => effectiveBodyType == Body2DType.static;
 
   /// Inverse mass as the solver should use it: zero for anything that is not
-  /// [BodyType.dynamic], so static *and* kinematic bodies are immovable while
+  /// [Body2DType.dynamic], so static *and* kinematic bodies are immovable while
   /// the dynamic side is still pushed out of them.
   double get solverInverseMass => isDynamic ? inverseMass : 0.0;
 
@@ -324,57 +324,22 @@ class PhysicsBody {
   }
 }
 
-/// Represents a rigid body with 2D force accumulation (convenience wrapper).
-///
-/// For most use cases, prefer [PhysicsBody] directly. This class exists for
-/// code that needs a simpler interface without collision shape requirements.
-class RigidBody {
-  /// Mass of the rigid body
-  double mass = 1.0;
-
-  /// Accumulated force (reset each integration step).
-  final Vector2 _force = Vector2.zero();
-
-  /// Current velocity.
-  final Vector2 velocity = Vector2.zero();
-
-  /// Current position.
-  final Vector2 position = Vector2.zero();
-
-  /// Apply a 2D force.
-  void applyForce(double x, double y) {
-    _force.x += x;
-    _force.y += y;
-  }
-
-  /// Integrate forces → velocity → position for one timestep.
-  void integrate(double dt) {
-    if (mass <= 0) return;
-    final inverseMass = 1.0 / mass;
-    velocity.x += _force.x * inverseMass * dt;
-    velocity.y += _force.y * inverseMass * dt;
-    position.x += velocity.x * dt;
-    position.y += velocity.y * dt;
-    _force.setZero();
-  }
-}
-
-/// Utility for manual broad-phase collision queries outside [PhysicsEngine].
+/// Utility for manual broad-phase collision queries outside [Physics2DEngine].
 ///
 /// Wraps the [SpatialGrid]-based check used internally by the engine and
 /// exposes it for gameplay code that needs ad-hoc overlap tests.
 class CollisionDetector {
-  final List<PhysicsBody> _bodies = [];
+  final List<Physics2DBody> _bodies = [];
 
   /// Register a body for detection.
-  void addBody(PhysicsBody body) => _bodies.add(body);
+  void addBody(Physics2DBody body) => _bodies.add(body);
 
   /// Remove a body.
-  void removeBody(PhysicsBody body) => _bodies.remove(body);
+  void removeBody(Physics2DBody body) => _bodies.remove(body);
 
   /// Return all overlapping body pairs using brute-force AABB check.
-  List<(PhysicsBody, PhysicsBody)> detectCollisions() {
-    final pairs = <(PhysicsBody, PhysicsBody)>[];
+  List<(Physics2DBody, Physics2DBody)> detectCollisions() {
+    final pairs = <(Physics2DBody, Physics2DBody)>[];
     for (var i = 0; i < _bodies.length; i++) {
       final a = _bodies[i];
       if (!a.isActive) continue;
@@ -392,9 +357,9 @@ class CollisionDetector {
   }
 }
 
-/// Applies global forces (gravity, wind, etc.) to a set of [PhysicsBody]s.
+/// Applies global forces (gravity, wind, etc.) to a set of [Physics2DBody]s.
 class ForceManager {
-  /// Current gravity vector. Default matches [PhysicsEngine] and [Box2DPhysicsEngine]:
+  /// Current gravity vector. Default matches [Physics2DEngine] and [Box2DPhysicsEngine]:
   /// 981 units/s² (9.81 m/s² at 1 unit = 1 cm).
   final Vector2 gravity = Vector2(0, 981.0);
 
@@ -404,8 +369,8 @@ class ForceManager {
     gravity.y = y;
   }
 
-  /// Apply gravity to all [bodies] that have [PhysicsBody.useGravity] enabled.
-  void applyGravity(Iterable<PhysicsBody> bodies) {
+  /// Apply gravity to all [bodies] that have [Physics2DBody.useGravity] enabled.
+  void applyGravity(Iterable<Physics2DBody> bodies) {
     for (final body in bodies) {
       if (!body.isActive || !body.isAwake || !body.useGravity) continue;
       if (body.mass <= 0) continue; // static

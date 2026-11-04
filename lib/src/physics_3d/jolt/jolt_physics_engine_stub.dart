@@ -1,10 +1,10 @@
-import '../physics_engine_3d.dart';
-import '../settings_3d.dart';
+import '../physics_3d_engine.dart';
+import '../physics_3d_settings.dart';
 
-/// Jolt Physics as a [PhysicsEngine3D] — on the web, where it cannot run:
+/// Jolt Physics as a [Physics3DEngine] — on the web, where it cannot run:
 /// [unavailableReason] says so, and `PhysicsEngineFactory.create3D()`
 /// throws.
-final class JoltPhysicsEngine implements PhysicsEngine3D {
+final class JoltPhysicsEngine implements Physics3DEngine {
   /// An engine; [workerThreads] means nothing here.
   JoltPhysicsEngine({this.workerThreads = -1});
 
@@ -22,7 +22,7 @@ final class JoltPhysicsEngine implements PhysicsEngine3D {
   String? get joltVersion => null;
 
   @override
-  PhysicsWorld3D createWorld(PhysicsWorldSettings3D settings) =>
+  Physics3DWorld createWorld(Physics3DWorldSettings settings) =>
       throw Physics3DUnsupportedError(unavailableReason!);
 
   @override

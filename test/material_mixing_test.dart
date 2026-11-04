@@ -12,18 +12,21 @@ import 'package:just_physics_engine/just_physics_engine.dart';
 
 void main() {
   test('the mixing rules', () {
-    expect(PhysicsEngine.mixRestitution(0, 0.8), 0);
-    expect(PhysicsEngine.mixRestitution(0.6, 0.3), 0.3);
-    expect(PhysicsEngine.mixFriction(0.2, 0.5), closeTo(math.sqrt(0.1), 1e-12));
-    expect(PhysicsEngine.mixFriction(0, 0.9), 0, reason: 'ice stays ice');
+    expect(Physics2DEngine.mixRestitution(0, 0.8), 0);
+    expect(Physics2DEngine.mixRestitution(0.6, 0.3), 0.3);
+    expect(
+      Physics2DEngine.mixFriction(0.2, 0.5),
+      closeTo(math.sqrt(0.1), 1e-12),
+    );
+    expect(Physics2DEngine.mixFriction(0, 0.9), 0, reason: 'ice stays ice');
   });
 
   for (final (name, make) in [
-    ('pure Dart', () => PhysicsEngine.pureDart()..initialize()),
-    ('native Box2D', () => PhysicsEngine()..initialize()),
+    ('pure Dart', () => Physics2DEngine.pureDart()..initialize()),
+    ('native Box2D', () => Physics2DEngine()..initialize()),
   ]) {
     group(name, () {
-      late PhysicsEngine engine;
+      late Physics2DEngine engine;
       setUp(() => engine = make());
       tearDown(() => engine.dispose());
 
@@ -35,9 +38,9 @@ void main() {
         return false;
       }
 
-      PhysicsBody floor(double restitution) => PhysicsBody(
+      Physics2DBody floor(double restitution) => Physics2DBody(
         position: Vector2(0, 100),
-        shape: RectangleShape(400, 20),
+        shape: Rectangle2DShape(400, 20),
         mass: 0,
         restitution: restitution,
       );
@@ -45,9 +48,9 @@ void main() {
       /// The fastest the ball rises (most negative y velocity) in 1.5 s,
       /// dropped from 200 units above the floor.
       double rise(double floorRestitution) {
-        final ball = PhysicsBody(
+        final ball = Physics2DBody(
           position: Vector2(0, -100),
-          shape: CircleShape(10),
+          shape: Circle2DShape(10),
           restitution: 0.8,
           drag: 0,
         );
@@ -75,9 +78,9 @@ void main() {
 
       test('a slow touch settles rather than bouncing', () {
         if (skipped()) return;
-        final ball = PhysicsBody(
+        final ball = Physics2DBody(
           position: Vector2(0, 75),
-          shape: CircleShape(10),
+          shape: Circle2DShape(10),
           restitution: 1,
           useGravity: false,
           drag: 0,
