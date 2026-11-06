@@ -97,11 +97,10 @@ class Physics2DBody {
   /// Coarse gravity switch. When false this body ignores world gravity
   /// entirely, regardless of [gravityScale].
   ///
-  /// Kept as a separate flag rather than folded into [gravityScale] because
-  /// `Physics2DSystem._syncIn` writes `body.useGravity = !comp.isStatic` on
-  /// *every* frame — a computed view would clobber any gameplay-set
-  /// [gravityScale] on the next tick. Read [effectiveGravityScale] instead of
-  /// either field directly.
+  /// Kept as a separate flag rather than folded into [gravityScale], so a
+  /// caller that switches gravity off and on keeps whatever [gravityScale]
+  /// gameplay set. Read [effectiveGravityScale] instead of either field
+  /// directly.
   bool useGravity;
 
   /// Per-body multiplier on world gravity. 1.0 is normal, 0.5 floaty,
@@ -112,11 +111,13 @@ class Physics2DBody {
   /// a full jump from one impulse.
   double gravityScale;
 
-  /// Is active
+  /// Whether the body takes part in the simulation. An inactive body does
+  /// not move, touches nothing (its contacts and sensor overlaps end), is
+  /// found by no query or mover, and its joints hold nothing; it keeps its
+  /// place, shapes and velocity, and goes on as it was when it is back. On
+  /// both backends: the native one takes it out of Box2D's world at the
+  /// next update ([Physics2DEngine.setBodyActive] does it at once).
   bool isActive;
-
-  /// Check collisions
-  bool checkCollision;
 
   /// Whether the body may fall asleep when it comes to rest. A body that
   /// never sleeps costs a little every step, at rest or not; one that must
@@ -232,7 +233,6 @@ class Physics2DBody {
     this.useGravity = true,
     this.gravityScale = 1.0,
     this.isActive = true,
-    this.checkCollision = true,
     this.isAwake = true,
     this.canSleep = true,
     this.sleepTimer = 0.0,
@@ -287,11 +287,12 @@ class Physics2DBody {
   /// True when this body has more than one collision shape.
   bool get isCompound => additionalShapes.isNotEmpty;
 
-  /// Returns the AABB that covers all shapes on this body.
-  Rect getCompoundBounds(Offset position) {
-    var bounds = shape.getBounds(position);
+  /// The axis-aligned box round all this body's shapes, unturned, for the
+  /// body at [position].
+  Rect boundsAt(Offset position) {
+    var bounds = shape.boundsAt(position);
     for (final s in additionalShapes) {
-      final b = s.getBounds(position);
+      final b = s.boundsAt(position);
       bounds = Rect.fromLTRB(
         bounds.left < b.left ? bounds.left : b.left,
         bounds.top < b.top ? bounds.top : b.top,
@@ -302,80 +303,99 @@ class Physics2DBody {
     return bounds;
   }
 
-  /// Apply force
+  /// Pushes a dynamic body with [force] for the next step, and wakes it, as
+  /// Box2D does: forces given to a sleeping body would otherwise pile up
+  /// and land all at once when something woke it. Nothing for a body that
+  /// is not dynamic.
   void applyForce(Vector2 force) {
-    if (mass > 0) {
-      acceleration.x += force.x * inverseMass;
-      acceleration.y += force.y * inverseMass;
-    }
+    if (!isDynamic) return;
+    acceleration.x += force.x * inverseMass;
+    acceleration.y += force.y * inverseMass;
+    isAwake = true;
+    sleepTimer = 0.0;
   }
 
-  /// Apply torque
+  /// Turns a dynamic body with [applicationTorque] for the next step, and
+  /// wakes it (see [applyForce]). Nothing for a body that is not dynamic or
+  /// has no inertia.
   void applyTorque(double applicationTorque) {
-    if (inertia > 0) {
-      torque += applicationTorque;
-    }
+    if (!isDynamic || inertia <= 0) return;
+    torque += applicationTorque;
+    isAwake = true;
+    sleepTimer = 0.0;
   }
 
-  /// Apply impulse
-  void applyImpulse(Vector2 impulse) {
-    velocity.x += impulse.x;
-    velocity.y += impulse.y;
-  }
-}
-
-/// Utility for manual broad-phase collision queries outside [Physics2DEngine].
-///
-/// Wraps the [SpatialGrid]-based check used internally by the engine and
-/// exposes it for gameplay code that needs ad-hoc overlap tests.
-class CollisionDetector {
-  final List<Physics2DBody> _bodies = [];
-
-  /// Register a body for detection.
-  void addBody(Physics2DBody body) => _bodies.add(body);
-
-  /// Remove a body.
-  void removeBody(Physics2DBody body) => _bodies.remove(body);
-
-  /// Return all overlapping body pairs using brute-force AABB check.
-  List<(Physics2DBody, Physics2DBody)> detectCollisions() {
-    final pairs = <(Physics2DBody, Physics2DBody)>[];
-    for (var i = 0; i < _bodies.length; i++) {
-      final a = _bodies[i];
-      if (!a.isActive) continue;
-      final aBounds = a.shape.getBounds(a.position.toOffset());
-      for (var j = i + 1; j < _bodies.length; j++) {
-        final b = _bodies[j];
-        if (!b.isActive) continue;
-        final bBounds = b.shape.getBounds(b.position.toOffset());
-        if (aBounds.overlaps(bBounds)) {
-          pairs.add((a, b));
-        }
+  /// This body's shapes as the distance and cast tests see them — convex
+  /// cores with a radius, in the world, turned with the body as Box2D turns
+  /// them, and moved by [shift]: a circle as one point, a capsule or
+  /// segment as two, a polygon as its corners, a chain as one piece per
+  /// link (a segment, and each link, is the capsule its thickness makes, as
+  /// both backends collide it). The mover and the engine's own overlap and
+  /// cast queries take them so.
+  List<Shape2DProxy> proxies({Offset shift = Offset.zero}) {
+    final c = math.cos(angle), s = math.sin(angle);
+    final px = position.x + shift.dx, py = position.y + shift.dy;
+    Offset at(Offset p) =>
+        Offset(c * p.dx - s * p.dy + px, s * p.dx + c * p.dy + py);
+    final out = <Shape2DProxy>[];
+    void add(Shape2D shape) {
+      switch (shape) {
+        case Circle2DShape():
+          out.add(Shape2DProxy([at(shape.center)], shape.radius));
+        case Capsule2DShape():
+          out.add(
+            Shape2DProxy([at(shape.center1), at(shape.center2)], shape.radius),
+          );
+        case RoundedPolygon2DShape():
+          out.add(
+            Shape2DProxy([
+              for (final v in shape.vertices) at(v),
+            ], shape.cornerRadius),
+          );
+        case Polygon2DShape():
+          if (shape.vertices.isNotEmpty) {
+            out.add(Shape2DProxy([for (final v in shape.vertices) at(v)], 0));
+          }
+        case Segment2DShape():
+          out.add(
+            Shape2DProxy([at(shape.point1), at(shape.point2)], shape.thickness),
+          );
+        case Chain2DShape():
+          final v = shape.vertices;
+          if (v.length < 2) break;
+          final n = shape.loop && v.length > 2 ? v.length : v.length - 1;
+          for (var i = 0; i < n; i++) {
+            out.add(
+              Shape2DProxy([
+                at(v[i]),
+                at(v[(i + 1) % v.length]),
+              ], shape.thickness),
+            );
+          }
+        default:
+          break;
       }
     }
-    return pairs;
-  }
-}
 
-/// Applies global forces (gravity, wind, etc.) to a set of [Physics2DBody]s.
-class ForceManager {
-  /// Current gravity vector. Default matches [Physics2DEngine] and [Box2DPhysicsEngine]:
-  /// 981 units/s² (9.81 m/s² at 1 unit = 1 cm).
-  final Vector2 gravity = Vector2(0, 981.0);
-
-  /// Set gravity.
-  void setGravity(double x, double y) {
-    gravity.x = x;
-    gravity.y = y;
+    add(shape);
+    additionalShapes.forEach(add);
+    return out;
   }
 
-  /// Apply gravity to all [bodies] that have [Physics2DBody.useGravity] enabled.
-  void applyGravity(Iterable<Physics2DBody> bodies) {
-    for (final body in bodies) {
-      if (!body.isActive || !body.isAwake || !body.useGravity) continue;
-      if (body.mass <= 0) continue; // static
-      body.acceleration.x += gravity.x;
-      body.acceleration.y += gravity.y;
-    }
+  /// The box round this body's shapes, turned as it is: the box round its
+  /// unturned bounds turned about its position.
+  Rect get _turnedBounds {
+    final at = position.toOffset();
+    final bounds = boundsAt(at);
+    if (angle == 0) return bounds;
+    final c = math.cos(angle), s = math.sin(angle);
+    final d = bounds.center - at;
+    final centre = Offset(c * d.dx - s * d.dy, s * d.dx + c * d.dy) + at;
+    final hw = bounds.width / 2, hh = bounds.height / 2;
+    return Rect.fromCenter(
+      center: centre,
+      width: 2 * (c.abs() * hw + s.abs() * hh),
+      height: 2 * (s.abs() * hw + c.abs() * hh),
+    );
   }
 }

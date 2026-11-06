@@ -5,4 +5,4 @@ library;
 
 import 'src/physics_3d/physics_3d_engine.dart';
 
-export 'src/testing/fake_physics_3d_engine.dart';
+export 'src/testing/testing.dart';

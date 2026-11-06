@@ -5,7 +5,8 @@ import 'package:just_dart/just_dart.dart';
 import 'package:just_physics_engine/just_physics_engine.dart';
 
 void main() {
-  final engine = Physics2DEngine()..initialize();
+  // Box2D on native platforms, the pure-Dart engine on the web.
+  final engine = PhysicsEngineFactory.create2D()..initialize();
 
   final floor = Physics2DBody(
     position: Vector2(320, 520),
@@ -33,7 +34,6 @@ void main() {
     engine.update(dt);
   }
 
-  final stats = engine.stats;
   print(
     'Ball position: (${ball.position.x.toStringAsFixed(2)}, '
     '${ball.position.y.toStringAsFixed(2)})',
@@ -42,7 +42,7 @@ void main() {
     'Ball velocity: (${ball.velocity.x.toStringAsFixed(2)}, '
     '${ball.velocity.y.toStringAsFixed(2)})',
   );
-  print('Backend: ${stats['backend'] ?? 'physics_2d'}');
+  print('Backend: ${engine.isNative ? 'Box2D' : 'pure Dart'}');
   print('Bodies: ${engine.bodyCount}');
 
   engine.dispose();

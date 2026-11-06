@@ -1,0 +1,7 @@
+# Tests that cannot pass on every machine are tagged and skipped here; run
+# one with `flutter test --tags <tag> --run-skipped`.
+tags:
+  perf:
+    skip: "Wall-clock budgets: run on a quiet machine with --tags perf --run-skipped."
+  jolt-dev:
+    skip: "Needs Jolt's dev flavour (hooks: user_defines: just_jolt: dev: true) and --tags jolt-dev --run-skipped."

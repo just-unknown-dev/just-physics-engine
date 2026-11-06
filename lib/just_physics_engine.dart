@@ -1,24 +1,20 @@
 /// just_physics_engine
 ///
-/// Standalone physics engine for Flutter with dual backends:
+/// Standalone physics engine for Flutter with dual 2-D backends:
 ///   - Native (Android/iOS/Windows/macOS/Linux): Box2D v3.2 via Dart FFI, from just_box_2d
 ///   - Web: pure-Dart fallback (SAT collision, spatial grid, impulse resolution)
 ///
-/// Core types (both backends):
-/// - [PhysicsEngineFactory]  — create the best backend for the current platform
-/// - [Physics2DEngine]       — pure-Dart engine (also returned on web)
-/// - [Box2DPhysicsEngine]    — Box2D v3.2 FFI engine (native; a stub on the web)
-/// - [Physics2DBody]         — shared rigid body state carrier
-/// - [Shape2D], [Circle2DShape], [Polygon2DShape], [Rectangle2DShape]
-/// - [CollisionManifold], [SpatialGrid], [BodyPair]
-/// - [CollisionDetector], [ForceManager]
-/// - [Ray2D]                 — 2D ray descriptor
-///
-/// Box2D-specific types (native only):
-/// - [Box2DWorld]            — native world + fixed-step accumulator
-/// - [Box2DBody]             — native body handle with prev/current state
-/// - [PhysicsGameLoop]       — fixed-timestep coordinator
-/// - [TransformInterpolator] — sub-frame render interpolation (α-blending)
+/// 2-D (both backends, one API):
+/// - [PhysicsEngineFactory]  — `create2D` gives the platform's engine
+/// - [Physics2DEngine]       — the engine: bodies, joints, queries, events
+/// - [Box2DPhysicsEngine]    — Box2D v3.2 through FFI (native; pure Dart on the web)
+/// - [Physics2DBody]         — a body: shared state the game reads and writes
+/// - [Shape2D] and its eight shapes ([Circle2DShape], [Rectangle2DShape],
+///   [Polygon2DShape], [Capsule2DShape], …), [CollisionManifold]
+/// - [Joint2D] and its kinds ([DistanceJoint2D], [RevoluteJoint2D], …;
+///   [Box2DJoint] natively), configured through [Joint2D]'s setters
+/// - [Ray2D], [Ray2DHit], [CircleCast2DHit], [Shape2DDistance]
+/// - [CharacterMover2D] and its queries
 ///
 /// 3D (also on its own in `package:just_physics_engine/physics_3d.dart`):
 /// - [Physics3DEngine]       — makes worlds; `PhysicsEngineFactory.create3D`
@@ -28,17 +24,12 @@
 /// - [Physics3DWorld]        — one simulation, with int body handles
 /// - [Physics3DUnsupportedError] — where 3D cannot run
 /// - shapes, settings, poses, hits and events (`Box3DShape`,
-///   `Body3DSettings`, `Body3DPoses`, `Query3DHit`, `Physics3DEvent`, …)
+///   `Body3DSettings`, `Body3DPoses`, `Query3DHit`, `Physics3DEvent`, …),
+///   with the math types they use ([Vector3], [Quaternion])
 library;
 
-// ── Pure-Dart 2D backend (web fallback, unchanged) ─────────────────────────
+export 'package:just_dart/just_dart.dart' show Quaternion, Vector3;
+
 export 'src/physics_2d/physics_2d.dart';
-
-// ── 3D: the interface and Jolt ─────────────────────────────────────────────
 export 'src/physics_3d/physics_3d.dart';
-
-// ── Box2D FFI backend (native platforms) ───────────────────────────────────
-// Native by default, so the analyzer and the API docs see the Box2D classes;
-// the web gets same-shaped stubs.
-export 'src/box2d/box2d_public_native.dart'
-    if (dart.library.js_interop) 'src/box2d/box2d_public_web.dart';
+export 'src/physics_engine_factory.dart';

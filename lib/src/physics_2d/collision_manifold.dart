@@ -11,12 +11,15 @@ class CollisionManifold {
   /// The depth of the penetration along the normal
   final double penetration;
 
+  /// A result: [isColliding], and the [normal] and [penetration] to push
+  /// the two apart along when they are.
   CollisionManifold({
     required this.isColliding,
     this.normal = Offset.zero,
     this.penetration = 0.0,
   });
 
+  /// No collision.
   factory CollisionManifold.empty() {
     return CollisionManifold(isColliding: false);
   }

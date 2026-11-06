@@ -280,14 +280,17 @@ final class Physics3DWorldSettings {
     this.reportContactStay = false,
     this.reportActivation = false,
   }) : gravity = gravity ?? Vector3(0, standardGravity, 0),
-       layerMasks = List.unmodifiable(
-         List.generate(
-           16,
-           (i) => layerMasks != null && i < layerMasks.length
-               ? layerMasks[i] & 0xFFFF
-               : 0xFFFF,
-         ),
-       );
+       layerMasks = normalizeLayerMasks(layerMasks);
+
+  /// [masks] as a world takes them: 16 rows, a missing row `0xFFFF` (that
+  /// layer collides with every layer), bits past the 16 layers dropped.
+  /// Unmodifiable.
+  static List<int> normalizeLayerMasks(List<int>? masks) => List.unmodifiable(
+    List.generate(
+      16,
+      (i) => masks != null && i < masks.length ? masks[i] & 0xFFFF : 0xFFFF,
+    ),
+  );
 
   /// Earth's gravity, m/s².
   static const double standardGravity = 9.81;
@@ -297,7 +300,8 @@ final class Physics3DWorldSettings {
 
   /// The collision grid, one row per layer: bit `b` of `layerMasks[a]` is
   /// set when layer `a` collides with layer `b`. A pair collides only when
-  /// both rows say so.
+  /// both rows say so. A live world's grid can change:
+  /// [Physics3DWorld.setLayerMasks].
   final List<int> layerMasks;
 
   /// The most bodies it can hold.

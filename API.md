@@ -4,52 +4,45 @@ This document summarizes the main public API exported by `package:just_physics_e
 
 ## Core Entry Points
 
-## `Physics2DEngine`
-
-Primary entry point and common API surface.
-
-Constructors:
-
-- `factory Physics2DEngine()`
-- `Physics2DEngine.pureDart({bool fixedTimestep = true})` — fixed 1/60 s sub-steps, the leftover kept as `alpha`
-
-`Physics2DEngine()` creates the best backend for the current platform:
-
-- native: `Box2DPhysicsEngine`
-- web: pure-Dart fallback
-
 ## `PhysicsEngineFactory`
 
-- `static Physics2DEngine create2D()` (the 2-D twin of `create3D`, below)
+- `static Physics2DEngine create2D()` — the platform's 2-D engine: `Box2DPhysicsEngine` on native platforms (falling back to the pure-Dart engine where just_box_2d's library is not built), the pure-Dart `Physics2DEngine` on the web
+- `static Physics3DEngine create3D({int workerThreads = -1})`, `unavailable3DReason`, `supports3D` — see [3D](#3d-packagejust_physics_enginephysics_3ddart)
 
-Compatibility entry point for explicit factory-style construction.
+## `Physics2DEngine`
 
-`Physics2DEngine.pureDart()` forces the Dart implementation regardless of platform.
+The 2-D engine: the pure-Dart one, and the API the native `Box2DPhysicsEngine` runs with the same meaning, so game code needs no backend branch.
+
+Constructor:
+
+- `Physics2DEngine.pureDart({bool fixedTimestep = true})` — the pure-Dart engine on any platform; fixed 1/60 s sub-steps, the leftover kept as `alpha`
 
 Key members:
 
-- `void initialize()`
-- `void update(double deltaTime)`
+- `void initialize()` — before adding bodies (the Box2D backend makes its world here)
+- `void update(double deltaTime)` — a `deltaTime` that is not a positive, finite number runs no step
 - `void dispose()`
-- `void addBody(Physics2DBody body)`
-- `void removeBody(Physics2DBody body)`
-- `void setGravity(double gx, double gy)`
-- `void renderDebug(Canvas canvas, Size size)`
-- `List<Physics2DBody> get bodies`
-- `int get bodyCount`
+- `void addBody(Physics2DBody body)`, `void removeBody(Physics2DBody body)` (and its joints)
+- `void setGravity(double gx, double gy)` — wakes sleeping dynamic bodies
+- `void renderDebug(Canvas canvas, Size size)`, `bool debugRender`
+- `List<Physics2DBody> get bodies` — a live view, not a copy; `int get bodyCount`
+- `bool get isNative` — whether Box2D runs (false for the pure-Dart engine, and for a Box2D engine without its library)
 - `Map<String, dynamic> get stats`
-- `bool debugRender`
 - `final Vector2 gravity` — change it with `setGravity`, which the native world hears too
 - `double get alpha` — the fixed-step leftover, for drawing between steps
-- `void cachePolygonShape(String cacheId, List<Offset> vertices)`
-- `List<Offset>? getCachedPolygonShape(String cacheId)`
 
-Body settings, changed while the simulation runs (see [`Physics2DBody`](#physics2dbody)):
+Body settings, changed while the simulation runs (see [`Physics2DBody`](#physics2dbody)); the native backend hears each at once:
 
+- `void setBodyActive(Physics2DBody body, bool active)` — out of the simulation (no motion, contacts, sensor overlaps, queries, movers or joints) and back, woken
+- `void wakeBody(Physics2DBody body)` — a sleeping body is simulated again
+- `void setBodyFixedRotation(Physics2DBody body, bool fixed)` — on a live body
+- `void setBodyTransform(body, x, y, {angle})`, `setBodyType`, `setBodyGravityScale` (wakes the body), `setBodyFilter`, `setBodyOneWay`
 - `void setBodyDamping(Physics2DBody body, double damping)` — linear (`drag`)
 - `void setBodyAngularDamping(Physics2DBody body, double damping)` — spin decay per second
 - `void setBodyCanSleep(Physics2DBody body, bool canSleep)` — `false` also wakes the body
 - `void setBodyBullet(Physics2DBody body, bool isBullet)` — continuous collision; only the native backend acts on it
+- `void setBodyFriction`, `setBodyRestitution`, `setBodySensor` (create-time only natively)
+- `void applyLinearImpulse(Physics2DBody body, double ix, double iy)`
 
 `stats` includes diagnostics such as body count, awake bodies, broad-phase stats, resolved collisions, and step time.
 
@@ -67,13 +60,32 @@ Events, read after `update` — that `update`'s own, however many fixed steps it
 - `void pollSensorBeginEvents(void Function(Physics2DBody sensor, Physics2DBody visitor) fn)`, `pollSensorEndEvents` — the sensor first
 - `void pollBodyMoveEvents(void Function(Physics2DBody body, {required bool fellAsleep}) fn)`
 
-Queries see every shape of a body, turned with the body as Box2D turns it (the pure-Dart engine's own collisions do not turn shapes):
+Queries see every shape of every active body, turned with the body as Box2D turns it (the pure-Dart engine's own collisions do not turn shapes):
 
 - `Ray2DHit? raycast(Ray2D ray, {Set<Physics2DBody>? exclude})`, `List<Ray2DHit> raycastAll(...)` — nearest first, one hit per body; a shape the ray starts inside is passed over
 - `CircleCast2DHit? circleCast(Offset origin, double radius, Offset motion, {Set<Physics2DBody>? exclude})` — Box2D's shape cast, stopping where the circle touches (to half a unit); one that starts out touching hits at `toi` 0
-- `List<Physics2DBody> queryAABB(Rect rect)`, `queryCircle(Offset center, double radius)`, `queryPoint(Offset point)` — on the native backend `queryAABB` answers with Box2D's boxes, kept a tenth of a metre larger than the shapes
+- `List<Physics2DBody> queryAABB(Rect rect)`, `queryCircle(Offset center, double radius)`, `queryPoint(Offset point)` — on the native backend `queryAABB` answers with Box2D's boxes, kept a tenth of a metre larger than the shapes, and the others take their candidates from Box2D's tree
 
-Joints — `addRevoluteJoint`, `addDistanceJoint`, `addWeldJoint`, `addPrismaticJoint`, `addWheelJoint`, `addMouseJoint`, `removeJoint`, `joints` (each `Joint2D` names its `bodies`). The Box2D backend makes native joints, all but the mouse joint, a Dart joint whose force reaches the native body. `removeJoint` destroys a native joint, and `removeBody` takes a body's joints with it. A slider's or a wheel's travel, and a hinge's angle, count from where the joint was made, as in Box2D. The pure-Dart engine moves bodies only: a body hinged away from its centre swings round the anchor, drawn turning as it swings.
+## Joints
+
+Made by the engine; anchors are world points as the bodies are now, and a joint's two bodies pass through each other unless `collideConnected` (on both backends; sensors still see them):
+
+- `Joint2D addRevoluteJoint(a, b, Offset worldAnchor, {bool collideConnected = false})`
+- `Joint2D addDistanceJoint(a, b, {Offset? anchorA, Offset? anchorB, double? length, double? minLength, double? maxLength, double springHertz = 0, double dampingRatio = 0.3, bool collideConnected = false})` — the anchors default to the centres, the length to their distance
+- `Joint2D addWeldJoint(a, b, {Offset? anchor, bool collideConnected = false})` — at their midpoint by default
+- `Joint2D addPrismaticJoint(a, b, Offset axis, {Offset? anchor, bool collideConnected = false})`, `Joint2D addWheelJoint(a, b, Offset axis, {Offset? anchor, bool collideConnected = false})` — through `b`'s centre by default; a wheel's suspension is 4 Hz, damping ratio 0.7, until `setSpring`
+- `Joint2D addMouseJoint(Physics2DBody b, Vector2 target)` — a Dart joint on both backends (Box2D v3 has none)
+- `void addJoint(Joint2D joint)`, `void removeJoint(Joint2D joint)` (destroys a native one), `List<Joint2D> get joints`
+
+`Joint2D`, the same calls in the same units on both backends:
+
+- `Joint2DKind kind`, `bool collideConnected`, `List<Physics2DBody> bodies`
+- `void setLimits(double lower, double upper, {bool enable = true})` — a hinge's angle (radians, from the angle it was made at), a slider's travel (from where it was made), a distance joint's shortest and longest length
+- `void setMotor(double speed, double maxForceOrTorque, {bool enable = true})` — a hinge's or wheel's spin, a slider's travel
+- `void setSpring(double hertz, double dampingRatio)` — a distance joint's (toward the middle of its range) or a wheel's suspension; 0 Hz takes it away
+- `Offset get reactionForce`, `double get reactionTorque` — what a native joint applied in the last step (zero for the pure-Dart joints)
+
+The kinds: `DistanceJoint2D` (`minLength`, `maxLength`, `springHertz`, `dampingRatio`, `currentLength`), `RevoluteJoint2D` (`jointAngle`), `PrismaticJoint2D` (`translation`), `WheelJoint2D`, `WeldJoint2D`, `MouseJoint2D` (`setTarget`, its own `stiffness`, `damping`, `maxForce`), and natively `Box2DJoint` (`isDestroyed`). A slider's or a wheel's travel, and a hinge's angle, count from where the joint was made, on both backends. The pure-Dart engine moves bodies only: a body hinged away from its centre swings round the anchor, drawn turning as it swings.
 
 `torque` turns a body by its `inertia` on the pure-Dart engine, and by its shapes' rotational inertia (Box2D's) on the native one.
 
@@ -85,26 +97,23 @@ Constructor:
 
 - `Box2DPhysicsEngine({double gravityX = 0.0, double gravityY = 981.0, int subSteps = 4, int numThreads = 0})`
 
-`numThreads` 0 means cores minus one, at most 4.
+`numThreads` 0 means cores minus one, at most 4. Bodies added before `initialize` go into the native world with it.
 
-Important extras:
+Extras:
 
-- `Box2DJoint? createRevoluteJoint(a, b, worldAnchor)`, `createPrismaticJoint(a, b, worldAnchor, axis)`, `createDistanceJoint(a, b, {minLength, maxLength})`, `createWeldJoint(a, b, worldAnchor)`, `createWheelJoint(a, b, worldAnchor, axis)`, `void destroyJoint(Box2DJoint joint)`
 - `void registerImpactCallback(void Function(int bodyA, int bodyB, double speed) callback, {double speedThreshold = 100.0})`: Box2D's hit events, every contact that closed faster than the threshold
-
-Box2D v3 has no mouse joint: `addMouseJoint` gives the pure-Dart `MouseJoint2D` on every backend. A native distance or wheel joint's spring is a frequency in hertz and a damping ratio (`Box2DJoint.setDistanceSpring`, `setWheelSpring`).
 - `Physics2DBody? bodyFromHandle(int handle)`
 
-`stats` includes backend details (`box2d_v3` or fallback), contact count, and fixed-step metrics.
+`stats` includes backend details (`box2d_v3` or fallback), contact count, and fixed-step metrics; `isNative` says which runs.
 
-On the web the class has the same API over the pure-Dart engine: the joint creators return null, `registerImpactCallback` does nothing and `bodyFromHandle` returns null.
+On the web the class has the same API over the pure-Dart engine: `registerImpactCallback` does nothing and `bodyFromHandle` returns null.
 
 ## Character Mover
 
 - `CharacterMover2D(Physics2DEngine engine)` — `CharacterMove2D move({required Mover2DShape shape, required Offset position, required Offset velocity, required double dt, Offset up, double maxSlopeAngle, double stepHeight, double stickToFloor, bool wasGrounded, Mover2DFilter filter, double mass, double pushStrength})`
 - `CharacterMove2D` — `position`, `velocity`, `groundState` (`Ground2DState`: `onGround`, `onSteepGround`, `notSupported`, `inAir`), `groundNormal`, `groundBody`, `contacts`, `isGrounded`
 - `Mover2DShape.capsule({radius, height})`, `Mover2DShape.box({width, height, cornerRadius})` — centred on the mover's position
-- `Mover2DFilter({categoryBits, maskBits, ignore})` — never sensors, never `ignore`
+- `Mover2DFilter({categoryBits, maskBits, ignore})` — never sensors, never `ignore`, never an inactive body
 - `Physics2DEngine.collideMover(shape, position, {filter})` → `List<Mover2DPlane>`; `Physics2DEngine.castMover(shape, position, translation, {filter})` → fraction `0..1` (native: in C)
 - `Mover2DSolver.solvePlanes(targetDelta, planes)`, `Mover2DSolver.clipVector(vector, planes)` — Box2D's plane solver
 - `Shape2DProxy`, `Shape2DDistance.between(a, b)`, `shapeCast2D(still, moving, translation, {required linearSlop, maxFraction, canEncroach})` — Box2D's GJK and shape cast in Dart
@@ -118,25 +127,25 @@ Shared simulation object used by both backends.
 
 Constructor:
 
-- `Physics2DBody({required Vector2 position, required Shape2D shape, Vector2? velocity, Vector2? acceleration, double mass = 1.0, double restitution = 0.5, double friction = 0.2, double angle = 0.0, double angularVelocity = 0.0, double torque = 0.0, double inertia = 1.0, double drag = 0.1, double angularDamping = 0.0, bool useGravity = true, bool isActive = true, bool checkCollision = true, bool isAwake = true, bool canSleep = true, double sleepTimer = 0.0, double sleepVelocityThreshold = 5.0, double sleepTimeThreshold = 0.5, …})`
+- `Physics2DBody({required Vector2 position, required Shape2D shape, Vector2? velocity, Vector2? acceleration, double mass = 1.0, double restitution = 0.5, double friction = 0.2, double angle = 0.0, double angularVelocity = 0.0, double torque = 0.0, double inertia = 1.0, double drag = 0.1, double angularDamping = 0.0, bool useGravity = true, double gravityScale = 1.0, bool isActive = true, bool isAwake = true, bool canSleep = true, double sleepTimer = 0.0, double sleepVelocityThreshold = 5.0, double sleepTimeThreshold = 0.5, …})`
 
 Methods:
 
-- `void applyForce(Vector2 force)`
-- `void applyTorque(double applicationTorque)`
-- `void applyImpulse(Vector2 impulse)`
+- `void applyForce(Vector2 force)`, `void applyTorque(double applicationTorque)` — for the next step; a dynamic body wakes, anything else takes none
+- `Rect boundsAt(Offset position)` — the box round all its shapes, unturned
+- `List<Shape2DProxy> proxies({Offset shift = Offset.zero})` — its shapes as the distance and cast tests see them, turned with it and moved by `shift`
 
 Common fields:
 
 - `position`, `velocity`, `acceleration`
-- `shape`
+- `shape`, `additionalShapes`
 - `mass`, `inverseMass`
 - `restitution`, `friction`, `drag`, `angularDamping` — `drag` slows only the velocity and `angularDamping` only the spin, on both backends
-- `angle`, `angularVelocity`, `torque`, `inertia`, `inverseInertia`
-- sleep and activity flags (`isActive`, `isAwake`, `canSleep`, etc.)
+- `angle`, `angularVelocity`, `torque`, `inertia`, `inverseInertia`, `fixedRotation`
+- activity and sleep (`isActive`, `isAwake`, `canSleep`, …)
 - `isBullet` (continuous collision; native backend only)
 
-Changed while the simulation runs through the engine, so the native backend hears it: `setBodyFriction`, `setBodyRestitution`, `setBodyDamping`, `setBodyAngularDamping`, `setBodyCanSleep` (forbidding sleep wakes the body), `setBodyBullet`, `setBodyType`, `setBodyGravityScale`, `setBodyFilter`, `setBodyOneWay`, `setBodyTransform`.
+A field written directly reaches the native backend at the next `update` for `velocity`, `angularVelocity`, forces, `isAwake`, `isActive`, `fixedRotation`, the type, gravity scale and mass; the others need the engine's `setBody*` method.
 
 ## `Shape2D`
 
@@ -144,8 +153,8 @@ Abstract base for collision geometry.
 
 Methods:
 
-- `CollisionManifold getManifold(Offset posA, Shape2D other, Offset posB)`
-- `Rect getBounds(Offset position)`
+- `CollisionManifold manifoldWith(Offset posA, Shape2D other, Offset posB)`
+- `Rect boundsAt(Offset position)`
 - `double get area` — how much ground it covers (0 for a segment or a chain); a subclass must give it
 
 Implementations:
@@ -178,34 +187,6 @@ Fields:
 - `normal`
 - `penetration`
 
-## Broad-Phase and Helpers
-
-## `SpatialGrid`
-
-Uniform-grid broad-phase helper.
-
-Constructor:
-
-- `SpatialGrid(double cellSize)`
-
-Methods and properties:
-
-- `void clear()`
-- `void insert(Physics2DBody body)`
-- `void syncBodies(Iterable<Physics2DBody> bodies)`
-- `void removeBody(Physics2DBody body)`
-- `List<BodyPair> getPotentialCollisions()`
-- `int get dirtyBodyCount`
-- `int get trackedCellCount`
-- `int get trackedBodyCount`
-
-## `BodyPair`
-
-Simple pair container for broad-phase candidates.
-
-- `BodyPair(Physics2DBody a, Physics2DBody b)`
-- Fields: `a`, `b`
-
 ## `Ray2D`
 
 2D ray descriptor.
@@ -220,70 +201,6 @@ Members:
 - `Offset at(double t)`
 - Fields: `origin`, `direction`, `maxDistance`
 
-## Utility Types
-
-## `CollisionDetector`
-
-Manual overlap helper using AABB checks.
-
-Members:
-
-- `void addBody(Physics2DBody body)`
-- `void removeBody(Physics2DBody body)`
-- `List<(Physics2DBody, Physics2DBody)> detectCollisions()`
-
-## `ForceManager`
-
-Applies global forces to a set of bodies.
-
-Members:
-
-- `Vector2 gravity`
-- `void setGravity(double x, double y)`
-- `void applyGravity(Iterable<Physics2DBody> bodies)`
-
-## Native Box2D Public Types
-
-These are the native classes, and what the API docs show. On the web the same API is there and does nothing (the pure-Dart engine runs instead); the static `Box2DJointFactory` creators, which need a native world, throw `UnsupportedError`.
-
-## `Box2DWorld`
-
-- `factory Box2DWorld({double gravityX = 0.0, double gravityY = 981.0, int numThreads = 0, int subSteps = 4})` — `numThreads` 0 means cores minus one, at most 4
-- `int step(double dt)`
-- `void setGravity(double gx, double gy)`
-- `void dispose()`
-- Getters: `double alpha`, `int handle`, `int subSteps`
-
-## `Box2DBody`
-
-Constructors:
-
-- `Box2DBody.dynamic(...)`
-- `Box2DBody.static(...)`
-- `Box2DBody.ofType({required int worldHandle, required int bodyTypeIndex, required double posX, required double posY, double angle = 0.0})`
-
-Members:
-
-- `void setTransform(double x, double y, double angle, {bool wake = true})`
-- `int get typeIndex`, `void setType(int bodyTypeIndex)`
-- `void capturePrevious()`
-- `void destroy()`
-- `void applyForce(double fx, double fy)`
-- `void applyLinearImpulse(double ix, double iy)`
-- `void applyTorque(double t)`
-- `void setLinearVelocity(double vx, double vy)`
-- state fields: `prevX`, `prevY`, `prevAngle`, `currentX`, `currentY`, `currentAngle`, `velocityX`, `velocityY`, `angularVelocity` (the spin Box2D reported after the last step)
-
-## `PhysicsGameLoop`
-
-- `PhysicsGameLoop(Box2DWorld world)`
-- `int advance(double dt)`
-- `double get alpha`
-
-## `TransformInterpolator`
-
-- `static void interpolate({required Map<Physics2DBody, Box2DBody> bodyMap, required double alpha, required void Function(Physics2DBody body, double x, double y, double angle) write})`
-
 ## 3D (`package:just_physics_engine/physics_3d.dart`)
 
 ## `PhysicsEngineFactory` (3D)
@@ -292,7 +209,7 @@ Members:
 - `static String? get unavailable3DReason`
 - `static bool get supports3D`
 
-Asking starts Jolt where it can run, with its default job system (cores minus one threads): call `create3D` first when the thread count matters.
+Asking starts Jolt where it can run, with its default job system (cores minus one threads): call `create3D` first when the thread count matters. `create2D` is there too, but its `Physics2DEngine` is exported by `just_physics_engine.dart`.
 
 ## `Physics3DEngine` (interface)
 
@@ -307,16 +224,16 @@ Implementations: `JoltPhysicsEngine` (native; stub on the web), `FakePhysics3DEn
 
 Int handles for bodies, joints and characters. Dead handles, and handles from another world, do nothing. A character's body (`characterBody`) belongs to its character: `destroyBody` and `createJoint` pass it over. A destroyed body's handle can come back for a new body (Jolt reuses ids), so forget it.
 
-- world: `dispose`, `isDisposed`, `gravity`, `bodyCount`
+- world: `dispose`, `isDisposed`, `gravity`, `bodyCount`, `layerMasks`, `setLayerMasks` (the collision grid of a live world: every body that can move wakes, so pairs at rest are judged again)
 - bodies: `createBody` (0 for a shape that is not `isValid`, a mesh or height field on a body that is not static, a layer outside 0–15, a full world), `destroyBody`, `isBody`, `setBodyPose`, `moveKinematic`, `setLinearVelocity`, `setAngularVelocity`, `addForce`, `addTorque`, `addImpulse`, `addAngularImpulse`, `setFriction`, `setRestitution`, `setGravityFactor`, `setLayer`, `setMotionQuality`, `wake`, `isAwake`
 - joints: `createJoint`, `destroyJoint`, `isJoint`, `setJointEnabled`, `setJointMotor`, `jointValue`
-- characters: `createCharacter`, `destroyCharacter`, `isCharacter`, `characterBody`, `moveCharacter`, `characterState`, `setCharacterPosition`, `characterContacts`
-- stepping: `step`, `readMovedBodies`, `readBodies`, `drainEvents`
+- characters: `createCharacter`, `destroyCharacter`, `isCharacter`, `characterBody`, `moveCharacter`, `characterState`, `setCharacterPosition`, `readCharacterContacts` (packed, into `Character3DContacts`), `characterContacts` (objects)
+- stepping: `step`, `readMovedBodies`, `readBodies`, `readEvents` (packed, into `Physics3DEvents`: no object per event), `drainEvents` (objects, for tests and code that runs rarely)
 - queries: `raycast`, `shapeCast`, `overlap`; `debugLines`
 
 ## 3D data
 
-Shapes `Box3DShape`, `Sphere3DShape`, `Capsule3DShape`, `Cylinder3DShape`, `ConvexHull3DShape`, `Mesh3DShape`, `HeightField3DShape`, `Compound3DShape`, `Transformed3DShape`; settings `Physics3DWorldSettings`, `Body3DSettings`, `Joint3DSettings`, `Character3DSettings`; results `Body3DPoses`, `Query3DHit`, `Physics3DEvent`, `Character3DState`, `Character3DContact`; the query filter `Query3DFilter` (`Query3DFilter.all`); enums `Body3DType`, `Motion3DQuality`, `Joint3DKind`, `Motor3DState`, `SixDofAxis3DMode`, `Physics3DEventType`, `Ground3DState`; `Physics3DUnsupportedError`.
+Shapes `Box3DShape`, `Sphere3DShape`, `Capsule3DShape`, `Cylinder3DShape`, `ConvexHull3DShape`, `Mesh3DShape`, `HeightField3DShape`, `Compound3DShape`, `Transformed3DShape`; settings `Physics3DWorldSettings` (`normalizeLayerMasks`), `Body3DSettings`, `Joint3DSettings`, `Character3DSettings`; results `Body3DPoses`, `Physics3DEvents`, `Character3DContacts`, `Query3DHit`, `Physics3DEvent`, `Character3DState`, `Character3DContact`; the query filter `Query3DFilter` (`Query3DFilter.all`); enums `Body3DType`, `Motion3DQuality`, `Joint3DKind`, `Motor3DState`, `SixDofAxis3DMode`, `Physics3DEventType`, `Ground3DState`; `Physics3DUnsupportedError`. Both public libraries export just_dart's `Vector3` and `Quaternion`, which the 3D API takes.
 
 `Shape3D.isValid` says whether a backend can make a shape (finite sizes above zero, enough points, mesh indices inside its vertex list); both backends make nothing of one that is not.
 

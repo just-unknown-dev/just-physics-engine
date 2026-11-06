@@ -32,7 +32,8 @@ final class JoltWorld implements Physics3DWorld, Finalizable {
   /// Makes a world as [settings] say. Throws a [StateError] when Jolt
   /// cannot (it was not initialised).
   JoltWorld(Physics3DWorldSettings settings)
-    : _gravity = Vector3.copy(settings.gravity) {
+    : _gravity = Vector3.copy(settings.gravity),
+      _layerMasks = settings.layerMasks {
     final s = _alloc<JJ_WorldSettings>();
     s.ref
       ..gravity[0] = settings.gravity.x
@@ -140,6 +141,7 @@ final class JoltWorld implements Physics3DWorld, Finalizable {
     const (JJ_CharacterContact) => sizeOf<JJ_CharacterContact>(),
     const (JJ_Event) => sizeOf<JJ_Event>(),
     const (JJ_Hit) => sizeOf<JJ_Hit>(),
+    const (Uint32) => sizeOf<Uint32>(),
     _ => throw ArgumentError('No size for $T'),
   };
 
@@ -212,6 +214,26 @@ final class JoltWorld implements Physics3DWorld, Finalizable {
 
   @override
   int get bodyCount => _gone ? 0 : jj_world_body_count(handle);
+
+  List<int> _layerMasks;
+  late final Pointer<Uint32> _grid = _alloc<Uint32>(16);
+
+  @override
+  List<int> get layerMasks => _layerMasks;
+
+  @override
+  void setLayerMasks(List<int> masks) {
+    if (_gone) return;
+    final rows = Physics3DWorldSettings.normalizeLayerMasks(masks);
+    var same = true;
+    for (var i = 0; i < 16; i++) {
+      same = same && rows[i] == _layerMasks[i];
+      _grid[i] = rows[i];
+    }
+    if (same) return;
+    _layerMasks = rows;
+    jj_world_set_collision_grid(handle, _grid);
+  }
 
   /// Rebuilds the broad phase; worth it after adding many static bodies at
   /// once (a level loading).
@@ -657,8 +679,11 @@ final class JoltWorld implements Physics3DWorld, Finalizable {
   }
 
   @override
-  List<Character3DContact> characterContacts(int character) {
-    if (!_myCharacter(character)) return const [];
+  void readCharacterContacts(int character, Character3DContacts out) {
+    if (!_myCharacter(character)) {
+      out.set(0, const [], Float32List(0), const []);
+      return;
+    }
     var n = jj_character_contacts(character, _contacts, _contactCapacity);
     if (n == _contactCapacity) {
       jj_character_state(character, _characterState);
@@ -670,21 +695,49 @@ final class JoltWorld implements Physics3DWorld, Finalizable {
         n = jj_character_contacts(character, _contacts, _contactCapacity);
       }
     }
+    if (n > _contactFlags.length) {
+      _touched = Int64List(2 * n);
+      _contactData = Float32List(n * Character3DContacts.stride);
+      _contactFlags = Uint8List(n);
+    }
+    for (var i = 0; i < n; i++) {
+      final c = _contacts[i];
+      final o = i * Character3DContacts.stride;
+      _touched
+        ..[2 * i] = c.body
+        ..[2 * i + 1] = c.character;
+      _contactData
+        ..[o] = c.position[0]
+        ..[o + 1] = c.position[1]
+        ..[o + 2] = c.position[2]
+        ..[o + 3] = c.normal[0]
+        ..[o + 4] = c.normal[1]
+        ..[o + 5] = c.normal[2]
+        ..[o + 6] = c.velocity[0]
+        ..[o + 7] = c.velocity[1]
+        ..[o + 8] = c.velocity[2]
+        ..[o + 9] = c.distance;
+      _contactFlags[i] = (c.isSensor ? 1 : 0) | (c.hadCollision ? 2 : 0);
+    }
+    out.set(
+      n,
+      Int64List.sublistView(_touched, 0, 2 * n),
+      Float32List.sublistView(_contactData, 0, n * Character3DContacts.stride),
+      Uint8List.sublistView(_contactFlags, 0, n),
+    );
+  }
+
+  // What readCharacterContacts hands out, refilled on every read.
+  Int64List _touched = Int64List(32);
+  Float32List _contactData = Float32List(16 * Character3DContacts.stride);
+  Uint8List _contactFlags = Uint8List(16);
+  final Character3DContacts _contactsRead = Character3DContacts();
+
+  @override
+  List<Character3DContact> characterContacts(int character) {
+    readCharacterContacts(character, _contactsRead);
     return [
-      for (var i = 0; i < n; i++)
-        () {
-          final c = _contacts[i];
-          return Character3DContact(
-            body: c.body,
-            character: c.character,
-            position: Vector3(c.position[0], c.position[1], c.position[2]),
-            normal: Vector3(c.normal[0], c.normal[1], c.normal[2]),
-            velocity: Vector3(c.velocity[0], c.velocity[1], c.velocity[2]),
-            distance: c.distance,
-            isSensor: c.isSensor,
-            hadCollision: c.hadCollision,
-          );
-        }(),
+      for (var i = 0; i < _contactsRead.count; i++) _contactsRead.contactAt(i),
     ];
   }
 
@@ -765,25 +818,52 @@ final class JoltWorld implements Physics3DWorld, Finalizable {
     Physics3DEventType.bodyDeactivated, // 7
   ];
 
+  // What readEvents hands out, grown as needed and refilled on every read.
+  Int32List _eventTypeBuf = Int32List(256);
+  Int64List _eventBodyBuf = Int64List(512);
+  Float32List _eventDataBuf = Float32List(256 * Physics3DEvents.stride);
+  final Physics3DEvents _eventsRead = Physics3DEvents();
+
+  /// Room in the event buffers for [needed] events, keeping what is there.
+  void _growEventBuffers(int needed) {
+    var capacity = _eventTypeBuf.length;
+    if (needed <= capacity) return;
+    while (capacity < needed) {
+      capacity *= 2;
+    }
+    _eventTypeBuf = Int32List(capacity)..setAll(0, _eventTypeBuf);
+    _eventBodyBuf = Int64List(2 * capacity)..setAll(0, _eventBodyBuf);
+    _eventDataBuf = Float32List(capacity * Physics3DEvents.stride)
+      ..setAll(0, _eventDataBuf);
+  }
+
   @override
-  List<Physics3DEvent> drainEvents() {
-    if (_gone) return const [];
-    final out = <Physics3DEvent>[];
+  void readEvents(Physics3DEvents out) {
+    if (_gone) {
+      out.set(0, const [], const [], Float32List(0));
+      return;
+    }
+    var count = 0;
     while (true) {
       final n = jj_drain_events(handle, _events, _eventCapacity);
+      _growEventBuffers(count + n);
       for (var i = 0; i < n; i++) {
         final e = _events[i];
         if (e.type < 1 || e.type > _eventTypes.length) continue;
-        out.add(
-          Physics3DEvent(
-            _eventTypes[e.type - 1],
-            e.bodyA,
-            e.bodyB,
-            point: Vector3(e.point[0], e.point[1], e.point[2]),
-            normal: Vector3(e.normal[0], e.normal[1], e.normal[2]),
-            depth: e.depth,
-          ),
-        );
+        final o = count * Physics3DEvents.stride;
+        _eventTypeBuf[count] = _eventTypes[e.type - 1].index;
+        _eventBodyBuf
+          ..[2 * count] = e.bodyA
+          ..[2 * count + 1] = e.bodyB;
+        _eventDataBuf
+          ..[o] = e.point[0]
+          ..[o + 1] = e.point[1]
+          ..[o + 2] = e.point[2]
+          ..[o + 3] = e.normal[0]
+          ..[o + 4] = e.normal[1]
+          ..[o + 5] = e.normal[2]
+          ..[o + 6] = e.depth;
+        count++;
       }
       if (n < _eventCapacity) break;
       if (_eventCapacity < 8192) {
@@ -792,7 +872,18 @@ final class JoltWorld implements Physics3DWorld, Finalizable {
         _events = _alloc<JJ_Event>(_eventCapacity);
       }
     }
-    return out;
+    out.set(
+      count,
+      Int32List.sublistView(_eventTypeBuf, 0, count),
+      Int64List.sublistView(_eventBodyBuf, 0, 2 * count),
+      Float32List.sublistView(_eventDataBuf, 0, count * Physics3DEvents.stride),
+    );
+  }
+
+  @override
+  List<Physics3DEvent> drainEvents() {
+    readEvents(_eventsRead);
+    return [for (var i = 0; i < _eventsRead.count; i++) _eventsRead.eventAt(i)];
   }
 
   // ── Queries ───────────────────────────────────────────────────────────

@@ -84,6 +84,80 @@ enum Physics3DEventType {
   bodyDeactivated,
 }
 
+/// Events from steps, packed: [count] events, each a type, two bodies and
+/// [stride] floats — the contact point (3), the normal from the first body
+/// to the second (3) and how deep they overlap (1) — with no object per
+/// event ([Physics3DWorld.readEvents]).
+///
+/// A world refills it on every read, into its own buffers; the contents are
+/// good until the world's next read, and stay readable after the world is
+/// gone.
+final class Physics3DEvents {
+  /// An empty buffer.
+  Physics3DEvents();
+
+  /// Floats per event.
+  static const int stride = 7;
+
+  /// How many events were written.
+  int count = 0;
+
+  /// Each event's [Physics3DEventType.index], [count] of them.
+  List<int> types = const [];
+
+  /// The two bodies of each event, first then second: 2 × [count].
+  List<int> bodies = const [];
+
+  /// [count] × [stride] floats.
+  Float32List data = Float32List(0);
+
+  /// Sets [count], [types], [bodies] and [data] (a backend's own buffers).
+  void set(int count, List<int> types, List<int> bodies, Float32List data) {
+    this.count = count;
+    this.types = types;
+    this.bodies = bodies;
+    this.data = data;
+  }
+
+  /// What the [i]th event is.
+  Physics3DEventType typeOf(int i) => Physics3DEventType.values[types[i]];
+
+  /// The [i]th event's first body.
+  int bodyAOf(int i) => bodies[2 * i];
+
+  /// The [i]th event's second body; 0 for activation events.
+  int bodyBOf(int i) => bodies[2 * i + 1];
+
+  /// Where the [i]th event's bodies touch, written into [out].
+  void pointInto(int i, Vector3 out) {
+    final o = i * stride;
+    out.setValues(data[o], data[o + 1], data[o + 2]);
+  }
+
+  /// The [i]th event's normal, from its first body to its second (zero for
+  /// sensors), written into [out].
+  void normalInto(int i, Vector3 out) {
+    final o = i * stride;
+    out.setValues(data[o + 3], data[o + 4], data[o + 5]);
+  }
+
+  /// How far the [i]th event's bodies overlap.
+  double depthOf(int i) => data[i * stride + 6];
+
+  /// The [i]th event as an object.
+  Physics3DEvent eventAt(int i) {
+    final o = i * stride;
+    return Physics3DEvent(
+      typeOf(i),
+      bodyAOf(i),
+      bodyBOf(i),
+      point: Vector3(data[o], data[o + 1], data[o + 2]),
+      normal: Vector3(data[o + 3], data[o + 4], data[o + 5]),
+      depth: data[o + 6],
+    );
+  }
+}
+
 /// One event from a step. Begin and stay events carry a contact point, the
 /// normal pointing from [bodyA] to [bodyB] (zero for sensors) and how deep
 /// they overlap.
@@ -262,4 +336,88 @@ final class Character3DContact {
 
   /// Whether the character actually ran into it.
   final bool hadCollision;
+}
+
+/// What a character touched, packed: [count] contacts, each the body and the
+/// character touched (one of them 0), [stride] floats — position (3), normal
+/// toward the character (3), velocity of the point touched (3), distance
+/// (1) — and two flags, with no object per contact
+/// ([Physics3DWorld.readCharacterContacts]).
+///
+/// A world refills it on every read, into its own buffers; the contents are
+/// good until the world's next read.
+final class Character3DContacts {
+  /// An empty buffer.
+  Character3DContacts();
+
+  /// Floats per contact.
+  static const int stride = 10;
+
+  /// How many contacts were written.
+  int count = 0;
+
+  /// The body and the character of each contact: 2 × [count].
+  List<int> touched = const [];
+
+  /// [count] × [stride] floats.
+  Float32List data = Float32List(0);
+
+  /// Each contact's flags: bit 0 a sensor, bit 1 an actual collision.
+  List<int> flags = const [];
+
+  /// Sets [count], [touched], [data] and [flags] (a backend's own buffers).
+  void set(int count, List<int> touched, Float32List data, List<int> flags) {
+    this.count = count;
+    this.touched = touched;
+    this.data = data;
+    this.flags = flags;
+  }
+
+  /// The body the [i]th contact touched, or 0.
+  int bodyOf(int i) => touched[2 * i];
+
+  /// The character the [i]th contact touched, or 0.
+  int characterOf(int i) => touched[2 * i + 1];
+
+  /// Where the [i]th contact is, written into [out].
+  void positionInto(int i, Vector3 out) {
+    final o = i * stride;
+    out.setValues(data[o], data[o + 1], data[o + 2]);
+  }
+
+  /// The [i]th contact's normal, toward the character, written into [out].
+  void normalInto(int i, Vector3 out) {
+    final o = i * stride;
+    out.setValues(data[o + 3], data[o + 4], data[o + 5]);
+  }
+
+  /// How fast the point the [i]th contact touched moves, written into [out].
+  void velocityInto(int i, Vector3 out) {
+    final o = i * stride;
+    out.setValues(data[o + 6], data[o + 7], data[o + 8]);
+  }
+
+  /// The [i]th contact's distance: zero or less when touching.
+  double distanceOf(int i) => data[i * stride + 9];
+
+  /// Whether the [i]th contact's body is a sensor.
+  bool isSensor(int i) => flags[i] & 1 != 0;
+
+  /// Whether the character actually ran into the [i]th contact's body.
+  bool hadCollision(int i) => flags[i] & 2 != 0;
+
+  /// The [i]th contact as an object.
+  Character3DContact contactAt(int i) {
+    final o = i * stride;
+    return Character3DContact(
+      body: bodyOf(i),
+      character: characterOf(i),
+      position: Vector3(data[o], data[o + 1], data[o + 2]),
+      normal: Vector3(data[o + 3], data[o + 4], data[o + 5]),
+      velocity: Vector3(data[o + 6], data[o + 7], data[o + 8]),
+      distance: data[o + 9],
+      isSensor: isSensor(i),
+      hadCollision: hadCollision(i),
+    );
+  }
 }

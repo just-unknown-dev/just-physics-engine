@@ -538,61 +538,6 @@ final class CharacterMover2D {
 
 double _moverDot(Offset a, Offset b) => a.dx * b.dx + a.dy * b.dy;
 
-/// The GJK proxies of [body]'s shapes, relative to [origin], turned with
-/// the body as Box2D turns them — the mover and the queries see shapes so
-/// on both backends, though the pure-Dart engine's own collisions do not
-/// turn them. A segment, and each segment of a chain, is the capsule its
-/// thickness makes, as both backends collide it.
-List<Shape2DProxy> _shapeProxiesOf(Physics2DBody body, Offset origin) {
-  final c = math.cos(body.angle), s = math.sin(body.angle);
-  final px = body.position.x - origin.dx, py = body.position.y - origin.dy;
-  Offset at(Offset p) =>
-      Offset(c * p.dx - s * p.dy + px, s * p.dx + c * p.dy + py);
-  final out = <Shape2DProxy>[];
-  void add(Shape2D shape) {
-    switch (shape) {
-      case Circle2DShape():
-        out.add(Shape2DProxy([at(shape.center)], shape.radius));
-      case Capsule2DShape():
-        out.add(
-          Shape2DProxy([at(shape.center1), at(shape.center2)], shape.radius),
-        );
-      case RoundedPolygon2DShape():
-        out.add(
-          Shape2DProxy([
-            for (final v in shape.vertices) at(v),
-          ], shape.cornerRadius),
-        );
-      case Polygon2DShape():
-        if (shape.vertices.isNotEmpty) {
-          out.add(Shape2DProxy([for (final v in shape.vertices) at(v)], 0));
-        }
-      case Segment2DShape():
-        out.add(
-          Shape2DProxy([at(shape.point1), at(shape.point2)], shape.thickness),
-        );
-      case Chain2DShape():
-        final v = shape.vertices;
-        if (v.length < 2) break;
-        final n = shape.loop && v.length > 2 ? v.length : v.length - 1;
-        for (var i = 0; i < n; i++) {
-          out.add(
-            Shape2DProxy([
-              at(v[i]),
-              at(v[(i + 1) % v.length]),
-            ], shape.thickness),
-          );
-        }
-      default:
-        break;
-    }
-  }
-
-  add(body.shape);
-  body.additionalShapes.forEach(add);
-  return out;
-}
-
 /// The way a one-way [body] is solid from, as the normal of a surface
 /// facing a mover it holds; null for an ordinary body.
 Offset? _moverSolidSide(Physics2DBody body) {
@@ -605,23 +550,6 @@ Offset? _moverSolidSide(Physics2DBody body) {
   };
 }
 
-/// [body]'s bounds round all its shapes, turned as it is: the box round its
-/// unturned bounds turned about its position.
-Rect _turnedBoundsOf(Physics2DBody body) {
-  final position = body.position.toOffset();
-  final bounds = body.getCompoundBounds(position);
-  if (body.angle == 0) return bounds;
-  final c = math.cos(body.angle), s = math.sin(body.angle);
-  final d = bounds.center - position;
-  final centre = Offset(c * d.dx - s * d.dy, s * d.dx + c * d.dy) + position;
-  final hw = bounds.width / 2, hh = bounds.height / 2;
-  return Rect.fromCenter(
-    center: centre,
-    width: 2 * (c.abs() * hw + s.abs() * hh),
-    height: 2 * (s.abs() * hw + c.abs() * hh),
-  );
-}
-
 /// The pure-Dart answers to [Physics2DEngine.collideMover] and
 /// [Physics2DEngine.castMover]; the native backend answers in C with the same
 /// rules.
@@ -632,7 +560,7 @@ extension on Physics2DEngine {
   ) sync* {
     for (final body in bodies) {
       if (!filter.passes(body)) continue;
-      if (!_turnedBoundsOf(body).overlaps(box)) continue;
+      if (!body._turnedBounds.overlaps(box)) continue;
       yield body;
     }
   }
@@ -651,7 +579,7 @@ extension on Physics2DEngine {
     final planes = <Mover2DPlane>[];
     for (final body in _moverCandidates(box, filter)) {
       final solid = _moverSolidSide(body);
-      for (final proxy in _shapeProxiesOf(body, position)) {
+      for (final proxy in body.proxies(shift: -position)) {
         final d = Shape2DDistance.between(proxy, mover);
         final totalRadius = proxy.radius + mover.radius;
         if (d.overlaps || d.distance > totalRadius) continue;
@@ -695,7 +623,7 @@ extension on Physics2DEngine {
       final solid = _moverSolidSide(body);
       // A one-way platform stops only a mover coming at it from its solid side.
       if (solid != null && _moverDot(translation, solid) >= 0) continue;
-      for (final proxy in _shapeProxiesOf(body, position)) {
+      for (final proxy in body.proxies(shift: -position)) {
         if (solid != null) {
           // Partway through it already (rising through, or carried into
           // it): passed over, as collideMover passes over it.

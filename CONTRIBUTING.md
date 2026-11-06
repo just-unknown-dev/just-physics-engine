@@ -92,7 +92,7 @@ When opening a bug report, include:
 
 | Tool | Minimum Version | Recommended Version |
 |------|------------------|---------------------|
-| Flutter | 3.41.0 | latest stable |
+| Flutter | 3.47.0 | latest stable |
 | Dart SDK | 3.11.0 | 3.11.x |
 
 In the Just Game Engine workspace this package lives at `packages/just_physics_engine`; on its own, work from the clone's root.

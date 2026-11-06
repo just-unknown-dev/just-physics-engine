@@ -1,12 +1,18 @@
 part of 'physics_2d_engine.dart';
 
 /// Base class for collision shapes.
+///
+/// Shapes are placed relative to their body's position, unturned: the
+/// pure-Dart engine's own collisions do not turn them (its queries and the
+/// native backend do).
 abstract class Shape2D {
-  /// Check collision and return manifold.
-  CollisionManifold getManifold(Offset posA, Shape2D other, Offset posB);
+  /// How this shape at [posA] touches [other] at [posB]: whether they
+  /// overlap, and the normal (from this shape toward [other]) and depth to
+  /// push them apart along.
+  CollisionManifold manifoldWith(Offset posA, Shape2D other, Offset posB);
 
-  /// Get the axis-aligned bounding box for this shape.
-  Rect getBounds(Offset position);
+  /// The axis-aligned box round this shape for a body at [position].
+  Rect boundsAt(Offset position);
 
   /// How much ground it covers, in square units: 0 for a line (a segment or
   /// a chain).
@@ -15,6 +21,7 @@ abstract class Shape2D {
 
 /// A circular collision shape.
 class Circle2DShape extends Shape2D {
+  /// The circle's radius.
   final double radius;
 
   /// Where the circle's centre is, relative to the body's position: zero
@@ -25,6 +32,7 @@ class Circle2DShape extends Shape2D {
   /// does not turn shapes, keeps it where it is.
   final Offset center;
 
+  /// A circle of [radius], centred [center] from its body's position.
   Circle2DShape(this.radius, {this.center = Offset.zero});
 
   /// The circle's centre in the world, for a body at [position].
@@ -35,7 +43,7 @@ class Circle2DShape extends Shape2D {
   double get area => math.pi * radius * radius;
 
   @override
-  CollisionManifold getManifold(Offset posA, Shape2D other, Offset posB) {
+  CollisionManifold manifoldWith(Offset posA, Shape2D other, Offset posB) {
     if (other is Circle2DShape) {
       final delta = other.centerAt(posB) - centerAt(posA);
       final distance = delta.distance;
@@ -55,7 +63,7 @@ class Circle2DShape extends Shape2D {
         other is Segment2DShape ||
         other is Chain2DShape) {
       // Delegate to the other shape and flip the normal so it points A→B.
-      final m = other.getManifold(posB, this, posA);
+      final m = other.manifoldWith(posB, this, posA);
       if (!m.isColliding) return CollisionManifold.empty();
       return CollisionManifold(
         isColliding: true,
@@ -67,7 +75,7 @@ class Circle2DShape extends Shape2D {
   }
 
   @override
-  Rect getBounds(Offset position) {
+  Rect boundsAt(Offset position) {
     return Rect.fromCircle(center: centerAt(position), radius: radius);
   }
 }
@@ -77,6 +85,7 @@ class Polygon2DShape extends Shape2D {
   /// Vertices defined relative to the center of the body.
   List<Offset> vertices;
 
+  /// A convex polygon of [vertices], relative to its body's position.
   Polygon2DShape(this.vertices);
 
   @override
@@ -91,13 +100,13 @@ class Polygon2DShape extends Shape2D {
   }
 
   @override
-  CollisionManifold getManifold(Offset posA, Shape2D other, Offset posB) {
+  CollisionManifold manifoldWith(Offset posA, Shape2D other, Offset posB) {
     if (other is RoundedPolygon2DShape) {
       // Check this before the plain Polygon2DShape branch below — RoundedPolygon2DShape
       // extends Polygon2DShape, so `other is Polygon2DShape` would otherwise match
       // here first and silently ignore the other body's cornerRadius. Delegate
       // to the rounded polygon's own logic and flip the normal so it points A→B.
-      final m = other.getManifold(posB, this, posA);
+      final m = other.manifoldWith(posB, this, posA);
       if (!m.isColliding) return CollisionManifold.empty();
       return CollisionManifold(
         isColliding: true,
@@ -132,7 +141,7 @@ class Polygon2DShape extends Shape2D {
     } else if (other is Chain2DShape) {
       // Delegate to the chain (which degrades to per-segment capsule tests)
       // and flip the normal so it points A→B.
-      final m = other.getManifold(posB, this, posA);
+      final m = other.manifoldWith(posB, this, posA);
       if (!m.isColliding) return CollisionManifold.empty();
       return CollisionManifold(
         isColliding: true,
@@ -144,7 +153,7 @@ class Polygon2DShape extends Shape2D {
   }
 
   @override
-  Rect getBounds(Offset position) {
+  Rect boundsAt(Offset position) {
     if (vertices.isEmpty) return Rect.zero;
     double minX = double.infinity;
     double minY = double.infinity;
@@ -470,9 +479,13 @@ class Polygon2DShape extends Shape2D {
 
 /// A rectangular collision shape (simplified Polygon).
 class Rectangle2DShape extends Polygon2DShape {
+  /// Its width.
   final double width;
+
+  /// Its height.
   final double height;
 
+  /// A [width] × [height] box centred on its body's position.
   Rectangle2DShape(this.width, this.height)
     : super([
         Offset(-width / 2, -height / 2),
@@ -489,10 +502,16 @@ class Rectangle2DShape extends Polygon2DShape {
 /// Defined by two center offsets [center1] and [center2] relative to the
 /// body's position, and a [radius]. Suitable for characters, pills, bullets.
 class Capsule2DShape extends Shape2D {
+  /// One end of its core segment, relative to its body's position.
   final Offset center1;
+
+  /// The other end.
   final Offset center2;
+
+  /// How far it reaches round the segment.
   final double radius;
 
+  /// A capsule round the segment [center1]–[center2], [radius] thick.
   Capsule2DShape({
     required this.center1,
     required this.center2,
@@ -517,7 +536,7 @@ class Capsule2DShape extends Shape2D {
       (center2 - center1).distance * 2 * radius + math.pi * radius * radius;
 
   @override
-  Rect getBounds(Offset position) {
+  Rect boundsAt(Offset position) {
     final wx1 = position.dx + center1.dx;
     final wy1 = position.dy + center1.dy;
     final wx2 = position.dx + center2.dx;
@@ -531,7 +550,7 @@ class Capsule2DShape extends Shape2D {
   }
 
   @override
-  CollisionManifold getManifold(Offset posA, Shape2D other, Offset posB) {
+  CollisionManifold manifoldWith(Offset posA, Shape2D other, Offset posB) {
     if (other is Circle2DShape) {
       return _capsuleVsCircle(posA, other, posB);
     } else if (other is Capsule2DShape) {
@@ -550,7 +569,7 @@ class Capsule2DShape extends Shape2D {
       // Delegate to the polygon side and flip the normal (a rounded
       // polygon's own test takes its corner radius in).
       final m = other is RoundedPolygon2DShape
-          ? other.getManifold(posB, this, posA)
+          ? other.manifoldWith(posB, this, posA)
           : other._satPolygonVsCapsule(posB, other, posA, this);
       if (!m.isColliding) return CollisionManifold.empty();
       return CollisionManifold(
@@ -561,7 +580,7 @@ class Capsule2DShape extends Shape2D {
     } else if (other is Chain2DShape) {
       // Delegate to the chain (which degrades to per-segment capsule tests)
       // and flip the normal so it points A→B.
-      final m = other.getManifold(posB, this, posA);
+      final m = other.manifoldWith(posB, this, posA);
       if (!m.isColliding) return CollisionManifold.empty();
       return CollisionManifold(
         isColliding: true,
@@ -709,17 +728,23 @@ class Capsule2DShape extends Shape2D {
 /// step can come out the other side. For static geometry only — dynamic
 /// segment bodies are not physically meaningful.
 class Segment2DShape extends Shape2D {
+  /// One end, relative to its body's position.
   final Offset point1;
+
+  /// The other end.
   final Offset point2;
+
+  /// How far it collides round the line.
   final double thickness;
 
+  /// The line [point1]–[point2], colliding [thickness] round it.
   Segment2DShape(this.point1, this.point2, {this.thickness = 2.0});
 
   @override
   double get area => 0;
 
   @override
-  Rect getBounds(Offset position) {
+  Rect boundsAt(Offset position) {
     final wx1 = position.dx + point1.dx;
     final wy1 = position.dy + point1.dy;
     final wx2 = position.dx + point2.dx;
@@ -733,14 +758,14 @@ class Segment2DShape extends Shape2D {
   }
 
   @override
-  CollisionManifold getManifold(Offset posA, Shape2D other, Offset posB) {
+  CollisionManifold manifoldWith(Offset posA, Shape2D other, Offset posB) {
     // Treat the segment as a zero-mass thin capsule for all collision types.
     final asCapsule = Capsule2DShape(
       center1: point1,
       center2: point2,
       radius: thickness,
     );
-    return asCapsule.getManifold(posA, other, posB);
+    return asCapsule.manifoldWith(posA, other, posB);
   }
 }
 
@@ -752,17 +777,23 @@ class Segment2DShape extends Shape2D {
 /// or for a [thickness] of 0 its own chain, put in once each way round
 /// (a Box2D chain is solid on one side only).
 class Chain2DShape extends Shape2D {
+  /// Its points, in order, relative to its body's position.
   final List<Offset> vertices;
+
+  /// Whether the last point joins back to the first.
   final bool loop;
+
+  /// How far each segment collides round its line.
   final double thickness;
 
+  /// The chain through [vertices], closed when [loop].
   Chain2DShape(this.vertices, {this.loop = false, this.thickness = 2.0});
 
   @override
   double get area => 0;
 
   @override
-  Rect getBounds(Offset position) {
+  Rect boundsAt(Offset position) {
     if (vertices.isEmpty) return Rect.zero;
     double minX = double.infinity, minY = double.infinity;
     double maxX = double.negativeInfinity, maxY = double.negativeInfinity;
@@ -778,7 +809,7 @@ class Chain2DShape extends Shape2D {
   }
 
   @override
-  CollisionManifold getManifold(Offset posA, Shape2D other, Offset posB) {
+  CollisionManifold manifoldWith(Offset posA, Shape2D other, Offset posB) {
     if (vertices.length < 2) return CollisionManifold.empty();
 
     // Return the manifold from the deepest penetrating segment.
@@ -790,7 +821,7 @@ class Chain2DShape extends Shape2D {
       final p1 = vertices[i];
       final p2 = vertices[(i + 1) % n];
       final seg = Segment2DShape(p1, p2, thickness: thickness);
-      final m = seg.getManifold(posA, other, posB);
+      final m = seg.manifoldWith(posA, other, posB);
       if (m.isColliding) {
         if (best == null || m.penetration > best.penetration) {
           best = m;
@@ -808,8 +839,10 @@ class Chain2DShape extends Shape2D {
 /// [cornerRadius], producing smooth rounded edges. Matches Box2D's
 /// `b2MakePolygon(&hull, radius)` semantics.
 class RoundedPolygon2DShape extends Polygon2DShape {
+  /// How far it is grown round its corners.
   final double cornerRadius;
 
+  /// The convex polygon of [vertices] grown by [cornerRadius].
   RoundedPolygon2DShape(super.vertices, this.cornerRadius);
 
   /// Convenience constructor for a rounded rectangle.
@@ -827,8 +860,8 @@ class RoundedPolygon2DShape extends Polygon2DShape {
   }
 
   @override
-  Rect getBounds(Offset position) {
-    return super.getBounds(position).inflate(cornerRadius);
+  Rect boundsAt(Offset position) {
+    return super.boundsAt(position).inflate(cornerRadius);
   }
 
   /// The polygon, a band [cornerRadius] wide along each side, and a round
@@ -845,7 +878,7 @@ class RoundedPolygon2DShape extends Polygon2DShape {
   }
 
   @override
-  CollisionManifold getManifold(Offset posA, Shape2D other, Offset posB) {
+  CollisionManifold manifoldWith(Offset posA, Shape2D other, Offset posB) {
     if (other is Circle2DShape) {
       return _roundedPolyVsCircle(posA, other, posB);
     } else if (other is Polygon2DShape) {
@@ -873,7 +906,7 @@ class RoundedPolygon2DShape extends Polygon2DShape {
     } else if (other is Chain2DShape) {
       // Delegate to the chain (which degrades to per-segment capsule tests)
       // and flip the normal so it points A→B.
-      final m = other.getManifold(posB, this, posA);
+      final m = other.manifoldWith(posB, this, posA);
       if (!m.isColliding) return CollisionManifold.empty();
       return CollisionManifold(
         isColliding: true,

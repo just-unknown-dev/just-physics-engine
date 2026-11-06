@@ -64,6 +64,18 @@ abstract interface class Physics3DWorld {
   /// How many bodies it holds.
   int get bodyCount;
 
+  /// The collision grid it uses now: 16 rows, as
+  /// [Physics3DWorldSettings.layerMasks] gives them.
+  List<int> get layerMasks;
+
+  /// Replaces the collision grid: [masks] as
+  /// [Physics3DWorldSettings.layerMasks] takes them (see
+  /// [Physics3DWorldSettings.normalizeLayerMasks]). The next step judges
+  /// every pair by it: every body that can move is woken, so pairs at rest
+  /// are looked at again, and characters take their layer's new row. A grid
+  /// equal to the current one does nothing.
+  void setLayerMasks(List<int> masks);
+
   // ── Bodies ────────────────────────────────────────────────────────────
 
   /// Makes a body of [shape]; 0 when it cannot be made (a shape that is
@@ -195,7 +207,12 @@ abstract interface class Physics3DWorld {
   /// Teleports [character]'s feet to [position].
   void setCharacterPosition(int character, Vector3 position);
 
-  /// What [character] touched in its last update.
+  /// What [character] touched in its last update, into [out]: no object
+  /// per contact.
+  void readCharacterContacts(int character, Character3DContacts out);
+
+  /// What [character] touched in its last update, as objects: one per
+  /// contact, for code that runs rarely (see [readCharacterContacts]).
   List<Character3DContact> characterContacts(int character);
 
   // ── Stepping and reading back ─────────────────────────────────────────
@@ -213,7 +230,12 @@ abstract interface class Physics3DWorld {
   /// [bodies]' poses, in order, into [out]; dead ones read as zeros.
   void readBodies(List<int> bodies, Body3DPoses out);
 
-  /// What happened since the last drain, oldest first.
+  /// What happened since the last read, oldest first, into [out]: no
+  /// object per event, for a read every step.
+  void readEvents(Physics3DEvents out);
+
+  /// What happened since the last read, oldest first, as objects: one per
+  /// event, for tests and code that runs rarely (see [readEvents]).
   List<Physics3DEvent> drainEvents();
 
   // ── Queries ───────────────────────────────────────────────────────────

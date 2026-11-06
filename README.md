@@ -6,12 +6,13 @@ This package is part of the Just Game Engine workspace, but can be used independ
 
 ## Features
 
-- 2D rigid-body simulation (`Physics2DEngine`, `Physics2DBody`)
+- 2D rigid-body simulation (`Physics2DEngine`, `Physics2DBody`) on two backends with one API: Box2D v3.2 on native platforms, a pure-Dart engine on the web. Every method means the same on both, so game code needs no backend branch
 - Gravity, drag, angular damping, restitution, friction, torque, and sleeping (per body: `canSleep`)
-- Collision shapes: `Circle2DShape` (optionally off-centre), `Polygon2DShape`, `Rectangle2DShape`
-- Body settings changeable while the game runs (`setBodyFriction`, `setBodyAngularDamping`, `setBodyCanSleep`, `setBodyBullet`, …)
+- Eight collision shapes: `Circle2DShape` (optionally off-centre), `Rectangle2DShape`, `Polygon2DShape`, `RoundedPolygon2DShape`, `Capsule2DShape`, `Segment2DShape`, `Chain2DShape`, and compounds (`additionalShapes`)
+- Body settings changeable while the game runs (`setBodyActive`, `wakeBody`, `setBodyFixedRotation`, `setBodyFriction`, `setBodyAngularDamping`, `setBodyCanSleep`, `setBodyBullet`, …)
+- Joints (distance, revolute, prismatic, weld, wheel, mouse) with anchors, `collideConnected`, and limits, motors and springs set through `Joint2D` in the same units on both backends (springs in hertz)
 - Static bodies never test against each other, so large tile-map levels stay cheap
-- Broad-phase collision culling via `SpatialGrid`
+- Broad phase: Box2D's tree natively; a uniform grid in the pure-Dart engine
 - Collision response with impulse + friction + positional correction
 - A kinematic character mover (`CharacterMover2D`): slopes, steps, one-way platforms and pushing, reporting the ground it stands on, the same on both backends
 - Runtime simulation stats (`engine.stats`)
@@ -33,7 +34,7 @@ Use the package from pub.dev (2.0.0 renames the API after the Just Game Engine's
 ```yaml
 dependencies:
   just_physics_engine: ^2.0.0
-  just_dart: ^0.2.0 # Vector2 and the other maths types
+  just_dart: ^0.3.0 # Vector2 and the other maths types
 ```
 
 Or add it with Flutter tooling:
@@ -65,7 +66,8 @@ import 'package:just_dart/just_dart.dart';
 import 'package:just_physics_engine/just_physics_engine.dart';
 
 void main() {
-  final engine = Physics2DEngine()..initialize();
+  // Box2D on native platforms, the pure-Dart engine on the web.
+  final engine = PhysicsEngineFactory.create2D()..initialize();
 
   final floor = Physics2DBody(
     position: Vector2(200, 500),
@@ -104,10 +106,41 @@ void main() {
 import 'package:just_dart/just_dart.dart';
 import 'package:just_physics_engine/just_physics_engine.dart';
 
-void kickBody(Physics2DBody body) {
+void kickBody(Physics2DEngine engine, Physics2DBody body) {
+  // For the next step; a sleeping body wakes.
   body.applyForce(Vector2(1500, -800));
-  body.applyImpulse(Vector2(8, -3));
   body.applyTorque(20);
+  // At once: knockback, bounce pads.
+  engine.applyLinearImpulse(body, 8, -3);
+}
+```
+
+### Joints
+
+Anchors are world points, as the bodies are when the joint is made. A joint's two bodies pass through each other unless `collideConnected` says otherwise, on both backends. Limits, motors and springs go through `Joint2D`, in the same units on both: springs in hertz and a damping ratio, as Box2D and the 3D joints take them.
+
+```dart
+import 'dart:ui';
+
+import 'package:just_physics_engine/just_physics_engine.dart';
+
+void hang(Physics2DEngine engine, Physics2DBody beam, Physics2DBody lamp) {
+  // A bungee from the beam's end to the top of the lamp: 2 Hz.
+  engine.addDistanceJoint(
+    beam,
+    lamp,
+    anchorA: const Offset(50, 0),
+    anchorB: const Offset(50, 35),
+    springHertz: 2,
+    dampingRatio: 0.3,
+  );
+}
+
+void door(Physics2DEngine engine, Physics2DBody wall, Physics2DBody door) {
+  engine.addRevoluteJoint(wall, door, const Offset(0, 0))
+    // Radians from the angle it was made at.
+    ..setLimits(-1.5, 0)
+    ..setMotor(0.5, 200);
 }
 ```
 
@@ -207,7 +240,7 @@ import 'dart:ui';
 
 import 'package:just_physics_engine/just_physics_engine.dart';
 
-final engine = Physics2DEngine()..initialize();
+final engine = PhysicsEngineFactory.create2D()..initialize();
 final mover = CharacterMover2D(engine);
 final shape = Mover2DShape.box(width: 32, height: 48);
 var position = const Offset(0, 0), velocity = Offset.zero;
@@ -273,20 +306,25 @@ void main() {
 }
 ```
 
+A world's collision grid can change while it runs (`world.setLayerMasks`). Read events and character contacts every step with `readEvents` and `readCharacterContacts`, which fill packed buffers (`Physics3DEvents`, `Character3DContacts`) and make no object per event; `drainEvents` and `characterContacts` give objects, for tests and code that runs rarely.
+
 `package:just_physics_engine/testing.dart` has `FakePhysics3DEngine`, a plain-Dart engine for tests that need no native code. `package:just_physics_engine/jolt.dart` (`JoltWorld`, `JoltShapes`) imports `dart:ffi` and is for native code only. just_jolt's own notes apply: on Windows the app's folder path must stay under about 175 characters for Jolt to build.
 
 ## Migrating from 1.x
 
-2.0.0 renames the public API after the Just Game Engine's naming rule; nothing behaves differently.
+2.0.0 renames the public API after the Just Game Engine's naming rule, gives both 2D backends one API (game code needs no backend branch), and fixes what behaved differently between them.
 
 - **The 2D or 3D tag goes right after the subject**: `PhysicsEngine3D` is `Physics3DEngine`, `PhysicsWorld3D` is `Physics3DWorld`, `BoxShape3D` is `Box3DShape`, `GroundState2D` is `Ground2DState`, `QueryHit3D` is `Query3DHit`.
 - **A 2D type with a 3D twin says its dimension too**: `PhysicsEngine` is `Physics2DEngine`, `PhysicsBody` is `Physics2DBody`, `CollisionShape` is `Shape2D` (the twin of `Shape3D`), `CircleShape` is `Circle2DShape` and so on for every shape, `BodyType` is `Body2DType`, `Ray` is `Ray2D`.
 - **Their families follow**: the joints (`JointConstraint` is `Joint2D`, `DistanceJoint` is `DistanceJoint2D`, …), the mover's types (`MoverShape` is `Mover2DShape`, …) and the query results (`RayBodyHit` is `Ray2DHit`, `ShapeCastResult` is `CircleCast2DHit`).
 - **One word for joints in both dimensions**: `JointType` is `Joint2DKind`, `JointKind3D` is `Joint3DKind`, and a 2D joint's `type` is its `kind`.
 - **Members**: `castRay` and `castRayAll` are `raycast` and `raycastAll`, `castCircle` is `circleCast`, `PhysicsEngineFactory.create()` is `create2D()`, `Box2DPhysicsEngine.physicsBodyFromHandle` is `bodyFromHandle`, `castShape2D` is `shapeCast2D`.
-- **Removed**: `RigidBody`, a shapeless point mass nothing used. A `Physics2DBody` with a mass, `applyForce` and an engine does the same.
+- **The platform's engine** comes from `PhysicsEngineFactory.create2D()`; the unnamed `Physics2DEngine()` constructor is gone (`Physics2DEngine.pureDart()` stays).
+- **Members say what they give**: `Shape2D.getBounds(p)` is `boundsAt(p)`, `getManifold` is `manifoldWith`, `Physics2DBody.getCompoundBounds(p)` is `Physics2DBody.boundsAt(p)`. `engine.isNative` says whether Box2D runs.
+- **Joints**: configure them through `Joint2D` (`setLimits`, `setMotor`, `setSpring`, `reactionForce`, `reactionTorque`) on both backends; the pure-Dart joints' fields and `Box2DJoint`'s kind-named setters are gone, and so are `Box2DPhysicsEngine.create*Joint` and `destroyJoint` (use `add*Joint` and `removeJoint`). Springs are in hertz with a damping ratio on both backends (`addDistanceJoint(springHertz:, dampingRatio:)`; `stiffness`/`damping` are gone). `add*Joint` take anchors and `collideConnected`.
+- **Removed**: `RigidBody`, a shapeless point mass nothing used; `CollisionDetector`, `ForceManager`, `PhysicsGameLoop`, `TransformInterpolator`, `Physics2DBody.applyImpulse` (use `engine.applyLinearImpulse`), `Physics2DBody.checkCollision` (use `setBodyActive` or the filter), the polygon cache. `Box2DWorld`, `Box2DBody`, `SpatialGrid` and `BodyPair` are internal.
 
-The full old-to-new table is in the [CHANGELOG](CHANGELOG.md). Enum values did not change, so anything saved by name (body types, one-way directions, joint kinds) reads as before. The imports are the same libraries.
+The full old-to-new table, and what now behaves the same on both backends, is in the [CHANGELOG](CHANGELOG.md). Enum values did not change, so anything saved by name (body types, one-way directions, joint kinds) reads as before. The imports are the same libraries.
 
 ## Notes
 
@@ -296,7 +334,7 @@ The full old-to-new table is in the [CHANGELOG](CHANGELOG.md). Enum values did n
 ## Compatibility
 
 - Version `2.0.0`
-- Native Box2D comes from [just_box_2d](https://pub.dev/packages/just_box_2d) ^0.1.0, built from source by its own hook (`hooks` ^2, the same generation as `just_graphics_engine`, so both resolve in one app). An app that wants the pure-Dart engine everywhere turns that build off:
+- Native Box2D comes from [just_box_2d](https://pub.dev/packages/just_box_2d) ^0.2.0, built from source by its own hook (`hooks` ^2, the same generation as `just_graphics_engine`, so both resolve in one app). An app that wants the pure-Dart engine everywhere turns that build off:
 
   ```yaml
   hooks:
@@ -307,7 +345,7 @@ The full old-to-new table is in the [CHANGELOG](CHANGELOG.md). Enum values did n
 - Dart SDK: `^3.11.0`
 - Flutter: `>=3.47.0`
 - Platforms: Android, iOS, Linux, macOS, Web, Windows
-- Native platforms use the Box2D FFI backend (Box2D v3.2, through just_box_2d): the library is found by its code asset id, not by file name. This package itself is plain Dart and compiles no C.
+- Native platforms use the Box2D FFI backend (Box2D v3.2, through just_box_2d): the library is found by its code asset id, not by file name. 3D uses [just_jolt](https://pub.dev/packages/just_jolt) ^0.2.0. This package itself is plain Dart and compiles no C.
 - Web and WASM targets use the pure-Dart backend.
 
 ## Development

@@ -1,6 +1,8 @@
-## 2.0.0 - 2026-11-04
+## 2.0.0 - 2026-11-05
 
-The public names follow the Just Game Engine's naming rule: the 2D or 3D tag goes right after the subject (`Physics3DWorld`, `Box3DShape`, `Ground2DState`), and a 2D type with a 3D twin says its dimension too (`Shape2D` and `Shape3D`, `Body2DType` and `Body3DType`, `Joint2DKind` and `Joint3DKind`). Nothing behaves differently, and nothing saved changes: no enum value was renamed (`Body2DType.static` is still saved as `static`), and nothing this package writes holds a class name.
+The public names follow the Just Game Engine's naming rule: the 2D or 3D tag goes right after the subject (`Physics3DWorld`, `Box3DShape`, `Ground2DState`), and a 2D type with a 3D twin says its dimension too (`Shape2D` and `Shape3D`, `Body2DType` and `Body3DType`, `Joint2DKind` and `Joint3DKind`). The two 2D backends now have one API that means the same on each, so game code needs no backend branch: switching a body off, waking it, joint anchors, `collideConnected`, springs, and joints' limits and motors behave alike on Box2D and in pure Dart. Nothing saved changes: no enum value was renamed (`Body2DType.static` is still saved as `static`), and nothing this package writes holds a class name.
+
+Requires just_dart ^0.3.0 (was ^0.2.0; no name this package uses from it changed), just_box_2d ^0.2.0 and just_jolt ^0.2.0 (were ^0.1.0): publish those first.
 
 ### Breaking changes
 
@@ -8,7 +10,20 @@ The public names follow the Just Game Engine's naming rule: the 2D or 3D tag goe
 - **`RigidBody` is removed.** It was a point mass with no shape that nothing used; a `Physics2DBody` with a mass, `applyForce` and an engine does what it did.
 - **`JointConstraint.type` is `Joint2D.kind`**: "kind" is the word for a joint in both dimensions (`Joint2DKind`, `Joint3DKind`, `Joint3DSettings.kind`).
 - `toString()` of the 3D shapes, `Physics3DEvent`, `Query3DHit` and `Mover2DPlane` names the new classes.
-- Files under `lib/src/` are named after what they hold (`physics_2d/physics_2d_engine.dart`, `physics_2d_body.dart`, `shape_2d.dart`, `shape_2d_distance.dart`; `physics_3d/physics_3d_engine.dart`, `physics_3d_results.dart`, `physics_3d_settings.dart`, `shape_3d.dart`; `testing/fake_physics_3d_engine.dart`). Code that imports the public libraries is unaffected.
+- **No unnamed `Physics2DEngine()` constructor**: `PhysicsEngineFactory.create2D()` gives the platform's engine (Box2D natively, pure Dart on the web), and `Physics2DEngine.pureDart()` stays. The base engine no longer imports its own subclass.
+- **Members say what they give**: `Shape2D.getBounds(p)` is `boundsAt(p)`, `Shape2D.getManifold(…)` is `manifoldWith(…)`, `Physics2DBody.getCompoundBounds(p)` is `Physics2DBody.boundsAt(p)`.
+- **Springs are in hertz and a damping ratio on both backends**, as Box2D, the 3D joints and the engine's saved components take them. `addDistanceJoint(stiffness:, damping:)` is `addDistanceJoint(springHertz:, dampingRatio:)`; `DistanceJoint2D.stiffness`/`damping` and `WheelJoint2D.springStiffness`/`springDamping` are gone (`springHertz`, `dampingRatio`, read-only, and `Joint2D.setSpring`). The pure-Dart engine applies them as Box2D's soft step does, so the same spring swings at the same rate on both. A pure-Dart distance spring pulls toward the middle of its range, as Box2D's, and a pure-Dart wheel starts with Box2D's 4 Hz, 0.7 suspension.
+- **Joints are configured through `Joint2D`** on both backends: `setLimits`, `setMotor`, `setSpring`, `reactionForce`, `reactionTorque`. Gone: the pure-Dart joints' public fields (`limitEnabled`, `lowerLimit`, `upperLimit`, `motorEnabled`, `motorSpeed`, `maxMotorForce`, `maxMotorTorque`; `DistanceJoint2D.minLength`/`maxLength` are read-only), `WheelJoint2D.setWheelSpring`/`setWheelMotor`, and `Box2DJoint`'s kind-named setters (`setRevoluteLimits`, `setRevoluteMotor`, `setPrismaticLimits`, `setPrismaticMotor`, `setDistanceLimits`, `setDistanceSpring`, `setWheelSpring`, `setWheelMotor`).
+- **Joints are made and removed by the engine**: `Box2DPhysicsEngine.createRevoluteJoint`, `createPrismaticJoint`, `createDistanceJoint`, `createWeldJoint`, `createWheelJoint` and `destroyJoint` are gone (`add*Joint`, which now take anchors and `collideConnected`, and `removeJoint`, which destroys a native joint). `Box2DJointFactory` is gone; `Box2DJoint.destroy` is internal. The pure-Dart joints' constructors take `collideConnected`, and `DistanceJoint2D` takes `anchorA`/`anchorB` and `springHertz`/`dampingRatio`.
+- **A joint's bodies pass through each other on the pure-Dart engine too**, unless `collideConnected` (Box2D's default, which the native backend always had). A contact they have ends as the joint is made; sensors still see them.
+- **Removed**: `CollisionDetector` and `ForceManager` (unused; brute-force duplicates of the engine), `PhysicsGameLoop` and `TransformInterpolator` (a façade over the world's step, and a helper for bodies of your own; interpolate between `Physics2DBody` positions with `alpha`), `Physics2DEngine.cachePolygonShape`/`getCachedPolygonShape` (never cleared), `Physics2DBody.applyImpulse` (it ignored the mass; use `Physics2DEngine.applyLinearImpulse`), `Physics2DBody.checkCollision` (only the pure-Dart grid read it; use `setBodyActive` or the collision filter), `Box2DBody.dynamic`/`.static`.
+- **No longer exported** (`@internal`): `Box2DWorld`, `Box2DBody`, `SpatialGrid`, `BodyPair`.
+- **`bodies` and `joints` are live views**, not copies: copy one before adding or removing while going through it.
+- **`Physics2DBody.applyForce`/`applyTorque`** take nothing on a body that is not dynamic (was: any with a mass, or an inertia), and wake the body.
+- **`Physics3DWorld` has four new members** (`layerMasks`, `setLayerMasks`, `readEvents`, `readCharacterContacts`): an implementation outside this package adds them.
+- **`FakePhysics3DEngine`'s handles** are numbered per world and tagged with the world's place among its engine's: the same calls on a new engine give the same handles, whatever ran before, and a test that wrote down a handle value gets another one.
+- **The pure-Dart engine reports body moves** only after a frame that stepped, and never for an inactive body, as the native one.
+- Files under `lib/src/` are named after what they hold and sit in one folder per dimension: `physics_2d/` (with Box2D in `physics_2d/box2d/`, as Jolt is in `physics_3d/jolt/`), `physics_3d/`, `testing/` (the fake, split into parts), and `physics_engine_factory.dart` above both. Code that imports the public libraries is unaffected.
 
 ### Migrating from 1.x
 
@@ -93,7 +108,66 @@ Rename these; the compiler lists every place. A 2D type that sits beside a tagge
 | `Box2DPhysicsEngine.physicsBodyFromHandle` | `Box2DPhysicsEngine.bodyFromHandle` |
 | `JointConstraint.type` (and the constructor's first argument) | `Joint2D.kind`, as `Joint3DSettings.kind` says it |
 
-Unchanged: `Shape3D`, `Physics3DUnsupportedError`, `PhysicsEngineFactory` (`create3D`, `supports3D`, `unavailable3DReason`), the Box2D and Jolt classes (`Box2DPhysicsEngine`, `Box2DWorld`, `Box2DBody`, `Box2DJoint`, `Box2DJointFactory`, `JoltPhysicsEngine`, `JoltWorld`, `JoltShapes`), `PhysicsGameLoop`, `TransformInterpolator`, `CharacterMover2D`, `CharacterMove2D`, `OneWayDirection`, `SpatialGrid`, `BodyPair`, `CollisionManifold`, `CollisionDetector`, `ForceManager`, `moverLinearSlop`, `FakeBody3D`, `FakeJoint3D`, `FakeCharacter3D`, every enum value, and the 2D queries `queryAABB`, `queryCircle`, `queryPoint`, `castMover` and `collideMover`.
+Unchanged by the renames: `Shape3D`, `Physics3DUnsupportedError`, `PhysicsEngineFactory` (`create3D`, `supports3D`, `unavailable3DReason`), the Box2D and Jolt classes (`Box2DPhysicsEngine`, `Box2DJoint`, `JoltPhysicsEngine`, `JoltWorld`, `JoltShapes`), `CharacterMover2D`, `CharacterMove2D`, `OneWayDirection`, `CollisionManifold`, `moverLinearSlop`, `FakeBody3D`, `FakeJoint3D`, `FakeCharacter3D`, every enum value, and the 2D queries `queryAABB`, `queryCircle`, `queryPoint`, `castMover` and `collideMover`. What else 2.0.0 removed, hid or changed is in the next table.
+
+The second set of changes in 2.0.0, from the release audit:
+
+| 2.0.0 before the audit | 2.0.0 |
+|---|---|
+| `Physics2DEngine()` | `PhysicsEngineFactory.create2D()` |
+| `Shape2D.getBounds(p)`, `getManifold(a, s, b)` | `boundsAt(p)`, `manifoldWith(a, s, b)` |
+| `Physics2DBody.getCompoundBounds(p)` | `Physics2DBody.boundsAt(p)` |
+| `SpatialGrid.getPotentialCollisions()` | `potentialPairs()` (internal) |
+| `addDistanceJoint(…, stiffness:, damping:)` | `addDistanceJoint(…, springHertz:, dampingRatio:)`, in hertz and a ratio |
+| `DistanceJoint2D(…, stiffness:, damping:)`, `.stiffness`, `.damping` | `DistanceJoint2D(…, springHertz:, dampingRatio:)`, `.springHertz`, `.dampingRatio`, `setSpring` |
+| `WheelJoint2D.springStiffness`, `springDamping`, `setWheelSpring(k, c)` | `springHertz`, `dampingRatio`, `setSpring(hertz, ratio)` |
+| `WheelJoint2D.setWheelMotor`; `Box2DJoint.setWheelMotor`, `setRevoluteMotor`, `setPrismaticMotor` | `Joint2D.setMotor` |
+| `RevoluteJoint2D`/`PrismaticJoint2D` `limitEnabled`, `lowerLimit`, `upperLimit`; `Box2DJoint.setRevoluteLimits`, `setPrismaticLimits`, `setDistanceLimits` | `Joint2D.setLimits` |
+| `motorEnabled`, `motorSpeed`, `maxMotorForce`, `maxMotorTorque` fields | `Joint2D.setMotor` |
+| `Box2DJoint.setDistanceSpring` | `Joint2D.setSpring` |
+| `Box2DJoint.reactionForce`, `reactionTorque` | the same, on every `Joint2D` (zero for the pure-Dart joints) |
+| `Box2DPhysicsEngine.create*Joint(…)` | `Physics2DEngine.add*Joint(…)` |
+| `Box2DPhysicsEngine.destroyJoint(j)`, `Box2DJoint.destroy()` | `Physics2DEngine.removeJoint(j)` |
+| `Box2DJointFactory` | removed (internal statics on `Box2DJoint`) |
+| `Physics2DBody.applyImpulse(v)` | `Physics2DEngine.applyLinearImpulse(body, ix, iy)` |
+| `Physics2DBody.checkCollision` | `Physics2DEngine.setBodyActive`, or the collision filter |
+| `CollisionDetector`, `ForceManager`, `PhysicsGameLoop`, `TransformInterpolator`, `cachePolygonShape`, `getCachedPolygonShape`, `Box2DBody.dynamic`, `Box2DBody.static` | removed |
+| `Box2DWorld`, `Box2DBody`, `SpatialGrid`, `BodyPair` | internal |
+| `engine.stats['backend'] == 'box2d_v3'` | `engine.isNative` (the stats key stays, for diagnostics) |
+
+### Added
+
+- `Physics2DEngine.setBodyActive(body, active)`: a body out of the simulation on both backends — natively `b2Body_Disable` through just_box_2d 0.2.0's `b2w_setBodyEnabled` — and back, woken. A plain write to `Physics2DBody.isActive` reaches the native backend at the next update.
+- `Physics2DEngine.wakeBody(body)`; a write to `Physics2DBody.isAwake` reaches the native backend at the next update. `setGravity` wakes sleeping dynamic bodies, and `setBodyGravityScale` the body it changes.
+- `Physics2DEngine.setBodyFixedRotation(body, fixed)`, on a live body on both backends.
+- `Physics2DEngine.isNative`: whether Box2D runs.
+- Anchors and `collideConnected` on every `add*Joint`: a distance joint between `anchorA` and `anchorB`, a weld at `anchor`, a slider and a wheel through `anchor` (a wheel's axle). `Joint2D.collideConnected`, `setLimits`, `setMotor`, `setSpring`, `reactionForce`, `reactionTorque`; `DistanceJoint2D.minLength`, `maxLength`, `springHertz`, `dampingRatio`, `currentLength`; `WheelJoint2D.springHertz`, `dampingRatio`.
+- `Physics2DBody.proxies({shift})`: a body's shapes as the distance and cast tests see them, turned with it — what the engine's queries and the mover use.
+- `Physics3DWorld.layerMasks` and `setLayerMasks(masks)`: a live world's collision grid, on Jolt (just_jolt 0.2.0's `jj_world_set_collision_grid`) and the fake; every body that can move wakes, so pairs at rest are judged again. `Physics3DWorldSettings.normalizeLayerMasks`.
+- `Physics3DWorld.readEvents(Physics3DEvents out)` and `readCharacterContacts(character, Character3DContacts out)`: packed reads, no object per event or contact, for every step. `drainEvents` and `characterContacts` stay for code that runs rarely.
+- `just_physics_engine.dart` exports just_dart's `Vector3` and `Quaternion`, as `physics_3d.dart` does: the 3D API takes them.
+- `test/library_layout_test.dart`: barrels, `@internal`, loops, layers, the two dimensions apart, the web never reaching `dart:ffi`, and the web stubs in step with their native files. `dart_test.yaml` tags the wall-clock test `perf` and the dev-flavour test `jolt-dev`, both skipped unless asked for.
+
+### Changed
+
+- The pure-Dart engine's step allocates far less: pairs that cannot touch (two static bodies; no dynamic body and no sensor) are left out before a pair object is made, a pair seen in several cells is deduplicated by an int key, each body's cell range is updated in place, the contact and sensor sets are swapped each step instead of copied, and shapes are walked in place.
+- Queries no longer copy the body list, and the native backend answers `circleCast`, `queryCircle` and `queryPoint` from Box2D's tree, testing only its candidates exactly in Dart.
+- The native backend pushes a body's velocity only when the game changed it (as it already did for spin): an untouched body costs no FFI call a frame.
+- Box2D's impact-callback listener no longer keeps the isolate alive; `dispose` closes it.
+- `Box2DPhysicsEngine`, `Physics2DEngine` and `FakePhysics3DEngine` are split into files of what they hold (Box2D's shapes and queries, the pure-Dart ray tests and debug drawing, the fake's world, bodies and geometry).
+- Tests mirror `lib/src`, and the 2D ones that matter for parity run on both backends (`test/physics_2d/backends.dart`): switching off, waking, forces, locked rotation, odd deltas, joint anchors, `collideConnected`, springs, turned welds, hinge limits, the joint setters. Events, queries and characters run on Jolt and on the fake. The `Vector2` tests went (just_dart tests its own types).
+
+### Fixed
+
+- `Physics2DBody.isActive` did nothing on the Box2D backend: an inactive body fell, pushed other bodies, raised contact and sensor events and was found by rays, boxes and movers natively while the web froze it. Now it is out of the simulation on both (its contacts and sensor overlaps end, its joints hold nothing), and comes back with its velocity.
+- A sleeping body could not be woken natively except by a velocity that was not zero: `isAwake = true` was undone by the next read-back. `wakeBody` and the `isAwake` write now wake it.
+- Joint anchors and `collideConnected` were saved by the engine but not taken: a rope tied to a crate's edge hung from its centre, and jointed bodies collided on the web but never natively. Native joints also keep the angle between their bodies as they are made (just_box_2d 0.2.0), so a weld or slider between bodies turned apart no longer swings the second body into line (a slider's car left its rail), and a hinge's limits count from the angle it was made at, as the pure-Dart hinge's always did.
+- The same spring numbers meant hertz natively and a pull per unit on the web, about 150 times softer: now both take hertz.
+- Bodies added to a `Box2DPhysicsEngine` before `initialize()` were in no simulation; they now go into the native world, with the joints made for them.
+- Forces given to a sleeping body piled up and landed in one step when it woke: a force now wakes it, as in Box2D.
+- One `NaN` (or infinite, or negative) delta froze the simulation for good, on both backends: such a delta now runs no step.
+- A 3D world's collision grid could not change after it was made: `setLayerMasks`.
+- Stale names in comments (`PhysicsEngineFactory.create`, `PhysicsBridgeSystem`, `Box2DCollisionSystem`, `Physics2DSystem._syncIn`); README, API.md, ARCHITECTURE.md and CONTRIBUTING.md (Flutter 3.47.0) brought up to date; `jolt_shapes.dart` and a test formatted.
 
 ## 1.4.1 - 2026-10-17
 

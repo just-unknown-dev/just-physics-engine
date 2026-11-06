@@ -9,5 +9,5 @@ library;
 
 export 'package:just_dart/just_dart.dart' show Quaternion, Vector3;
 
-export 'src/box2d/physics_engine_factory.dart' show PhysicsEngineFactory;
+export 'src/physics_engine_factory.dart' show PhysicsEngineFactory;
 export 'src/physics_3d/physics_3d.dart';

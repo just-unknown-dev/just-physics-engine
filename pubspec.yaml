@@ -31,12 +31,12 @@ dependencies:
     sdk: flutter
   # Box2D for the 2-D engine, compiled from source by its build hook unless
   # an app turns it off (hooks: user_defines: just_box_2d: build: false).
-  just_box_2d: ^0.1.0
-  just_dart: ^0.2.0
+  just_box_2d: ^0.2.0
+  just_dart: ^0.3.0
   # Jolt Physics for the 3-D engine. Its native library is compiled only
   # when the app asks (hooks: user_defines: just_jolt: build: true), so a
   # 2-D game neither builds nor ships it.
-  just_jolt: ^0.1.0
+  just_jolt: ^0.2.0
   meta: ^1.17.0
 
 dev_dependencies:

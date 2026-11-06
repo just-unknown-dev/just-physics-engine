@@ -235,7 +235,9 @@ final class JoltShapes {
       final from = (n - 1 - row) * n;
       for (var column = 0; column < n; column++) {
         final h = shape.heights[from + column];
-        samples[row * n + column] = h >= HeightField3DShape.hole ? _noCollision : h;
+        samples[row * n + column] = h >= HeightField3DShape.hole
+            ? _noCollision
+            : h;
       }
     }
     final offset = arena<JPH_Vec3>();
