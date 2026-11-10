@@ -49,9 +49,30 @@ bool _oneWayContactIsSolid(Physics2DBody a, Physics2DBody b, Offset normal) {
   };
 }
 
+/// [body]'s radius when it is round about its position — one circle
+/// centred on it, or one capsule as wide as it is long — so turning it
+/// leaves its outline as it was; null for any other body.
+///
+/// Such a body rolls: its spin counts in a contact's friction, and the
+/// friction turns it, as at a Box2D contact. That is what lets a motor-driven
+/// wheel drive. Other shapes do not turn in the pure-Dart engine's
+/// collisions, which never turn their outlines.
+double? _rollingRadius(Physics2DBody body) {
+  if (body.additionalShapes.isNotEmpty) return null;
+  return switch (body.shape) {
+    Circle2DShape(:final center, :final radius) when center == Offset.zero =>
+      radius,
+    Capsule2DShape(:final center1, :final center2, :final radius)
+        when center1.distanceSquared < 1e-12 &&
+            center2.distanceSquared < 1e-12 =>
+      radius,
+    _ => null,
+  };
+}
+
 /// Pushes [a] and [b] apart along [manifold] and takes away the speed
 /// they close at: positional correction, then an impulse with restitution,
-/// then friction.
+/// then friction, which also turns a round body ([_rollingRadius]).
 void _resolveCollision(
   Physics2DBody a,
   Physics2DBody b,
@@ -112,8 +133,18 @@ void _resolveCollision(
   b.velocity.y += jny * invMassB;
 
   // ── Friction (Tangent Impulse) ──────────────────────────────────────────
-  final rvx2 = b.velocity.x - a.velocity.x;
-  final rvy2 = b.velocity.y - a.velocity.y;
+  // A round body touches a radius from its centre along the normal; its
+  // spin moves that point across the normal, never along it, so only the
+  // friction sees it.
+  final radiusA = _rollingRadius(a) ?? 0.0;
+  final radiusB = _rollingRadius(b) ?? 0.0;
+  final spinA = radiusA > 0 ? a.angularVelocity : 0.0;
+  final spinB = radiusB > 0 ? b.angularVelocity : 0.0;
+  // From each body's centre to the contact.
+  final rax = normal.dx * radiusA, ray = normal.dy * radiusA;
+  final rbx = -normal.dx * radiusB, rby = -normal.dy * radiusB;
+  final rvx2 = b.velocity.x - spinB * rby - (a.velocity.x - spinA * ray);
+  final rvy2 = b.velocity.y + spinB * rbx - (a.velocity.y + spinA * rax);
   final rvDotN = rvx2 * normal.dx + rvy2 * normal.dy;
   var tx = rvx2 - normal.dx * rvDotN;
   var ty = rvy2 - normal.dy * rvDotN;
@@ -124,7 +155,14 @@ void _resolveCollision(
     tx *= invLen;
     ty *= invLen;
 
-    final jt = -(rvx2 * tx + rvy2 * ty) / inverseMassSum;
+    // How far round each body's centre the friction pushes, and how easily
+    // it turns.
+    final armA = rax * ty - ray * tx, armB = rbx * ty - rby * tx;
+    final turnA = radiusA > 0 ? _solverInverseInertia(a) : 0.0;
+    final turnB = radiusB > 0 ? _solverInverseInertia(b) : 0.0;
+    final jt =
+        -(rvx2 * tx + rvy2 * ty) /
+        (inverseMassSum + turnA * armA * armA + turnB * armB * armB);
     final mu = Physics2DEngine.mixFriction(a.friction, b.friction);
 
     double fScalar = jt;
@@ -136,5 +174,7 @@ void _resolveCollision(
     a.velocity.y -= ty * fScalar * invMassA;
     b.velocity.x += tx * fScalar * invMassB;
     b.velocity.y += ty * fScalar * invMassB;
+    a.angularVelocity -= armA * fScalar * turnA;
+    b.angularVelocity += armB * fScalar * turnB;
   }
 }

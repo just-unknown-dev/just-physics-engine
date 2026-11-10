@@ -480,6 +480,79 @@ void main() {
           expect(wheel.angularVelocity, greaterThan(1));
         });
 
+        /// A car on the floor: a chassis 80 × 20 on two wheels of radius 14,
+        /// 28 to either side of its middle, on sprung wheel joints whose
+        /// motors turn at [speed]. With [cabin], a cabin welded on top holds
+        /// the front wheel's joint, as the game engine's car scenes build it
+        /// (an entity holds one joint of each kind).
+        Physics2DBody car(double speed, {required bool cabin}) {
+          Physics2DBody part(Offset at, Shape2D shape, double mass, double i) =>
+              Physics2DBody(
+                position: Vector2(at.dx, at.dy),
+                shape: shape,
+                mass: mass,
+                inertia: i,
+                friction: 0.3,
+                restitution: 0.05,
+                drag: 0.02,
+                groupIndex: -7,
+              );
+          Physics2DBody wheel(double x) =>
+              part(Offset(x, -14), Circle2DShape(14), 1.2, 0.5 * 1.2 * 14 * 14)
+                ..friction = 0.9;
+          final chassis = part(
+            const Offset(0, -41),
+            Rectangle2DShape(80, 20),
+            6,
+            6 * (80 * 80 + 20 * 20) / 12,
+          );
+          final rear = wheel(-28), front = wheel(28);
+          engine
+            ..setGravity(0, 2200)
+            ..addBody(_floor())
+            ..addBody(chassis)
+            ..addBody(rear)
+            ..addBody(front);
+          var frontHolder = chassis;
+          if (cabin) {
+            frontHolder = part(
+              const Offset(6, -58),
+              Rectangle2DShape(40, 18),
+              1,
+              (40 * 40 + 18 * 18) / 12,
+            );
+            engine
+              ..addBody(frontHolder)
+              ..addWeldJoint(frontHolder, chassis);
+          }
+          for (final (holder, w) in [(chassis, rear), (frontHolder, front)]) {
+            engine.addWheelJoint(holder, w, const Offset(0, 1))
+              ..setSpring(45, 0.65)
+              ..setMotor(speed, 30000);
+          }
+          return chassis;
+        }
+
+        for (final cabin in [false, true]) {
+          for (final speed in [25.0, -25.0]) {
+            final way = speed > 0 ? 'forward' : 'backward';
+            final which = cabin ? ', its front wheel on a welded cabin' : '';
+            test('a car driven by its wheel motors goes $way, '
+                'upright$which', () {
+              if (unavailable()) return markTestSkipped('no native Box2D');
+              final chassis = car(speed, cabin: cabin);
+              for (var i = 0; i < 180; i++) {
+                engine.update(1 / 60);
+                expect(chassis.angle.abs(), lessThan(0.25), reason: '$i');
+                expect(chassis.position.y, closeTo(-41, 12), reason: '$i');
+              }
+              // About 300 units a second once going; its wheels' rims turn
+              // at 25 × 14 = 350.
+              expect(chassis.position.x * speed.sign, greaterThan(500));
+            });
+          }
+        }
+
         test('a joint does not move a kinematic body', () {
           if (unavailable()) return markTestSkipped('no native Box2D');
           final platform = Physics2DBody(

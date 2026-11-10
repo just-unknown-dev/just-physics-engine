@@ -92,6 +92,118 @@ void main() {
         expect(hit, isNotNull);
         expect(hit!.point.distance, closeTo(r * math.cos(math.pi / 12), 1.5));
       });
+
+      // Box2D welds a polygon's points closer than 2 units (four linear
+      // slops) and makes no shape from fewer than three, so a polygon
+      // thinner than that, or a box rounded by half its side, once had no
+      // shape on the native backend: rays and bodies went through it.
+
+      /// Where a ray straight down x = [x] first meets a static body of
+      /// [shape] at the origin; null when it meets nothing.
+      double? hitY(Shape2D shape, {double x = 0}) {
+        engine.addBody(
+          Physics2DBody(position: Vector2(0, 0), shape: shape, mass: 0),
+        );
+        engine.update(1 / 60);
+        final hit = engine.raycast(
+          Ray2D.fromPoints(Offset(x, -100), Offset(x, 100)),
+        );
+        return hit?.point.dy;
+      }
+
+      /// A 150 × 14 box rounded by [r], as the game engine builds one: its
+      /// corners' centres on a box 2·[r] smaller.
+      RoundedPolygon2DShape plank(double r) => RoundedPolygon2DShape.rect(
+        width: 150 - 2 * r,
+        height: 14 - 2 * r,
+        cornerRadius: r,
+      );
+
+      test('a box rounded by just under half its height is solid', () {
+        if (unavailable()) return markTestSkipped('native Box2D unavailable');
+        // The game engine keeps a corner radius 0.001 under half the box.
+        final shape = plank(7 - 1e-3);
+        expect(hitY(shape), closeTo(-7, 0.1));
+        expect(
+          engine
+              .raycast(
+                Ray2D.fromPoints(const Offset(60, -100), const Offset(60, 100)),
+              )
+              ?.point
+              .dy,
+          closeTo(-7, 0.1),
+        );
+      });
+
+      test('a box rounded by half its height is solid', () {
+        if (unavailable()) return markTestSkipped('native Box2D unavailable');
+        expect(hitY(plank(7)), closeTo(-7, 0.1));
+      });
+
+      test('a ball lands on a box rounded by half its height', () {
+        if (unavailable()) return markTestSkipped('native Box2D unavailable');
+        expect(restY(plank(7 - 1e-3), 0), closeTo(-12, 2));
+      });
+
+      test('a box rounded by under half its height is unchanged', () {
+        if (unavailable()) return markTestSkipped('native Box2D unavailable');
+        expect(hitY(plank(6)), closeTo(-7, 0.1));
+      });
+
+      test('a rounded box keeps its length', () {
+        if (unavailable()) return markTestSkipped('native Box2D unavailable');
+        final shape = plank(7 - 1e-3);
+        engine.addBody(
+          Physics2DBody(position: Vector2(0, 0), shape: shape, mass: 0),
+        );
+        engine.update(1 / 60);
+        final hit = engine.raycast(
+          Ray2D.fromPoints(const Offset(-200, 0), const Offset(200, 0)),
+        );
+        expect(hit?.point.dx, closeTo(-75, 0.1));
+      });
+
+      test('a rounded polygon smaller than 2 units is a circle', () {
+        if (unavailable()) return markTestSkipped('native Box2D unavailable');
+        final shape = RoundedPolygon2DShape(const [
+          Offset(-0.5, 0.5),
+          Offset(0.5, 0.5),
+          Offset(0, -0.5),
+        ], 10);
+        // Grown by 10 round its top corner, 0.5 up.
+        expect(hitY(shape), closeTo(-10.5, 0.6));
+      });
+
+      test('a thin rounded triangle is solid', () {
+        if (unavailable()) return markTestSkipped('native Box2D unavailable');
+        final shape = RoundedPolygon2DShape(const [
+          Offset(-60, 0),
+          Offset(60, 0),
+          Offset(0, -1),
+        ], 4);
+        expect(hitY(shape, x: 30), closeTo(-4.5, 0.6));
+      });
+
+      test('a polygon thinner than 2 units is solid', () {
+        if (unavailable()) return markTestSkipped('native Box2D unavailable');
+        final shape = Polygon2DShape(const [
+          Offset(-60, -0.5),
+          Offset(60, -0.5),
+          Offset(60, 0.5),
+          Offset(-60, 0.5),
+        ]);
+        expect(hitY(shape, x: 30), closeTo(-0.5, 0.1));
+      });
+
+      test('a capsule as wide as it is long is a circle', () {
+        if (unavailable()) return markTestSkipped('native Box2D unavailable');
+        final shape = Capsule2DShape(
+          center1: Offset.zero,
+          center2: Offset.zero,
+          radius: 10,
+        );
+        expect(hitY(shape), closeTo(-10, 0.1));
+      });
     });
   }
 }

@@ -333,7 +333,7 @@ The full old-to-new table, and what now behaves the same on both backends, is in
 
 ## Compatibility
 
-- Version `2.0.0`
+- Version `2.0.1`
 - Native Box2D comes from [just_box_2d](https://pub.dev/packages/just_box_2d) ^0.2.0, built from source by its own hook (`hooks` ^2, the same generation as `just_graphics_engine`, so both resolve in one app). An app that wants the pure-Dart engine everywhere turns that build off:
 
   ```yaml

@@ -33,8 +33,9 @@ enum Joint2DKind {
 /// collisions. A joint moves its bodies back toward what it allows (half the
 /// error each step) and takes away the relative velocity it forbids, so
 /// gravity cannot pile up against it. The engine is translational — shapes
-/// do not turn in collisions — so joints move bodies, and set the angle a
-/// body is drawn at where they decide it (a hinged body turns as it swings).
+/// do not turn in collisions, where only a round body spins, rolling — so
+/// joints move bodies, and set the angle a body is drawn at where they
+/// decide it (a hinged body turns as it swings).
 /// The native backend solves its own joints.
 abstract class Joint2D {
   /// A joint of [kind]. [collideConnected] says whether its two bodies
@@ -167,20 +168,23 @@ void _jointHold(Physics2DBody a, Physics2DBody b, double pvx, double pvy) {
   b.velocity.y -= rvy * ib / k;
 }
 
-/// Inverse rotational inertia as the joints use it: none for a body that is
-/// not dynamic, or cannot turn.
-double _jointInverseInertia(Physics2DBody b) =>
+/// Inverse rotational inertia as the joints and contacts use it: none for a
+/// body that is not dynamic, or cannot turn.
+double _solverInverseInertia(Physics2DBody b) =>
     b.isDynamic && !b.fixedRotation ? b.inverseInertia : 0.0;
 
-/// A spin impulse driving `ωB − ωA` toward [speed], at most [maxTorque] × dt.
+/// A spin impulse driving `ωB − ωA` toward [speed], at most [maxTorque] × dt:
+/// [b] turned one way and, when [react], [a] the other.
 void _jointSpinMotor(
   Physics2DBody a,
   Physics2DBody b,
   double speed,
   double maxTorque,
-  double dt,
-) {
-  final ia = _jointInverseInertia(a), ib = _jointInverseInertia(b);
+  double dt, {
+  bool react = true,
+}) {
+  final ia = react ? _solverInverseInertia(a) : 0.0;
+  final ib = _solverInverseInertia(b);
   final k = ia + ib;
   if (k == 0) return;
   final most = maxTorque * dt;
@@ -680,7 +684,10 @@ class PrismaticJoint2D extends Joint2D {
 /// A wheel on a suspension, as Box2D's wheel joint: bodyB's axle moves
 /// along an axis on a spring about where it was when the joint was made, is
 /// held where it was across the axis, and the wheel turns freely about it —
-/// a motor ([setMotor]) spins it.
+/// a motor ([setMotor]) spins it. A round wheel rolls, so the motor drives
+/// it along the ground. The motor turns only the wheel: the chassis stays
+/// as level as Box2D's suspension holds it on the ground, but does not tip
+/// back in the air as a Box2D one does.
 ///
 /// The axis is fixed in bodyA's frame. The suspension is 4 Hz with a
 /// damping ratio of 0.7 until [setSpring] says otherwise (Box2D's wheel
@@ -825,8 +832,19 @@ class WheelJoint2D extends Joint2D {
       );
     }
 
+    // The motor turns the wheel, not the chassis back: in Box2D the
+    // suspension's push, off the chassis's centre, takes that torque up and
+    // a car on its wheels stays level. This joint pushes the chassis at its
+    // centre, so the motor's reaction alone would spin it over.
     if (_motorEnabled) {
-      _jointSpinMotor(bodyA, bodyB, _motorSpeed, _maxMotorTorque, dt);
+      _jointSpinMotor(
+        bodyA,
+        bodyB,
+        _motorSpeed,
+        _maxMotorTorque,
+        dt,
+        react: false,
+      );
     }
   }
 }
@@ -971,10 +989,10 @@ class RevoluteJoint2D extends Joint2D {
     if (angle < _lowerLimit && spin <= 0) limit = _lowerLimit;
     if (angle > _upperLimit && spin >= 0) limit = _upperLimit;
     if (limit == null) return;
-    if (_jointInverseInertia(bodyB) > 0) {
+    if (_solverInverseInertia(bodyB) > 0) {
       bodyB.angle = bodyA.angle + _relAngle0 + limit;
       bodyB.angularVelocity = bodyA.angularVelocity;
-    } else if (_jointInverseInertia(bodyA) > 0) {
+    } else if (_solverInverseInertia(bodyA) > 0) {
       bodyA.angle = bodyB.angle - _relAngle0 - limit;
       bodyA.angularVelocity = bodyB.angularVelocity;
     }

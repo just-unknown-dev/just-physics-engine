@@ -3,6 +3,7 @@
 library;
 
 import 'dart:ffi';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' show Offset;
 
@@ -11,6 +12,16 @@ import 'package:just_box_2d/ffi.dart' as box2d;
 import 'package:meta/meta.dart' show internal;
 
 import '../physics_2d_engine.dart';
+
+/// Box2D's linear slop (`B2_LINEAR_SLOP`) at the 100 units a metre the
+/// native wrapper sets: points closer than a few of these are one point to
+/// Box2D.
+const double _linearSlop = 0.5;
+
+/// How close Box2D's hull welds two of a polygon's points into one (four
+/// linear slops). A polygon thinner than this has fewer than three points
+/// left, and Box2D makes no shape from it.
+const double _weldTolerance = 4 * _linearSlop;
 
 /// Adds [body]'s shapes — [Physics2DBody.shape], then its
 /// [Physics2DBody.additionalShapes] — to the native body [handle], with the
@@ -47,12 +58,10 @@ void _addSingleShape(
       restitution,
     );
   } else if (shape is Capsule2DShape) {
-    box2d.b2w_addCapsuleShape(
+    _addCapsule(
       handle,
-      shape.center1.dx,
-      shape.center1.dy,
-      shape.center2.dx,
-      shape.center2.dy,
+      shape.center1,
+      shape.center2,
       shape.radius,
       density,
       friction,
@@ -120,28 +129,27 @@ void _addSingleShape(
       friction,
       restitution,
     );
-  } else if (shape is RoundedPolygon2DShape) {
-    final verts = Float32List(shape.vertices.length * 2);
-    for (int i = 0; i < shape.vertices.length; i++) {
-      verts[i * 2] = shape.vertices[i].dx;
-      verts[i * 2 + 1] = shape.vertices[i].dy;
-    }
-    final ptr = calloc<Float>(verts.length);
-    try {
-      ptr.asTypedList(verts.length).setAll(0, verts);
-      box2d.b2w_addRoundedPolygonShape(
-        handle,
-        ptr,
-        shape.vertices.length,
-        shape.cornerRadius,
-        density,
-        friction,
-        restitution,
-      );
-    } finally {
-      calloc.free(ptr);
-    }
   } else if (shape is Polygon2DShape) {
+    // A plain polygon, or one rounded by its corner radius.
+    final radius = shape is RoundedPolygon2DShape ? shape.cornerRadius : 0.0;
+    final thin = _thinPolygonCore(shape.vertices);
+    if (thin != null) {
+      // Too thin for Box2D's hull: the capsule round its middle line, as
+      // wide and as long as the polygon grown by its radius. A box rounded
+      // by half its height or more, which the game engine builds round a
+      // box next to nothing tall, is this capsule.
+      final (c1, c2, halfWidth) = thin;
+      _addCapsule(
+        handle,
+        c1,
+        c2,
+        math.max(radius + halfWidth, 1e-3),
+        density,
+        friction,
+        restitution,
+      );
+      return;
+    }
     final verts = Float32List(shape.vertices.length * 2);
     for (int i = 0; i < shape.vertices.length; i++) {
       verts[i * 2] = shape.vertices[i].dx;
@@ -150,18 +158,140 @@ void _addSingleShape(
     final ptr = calloc<Float>(verts.length);
     try {
       ptr.asTypedList(verts.length).setAll(0, verts);
-      box2d.b2w_addPolygonShape(
-        handle,
-        ptr,
-        shape.vertices.length,
-        density,
-        friction,
-        restitution,
-      );
+      if (radius > 0) {
+        box2d.b2w_addRoundedPolygonShape(
+          handle,
+          ptr,
+          shape.vertices.length,
+          radius,
+          density,
+          friction,
+          restitution,
+        );
+      } else {
+        box2d.b2w_addPolygonShape(
+          handle,
+          ptr,
+          shape.vertices.length,
+          density,
+          friction,
+          restitution,
+        );
+      }
     } finally {
       calloc.free(ptr);
     }
   }
+}
+
+/// The middle line of the convex polygon [vertices] and half its width,
+/// when the polygon is too thin or too small for Box2D's hull (which would
+/// weld it to fewer than three points and make no shape); null when Box2D
+/// can make it. The line is the polygon's length less half its width at
+/// each end, so a capsule round it that is half the width wide reaches as
+/// far as the polygon does every way.
+(Offset, Offset, double)? _thinPolygonCore(List<Offset> vertices) {
+  final n = vertices.length;
+  if (n == 0) return null;
+
+  // Box2D keeps a point only when it is a weld tolerance from every one
+  // before it.
+  var kept = 0;
+  for (var i = 0; i < n && kept < 3; i++) {
+    var unique = true;
+    for (var j = 0; j < i; j++) {
+      if ((vertices[i] - vertices[j]).distance < _weldTolerance) {
+        unique = false;
+        break;
+      }
+    }
+    if (unique) kept++;
+  }
+
+  // The narrowest way across: square to one of the sides, for a convex
+  // polygon.
+  var width = double.infinity;
+  var along = const Offset(1, 0);
+  for (var i = 0; i < n; i++) {
+    final side = vertices[(i + 1) % n] - vertices[i];
+    final length = side.distance;
+    if (length < 1e-9) continue;
+    final d = side / length;
+    var lo = double.infinity, hi = double.negativeInfinity;
+    for (final v in vertices) {
+      final across = d.dx * v.dy - d.dy * v.dx;
+      lo = math.min(lo, across);
+      hi = math.max(hi, across);
+    }
+    if (hi - lo < width) {
+      width = hi - lo;
+      along = d;
+    }
+  }
+  if (width == double.infinity) width = 0; // Every point in one place.
+
+  // A margin over the tolerance covers the float32 rounding of the points.
+  if (kept >= 3 && width >= _weldTolerance + 1e-3) return null;
+
+  final across = Offset(-along.dy, along.dx);
+  var aLo = double.infinity, aHi = double.negativeInfinity;
+  var bLo = double.infinity, bHi = double.negativeInfinity;
+  for (final v in vertices) {
+    final a = v.dx * along.dx + v.dy * along.dy;
+    final b = v.dx * across.dx + v.dy * across.dy;
+    aLo = math.min(aLo, a);
+    aHi = math.max(aHi, a);
+    bLo = math.min(bLo, b);
+    bHi = math.max(bHi, b);
+  }
+  final half = (bHi - bLo) / 2, middle = (bLo + bHi) / 2;
+  final a1 = aLo + half, a2 = aHi - half;
+  if (a2 <= a1) {
+    // No longer than it is wide: a circle on its middle.
+    final c = along * ((aLo + aHi) / 2) + across * middle;
+    return (c, c, math.max(half, (aHi - aLo) / 2));
+  }
+  return (along * a1 + across * middle, along * a2 + across * middle, half);
+}
+
+/// A capsule [radius] round the line from [c1] to [c2], or a circle where
+/// the line is too short for one: Box2D makes no capsule whose line is a
+/// linear slop long or less.
+void _addCapsule(
+  int handle,
+  Offset c1,
+  Offset c2,
+  double radius,
+  double density,
+  double friction,
+  double restitution,
+) {
+  final length = (c2 - c1).distance;
+  // A margin over the slop covers the float32 rounding of the points.
+  if (length <= _linearSlop + 1e-3) {
+    final c = (c1 + c2) / 2;
+    box2d.b2w_addCircleShape(
+      handle,
+      c.dx,
+      c.dy,
+      radius + length / 2,
+      density,
+      friction,
+      restitution,
+    );
+    return;
+  }
+  box2d.b2w_addCapsuleShape(
+    handle,
+    c1.dx,
+    c1.dy,
+    c2.dx,
+    c2.dy,
+    radius,
+    density,
+    friction,
+    restitution,
+  );
 }
 
 /// A line from [p1] to [p2]: a capsule [radius] round it, or a bare
@@ -176,17 +306,7 @@ void _addLine(
   double restitution,
 ) {
   if (radius > 0) {
-    box2d.b2w_addCapsuleShape(
-      handle,
-      p1.dx,
-      p1.dy,
-      p2.dx,
-      p2.dy,
-      radius,
-      density,
-      friction,
-      restitution,
-    );
+    _addCapsule(handle, p1, p2, radius, density, friction, restitution);
   } else {
     box2d.b2w_addSegmentShape(
       handle,
@@ -221,7 +341,7 @@ Float32List _reversedPoints(Float32List points) {
 /// dropped first (a segment of no length has no normal). Null when there
 /// is no chain to make.
 Float32List? _chainPoints(Chain2DShape shape) {
-  const slop = 0.5; // B2_LINEAR_SLOP at 100 units a metre.
+  const slop = _linearSlop;
   final v = <Offset>[];
   for (final p in shape.vertices) {
     if (v.isEmpty || (p - v.last).distance > slop) v.add(p);
