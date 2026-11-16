@@ -1,5 +1,7 @@
 import 'package:just_dart/just_dart.dart';
 
+import 'shape_3d.dart';
+
 /// How a body moves.
 enum Body3DType {
   /// Never moves (walls, floors, terrain).
@@ -312,4 +314,101 @@ final class Physics3DWorldSettings {
 
   /// Whether bodies report falling asleep and waking up.
   final bool reportActivation;
+}
+
+/// One part of a ragdoll ([Physics3DWorld.createRagdoll]): a body, and how
+/// it hangs from the part before it. Places, pivots and axes are in the
+/// world, as the ragdoll is made.
+final class Ragdoll3DPart {
+  /// A part of [shape] at [position], turned by [rotation], hanging from
+  /// part [parent] (-1 for the root) by a swing-twist joint at [pivot].
+  Ragdoll3DPart({
+    required this.shape,
+    this.parent = -1,
+    Vector3? position,
+    Quaternion? rotation,
+    this.mass = 0,
+    Vector3? pivot,
+    Vector3? twistAxis,
+    Vector3? planeAxis,
+    this.normalHalfCone = 0.7853981633974483,
+    this.planeHalfCone = 0.7853981633974483,
+    this.twistMin = -0.39269908169872414,
+    this.twistMax = 0.39269908169872414,
+    this.maxFrictionTorque = 0,
+  }) : position = position ?? Vector3.zero(),
+       rotation = rotation ?? Quaternion.identity(),
+       pivot = pivot ?? Vector3.zero(),
+       twistAxis = twistAxis ?? Vector3(0, 1, 0),
+       planeAxis = planeAxis ?? Vector3(1, 0, 0);
+
+  /// Its shape, in its own space.
+  final Shape3D shape;
+
+  /// The part it hangs from, by index (lower than its own); -1 for the
+  /// root.
+  final int parent;
+
+  /// Where it starts.
+  final Vector3 position;
+
+  /// How it starts turned.
+  final Quaternion rotation;
+
+  /// Mass in kg; 0 or less works it out from the shape.
+  final double mass;
+
+  /// Where it is joined to its parent.
+  final Vector3 pivot;
+
+  /// The joint's twist axis: along the part, away from its parent.
+  final Vector3 twistAxis;
+
+  /// Square to [twistAxis]: the axis the plane cone opens about.
+  final Vector3 planeAxis;
+
+  /// How far it swings one way, radians: half the cone about the normal
+  /// of [planeAxis] and [twistAxis].
+  final double normalHalfCone;
+
+  /// How far it swings the other way, radians: half the cone about
+  /// [planeAxis].
+  final double planeHalfCone;
+
+  /// How far it twists about [twistAxis], radians: [twistMin] is at or
+  /// below 0, [twistMax] at or above.
+  final double twistMin, twistMax;
+
+  /// Friction torque in its joint, N m: how stiffly it hangs.
+  final double maxFrictionTorque;
+}
+
+/// How every part of a ragdoll is made.
+final class Ragdoll3DSettings {
+  /// Settings for a ragdoll's parts.
+  const Ragdoll3DSettings({
+    this.layer = 0,
+    this.friction = 0.6,
+    this.restitution = 0,
+    this.linearDamping = 0.05,
+    this.angularDamping = 0.05,
+    this.gravityFactor = 1,
+    this.motionQuality = Motion3DQuality.discrete,
+    this.userData = 0,
+  });
+
+  /// Collision layer, 0-15.
+  final int layer;
+
+  /// As a body's ([Body3DSettings]).
+  final double friction, restitution, linearDamping, angularDamping;
+
+  /// How much of the world's gravity pulls it.
+  final double gravityFactor;
+
+  /// Whether fast parts are cast, not stepped (continuous collision).
+  final Motion3DQuality motionQuality;
+
+  /// Kept on every part's body.
+  final int userData;
 }

@@ -64,6 +64,7 @@ final class FakePhysics3DWorld implements Physics3DWorld {
     bodies.clear();
     joints.clear();
     characters.clear();
+    ragdolls.clear();
     _events.clear();
     _fellAsleep.clear();
     _touching.clear();
@@ -154,9 +155,171 @@ final class FakePhysics3DWorld implements Physics3DWorld {
 
   @override
   void destroyBody(int body) {
-    // A character's body goes with its character.
+    // A character's body goes with its character, a ragdoll's part with
+    // its ragdoll.
     if ((bodies[body]?.character ?? 1) != 0) return;
+    if (ragdolls.values.any((parts) => parts.contains(body))) return;
     _destroyBody(body);
+  }
+
+  // ── Ragdolls ──────────────────────────────────────────────────────────
+
+  /// Each ragdoll's part bodies, in order. The parts fall as bodies do;
+  /// their joints are recorded ([joints]), never solved.
+  final Map<int, List<int>> ragdolls = {};
+
+  @override
+  int createRagdoll(List<Ragdoll3DPart> parts, Ragdoll3DSettings settings) {
+    if (_disposed || parts.isEmpty) return 0;
+    for (var i = 0; i < parts.length; i++) {
+      if (parts[i].parent >= i || (i > 0 && parts[i].parent < 0)) return 0;
+    }
+    final made = <int>[];
+    for (final p in parts) {
+      final body = createBody(
+        p.shape,
+        Body3DSettings(
+          position: p.position,
+          rotation: p.rotation,
+          layer: settings.layer,
+          friction: settings.friction,
+          restitution: settings.restitution,
+          linearDamping: settings.linearDamping,
+          angularDamping: settings.angularDamping,
+          gravityFactor: settings.gravityFactor,
+          mass: p.mass,
+          userData: settings.userData,
+        ),
+      );
+      if (body == 0) {
+        made.forEach(_destroyBody);
+        return 0;
+      }
+      made.add(body);
+    }
+    for (var i = 1; i < parts.length; i++) {
+      final joint = FakeJoint3D._(
+        _nextHandle(),
+        made[i],
+        made[parts[i].parent],
+        Joint3DSettings(kind: Joint3DKind.point, pointA: parts[i].pivot),
+      );
+      joints[joint.handle] = joint;
+    }
+    final ragdoll = _nextHandle();
+    ragdolls[ragdoll] = made;
+    return ragdoll;
+  }
+
+  @override
+  void destroyRagdoll(int ragdoll) {
+    final parts = ragdolls.remove(ragdoll);
+    parts?.forEach(_destroyBody);
+  }
+
+  @override
+  bool isRagdoll(int ragdoll) => ragdolls.containsKey(ragdoll);
+
+  @override
+  int ragdollPartCount(int ragdoll) => ragdolls[ragdoll]?.length ?? 0;
+
+  @override
+  int ragdollBody(int ragdoll, int part) {
+    final parts = ragdolls[ragdoll];
+    return parts == null || part < 0 || part >= parts.length ? 0 : parts[part];
+  }
+
+  @override
+  void setRagdollPose(
+    int ragdoll,
+    Float32List transforms, {
+    Float32List? velocities,
+  }) {
+    final parts = ragdolls[ragdoll];
+    if (parts == null || transforms.length < parts.length * 7) return;
+    for (var i = 0; i < parts.length; i++) {
+      final b = bodies[parts[i]];
+      if (b == null) continue;
+      final t = i * 7;
+      b.position.setValues(transforms[t], transforms[t + 1], transforms[t + 2]);
+      b.rotation.setValues(
+        transforms[t + 3],
+        transforms[t + 4],
+        transforms[t + 5],
+        transforms[t + 6],
+      );
+      final v = i * 6;
+      if (velocities != null && velocities.length >= (i + 1) * 6) {
+        b.linearVelocity.setValues(
+          velocities[v],
+          velocities[v + 1],
+          velocities[v + 2],
+        );
+        b.angularVelocity.setValues(
+          velocities[v + 3],
+          velocities[v + 4],
+          velocities[v + 5],
+        );
+      } else {
+        b.linearVelocity.setZero();
+        b.angularVelocity.setZero();
+      }
+      _wake(b);
+    }
+  }
+
+  @override
+  int readRagdollPose(int ragdoll, Float32List out) {
+    final parts = ragdolls[ragdoll];
+    if (parts == null) return 0;
+    var n = 0;
+    for (; n < parts.length && (n + 1) * 7 <= out.length; n++) {
+      final b = bodies[parts[n]];
+      if (b == null) break;
+      final t = n * 7;
+      out
+        ..[t] = b.position.x
+        ..[t + 1] = b.position.y
+        ..[t + 2] = b.position.z
+        ..[t + 3] = b.rotation.x
+        ..[t + 4] = b.rotation.y
+        ..[t + 5] = b.rotation.z
+        ..[t + 6] = b.rotation.w;
+    }
+    return n;
+  }
+
+  @override
+  void driveRagdoll(int ragdoll, Float32List transforms, double dt) {
+    final parts = ragdolls[ragdoll];
+    if (parts == null || transforms.length < parts.length * 7 || !(dt > 0)) {
+      return;
+    }
+    for (var i = 0; i < parts.length; i++) {
+      final b = bodies[parts[i]];
+      if (b == null) continue;
+      final t = i * 7;
+      b.linearVelocity.setValues(
+        (transforms[t] - b.position.x) / dt,
+        (transforms[t + 1] - b.position.y) / dt,
+        (transforms[t + 2] - b.position.z) / dt,
+      );
+      // Over one step, gravity must not pull it off the pose.
+      b.linearVelocity.addScaled(_gravity, -b.gravityFactor * dt);
+      b.rotation.setValues(
+        transforms[t + 3],
+        transforms[t + 4],
+        transforms[t + 5],
+        transforms[t + 6],
+      );
+      _wake(b);
+    }
+  }
+
+  @override
+  void addRagdollImpulse(int ragdoll, int part, Vector3 impulse) {
+    final body = ragdollBody(ragdoll, part);
+    if (body != 0) addImpulse(body, impulse);
   }
 
   void _destroyBody(int body) {

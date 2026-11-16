@@ -190,6 +190,8 @@ final class JoltWorld implements Physics3DWorld, Finalizable {
     shapes.clear();
     _bodyShapes.clear();
     _bodyTypes.clear();
+    _ragdollShapes.clear();
+    _ragdollBodies.clear();
     _jointBodies.clear();
     _bodyJoints.clear();
     _characters.clear();
@@ -239,6 +241,173 @@ final class JoltWorld implements Physics3DWorld, Finalizable {
   /// once (a level loading).
   void optimize() {
     if (!_gone) jj_world_optimize(handle);
+  }
+
+  // ── Ragdolls ──────────────────────────────────────────────────────────
+
+  // Each ragdoll's parts' shapes (released when it goes) and bodies.
+  final Map<int, List<Shape3D>> _ragdollShapes = {};
+  final Map<int, List<int>> _ragdollBodies = {};
+
+  @override
+  int createRagdoll(List<Ragdoll3DPart> parts, Ragdoll3DSettings settings) {
+    if (_gone || parts.isEmpty) return 0;
+    final held = <Shape3D>[];
+    void releaseHeld() {
+      for (final shape in held) {
+        shapes.release(shape);
+      }
+    }
+
+    return using((arena) {
+      final native = arena<JJ_RagdollPart>(parts.length);
+      void put(Array<Float> to, Vector3 v) {
+        to[0] = v.x;
+        to[1] = v.y;
+        to[2] = v.z;
+      }
+
+      for (var i = 0; i < parts.length; i++) {
+        final p = parts[i];
+        final pointer = shapes.acquire(p.shape);
+        if (pointer == null) {
+          releaseHeld();
+          return 0;
+        }
+        held.add(p.shape);
+        final n = native[i];
+        n
+          ..parent = p.parent
+          ..shape = pointer
+          ..mass = p.mass
+          ..normalHalfCone = p.normalHalfCone
+          ..planeHalfCone = p.planeHalfCone
+          ..twistMin = p.twistMin
+          ..twistMax = p.twistMax
+          ..maxFrictionTorque = p.maxFrictionTorque;
+        put(n.position, p.position);
+        n.rotation[0] = p.rotation.x;
+        n.rotation[1] = p.rotation.y;
+        n.rotation[2] = p.rotation.z;
+        n.rotation[3] = p.rotation.w;
+        put(n.pivot, p.pivot);
+        put(n.twistAxis, p.twistAxis);
+        put(n.planeAxis, p.planeAxis);
+      }
+      final s = arena<JJ_RagdollSettings>();
+      s.ref
+        ..layer = settings.layer
+        ..friction = settings.friction
+        ..restitution = settings.restitution
+        ..linearDamping = settings.linearDamping
+        ..angularDamping = settings.angularDamping
+        ..gravityFactor = settings.gravityFactor
+        ..motionQuality = settings.motionQuality.index
+        ..userData = settings.userData;
+      final ragdoll = jj_ragdoll_create(handle, native, parts.length, s);
+      if (ragdoll == 0) {
+        releaseHeld();
+        return 0;
+      }
+      _ragdollShapes[ragdoll] = held;
+      final bodies = [
+        for (var i = 0; i < parts.length; i++) jj_ragdoll_body(ragdoll, i),
+      ];
+      _ragdollBodies[ragdoll] = bodies;
+      // Its parts take velocities, forces and impulses as any dynamic body.
+      for (final body in bodies) {
+        _bodyTypes[body] = Body3DType.dynamic;
+      }
+      return ragdoll;
+    });
+  }
+
+  @override
+  void destroyRagdoll(int ragdoll) {
+    if (_gone) return;
+    final held = _ragdollShapes.remove(ragdoll);
+    if (held == null) return;
+    for (final body in _ragdollBodies.remove(ragdoll) ?? const <int>[]) {
+      _bodyTypes.remove(body);
+    }
+    jj_ragdoll_destroy(ragdoll);
+    for (final shape in held) {
+      shapes.release(shape);
+    }
+  }
+
+  @override
+  bool isRagdoll(int ragdoll) =>
+      !_gone &&
+      _ragdollShapes.containsKey(ragdoll) &&
+      jj_ragdoll_valid(ragdoll);
+
+  @override
+  int ragdollPartCount(int ragdoll) =>
+      isRagdoll(ragdoll) ? jj_ragdoll_part_count(ragdoll) : 0;
+
+  @override
+  int ragdollBody(int ragdoll, int part) {
+    final bodies = _ragdollBodies[ragdoll];
+    return bodies == null || part < 0 || part >= bodies.length
+        ? 0
+        : bodies[part];
+  }
+
+  /// [values] copied into native memory from [arena].
+  static Pointer<Float> _floats(Arena arena, Float32List values) {
+    final p = arena<Float>(values.length);
+    p.asTypedList(values.length).setAll(0, values);
+    return p;
+  }
+
+  @override
+  void setRagdollPose(
+    int ragdoll,
+    Float32List transforms, {
+    Float32List? velocities,
+  }) {
+    final parts = ragdollPartCount(ragdoll);
+    if (parts == 0 || transforms.length < parts * 7) return;
+    if (velocities != null && velocities.length < parts * 6) return;
+    using((arena) {
+      jj_ragdoll_set_pose(
+        ragdoll,
+        _floats(arena, transforms),
+        velocities == null ? nullptr : _floats(arena, velocities),
+      );
+    });
+  }
+
+  @override
+  int readRagdollPose(int ragdoll, Float32List out) {
+    final parts = ragdollPartCount(ragdoll);
+    final n = parts < out.length ~/ 7 ? parts : out.length ~/ 7;
+    if (n == 0) return 0;
+    return using((arena) {
+      final p = arena<Float>(n * 7);
+      final read = jj_ragdoll_read_pose(ragdoll, p, n);
+      out.setAll(0, p.asTypedList(read * 7));
+      return read;
+    });
+  }
+
+  @override
+  void driveRagdoll(int ragdoll, Float32List transforms, double dt) {
+    final parts = ragdollPartCount(ragdoll);
+    if (parts == 0 || transforms.length < parts * 7 || !(dt > 0)) return;
+    using((arena) {
+      jj_ragdoll_drive(ragdoll, _floats(arena, transforms), dt);
+    });
+  }
+
+  @override
+  void addRagdollImpulse(int ragdoll, int part, Vector3 impulse) {
+    if (!isRagdoll(ragdoll)) return;
+    _f[0] = impulse.x;
+    _f[1] = impulse.y;
+    _f[2] = impulse.z;
+    jj_ragdoll_add_impulse(ragdoll, part, _f);
   }
 
   // ── Bodies ────────────────────────────────────────────────────────────

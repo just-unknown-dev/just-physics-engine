@@ -1,6 +1,6 @@
 name: just_physics_engine
 description: "Standalone 2D/3D physics engine for Flutter: 2D on native Box2D v3.2 (FFI) with a pure-Dart fallback, 3D on Jolt Physics through just_jolt."
-version: 2.0.1
+version: 2.1.0
 homepage: https://github.com/just-unknown-dev/just-physics-engine
 repository: https://github.com/just-unknown-dev/just-physics-engine
 issue_tracker: https://github.com/just-unknown-dev/just-physics-engine/issues
@@ -36,7 +36,7 @@ dependencies:
   # Jolt Physics for the 3-D engine. Its native library is compiled only
   # when the app asks (hooks: user_defines: just_jolt: build: true), so a
   # 2-D game neither builds nor ships it.
-  just_jolt: ^0.2.0
+  just_jolt: ^0.3.0
   meta: ^1.17.0
 
 dev_dependencies:

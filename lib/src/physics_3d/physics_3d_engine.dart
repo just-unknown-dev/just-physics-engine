@@ -171,6 +171,47 @@ abstract interface class Physics3DWorld {
   /// motor drives; 0 for other joints.
   double jointValue(int joint);
 
+  // ── Ragdolls ──────────────────────────────────────────────────────────
+
+  /// Makes a ragdoll of [parts] (each after the part it hangs from) as
+  /// [settings] say, awake; 0 when it cannot be made. Each part is a body
+  /// ([ragdollBody]) joined to its parent by a swing-twist joint; a part
+  /// does not collide with its parent, nor with parts it overlaps as made.
+  /// Its bodies go with it: [destroyBody] leaves them alone.
+  int createRagdoll(List<Ragdoll3DPart> parts, Ragdoll3DSettings settings);
+
+  /// Destroys [ragdoll] and its bodies.
+  void destroyRagdoll(int ragdoll);
+
+  /// Whether [ragdoll] is a live ragdoll of this world.
+  bool isRagdoll(int ragdoll);
+
+  /// How many parts [ragdoll] has; 0 for a dead one.
+  int ragdollPartCount(int ragdoll);
+
+  /// Part [part]'s body; 0 when out of range.
+  int ragdollBody(int ragdoll, int part);
+
+  /// Moves every part of [ragdoll] at once to [transforms] (seven floats a
+  /// part: position, then rotation x y z w), moving at [velocities] (six a
+  /// part: linear, then angular) or at rest.
+  void setRagdollPose(
+    int ragdoll,
+    Float32List transforms, {
+    Float32List? velocities,
+  });
+
+  /// Every part's position and rotation, seven floats a part, into [out];
+  /// returns how many parts were read.
+  int readRagdollPose(int ragdoll, Float32List out);
+
+  /// Sets each part's velocities so it reaches [transforms] (seven floats a
+  /// part) in [dt] seconds: a ragdoll led by a pose, not falling.
+  void driveRagdoll(int ragdoll, Float32List transforms, double dt);
+
+  /// Pushes part [part] of [ragdoll] by [impulse] (N s).
+  void addRagdollImpulse(int ragdoll, int part, Vector3 impulse);
+
   // ── Characters ────────────────────────────────────────────────────────
 
   /// Makes a character whose feet are at [position]; 0 when it cannot be

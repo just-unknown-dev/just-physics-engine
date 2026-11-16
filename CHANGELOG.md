@@ -1,3 +1,15 @@
+## 2.1.0
+
+### Added
+
+- **Ragdolls** on `Physics3DWorld`, for a character that goes limp: `createRagdoll(parts, settings)` makes one from `Ragdoll3DPart`s — each a body with a shape, a place, a mass, and a swing-twist joint to the part it hangs from (pivot, twist and plane axes, two cone half-angles, a twist range, joint friction) — and `Ragdoll3DSettings` (layer, friction, restitution, damping, gravity, motion quality, user data). A part does not collide with its parent, nor with parts it overlaps as made.
+- `destroyRagdoll`, `isRagdoll`, `ragdollPartCount`, `ragdollBody` (each part's body: velocities, forces and impulses reach it as any dynamic body's), `setRagdollPose` (every part at once, with velocities or at rest), `readRagdollPose`, `driveRagdoll` (velocities that reach a pose in a step) and `addRagdollImpulse`. `destroyBody` leaves a ragdoll's parts alone; a ragdoll goes with its world.
+- On Jolt they are Jolt's own ragdolls (just_jolt 0.3.0). The fake engine (`FakePhysics3DWorld.ragdolls`) makes each part a body that falls as bodies do, its joints recorded and never solved.
+
+### Changed
+
+- Requires just_jolt ^0.3.0.
+
 ## 2.0.1 - 2026-11-10
 
 ### Fixes
